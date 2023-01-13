@@ -74,10 +74,6 @@ class GeoMeshParse(object):
             for sample_op in sample_operator:
                 if sample_op not in sample_op_type:
                     break
-                # if sample_op == 'rand_pro':
-                #     self.sample_rand_pro()
-                # if sample_op == 'eq_interval':
-                #     self.sample_eq_interval()
                 if sample_op == 'rand_drills':
                     drill_pos = None
                     drill_num = 10

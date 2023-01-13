@@ -16,16 +16,18 @@ from dgl.nn.pytorch.utils import Identity
 class SpacialConv(nn.Module):
 
     def __init__(self,
+                 coors,
                  in_feats,
                  out_feats,
+                 hidden_size,
                  aggregator_type,
                  feat_drop=0.,
                  bias=True,
                  norm=None,
                  activation=None,
-                 eps=1e-7,):
+                 eps=1e-7, ):
         super(SpacialConv, self).__init__()
-        valid_aggre_types = {'mean', 'gcn', 'pool', 'lstm'}
+        valid_aggre_types = {'spatial', 'mean', 'gcn', 'pool', 'lstm'}
         if aggregator_type not in valid_aggre_types:
             raise DGLError(
                 'Invalid aggregator_type. Must be one of {}. '
@@ -34,15 +36,18 @@ class SpacialConv(nn.Module):
 
         self._in_src_feats, self._in_dst_feats = expand_as_pair(in_feats)
         self._out_feats = out_feats
+        self._hidden_size = hidden_size
         self._aggre_type = aggregator_type
         self.norm = norm
         self.feat_drop = nn.Dropout(feat_drop)
         self.activation = activation
         self.eps = eps
 
-        if aggregator_type != 'gcn':
-            self.fc_self = nn.Linear(self._in_dst_feats, out_feats, bias=False)
+        self.fc_self = nn.Linear(self._in_dst_feats, out_feats, bias=False)
         self.fc_neigh = nn.Linear(self._in_src_feats, out_feats, bias=False)
+
+        self.fc_spa_in = nn.Linear(coors, hidden_size * in_feats)
+        self.fc.spa_out = nn.Linear(hidden_size * in_feats, out_feats)
         if bias:
             self.bias = nn.parameter.Parameter(torch.zeros(self._out_feats))
         else:
@@ -52,8 +57,8 @@ class SpacialConv(nn.Module):
     def reset_parameters(self):
 
         gain = nn.init.calculate_gain('relu')
-        if self._aggre_type != 'gcn':
-            nn.init.xavier_uniform_(self.fc_self.weight, gain=gain)
+
+        nn.init.xavier_uniform_(self.fc_self.weight, gain=gain)
         nn.init.xavier_uniform_(self.fc_neigh.weight, gain=gain)
 
     def _compatibility_check(self):
@@ -69,22 +74,38 @@ class SpacialConv(nn.Module):
                     self.fc_self.bias = None
             self.bias = bias
 
-    def forward(self, graph, feat, pos, edge_weight=None):
+    def edge_weight_func(self, edges):
+        relative_pos = edges.dst['position'] - edges.src['position']
+        spatial_scal = np.linalg.norm(relative_pos) + self.eps  # length
+        w = torch.add(relative_pos, 1)
+        ws = torch.div(w, spatial_scal)
+        spatial_scaling = F.leaky_relu(self.fc_spa_in(ws))
+        n_edges = spatial_scaling.size(0)
+        result = spatial_scaling.reshape(n_edges, self._in_src_feats, -1) * edges.src['h']
+        return {'e_sp_wight': result.view(n_edges, -1)}
+
+    def message_func(self, nodes):
+        z = torch.cat(nodes.mailbox['e_sp_wight'])
+
+        return {'': z}
+        # return {'neigh': edges.src['h'], 'e': edges.data['e_sp_weight']}
+
+    def reduce_func(self, nodes):
+
+        return None
+
+    def forward(self, graph, feat, edge_weight=None):
 
         self._compatibility_check()
         with graph.local_scope():
             feat_src = feat_dst = self.feat_drop(feat)
-            pos_src = pos_dst = pos
             if graph.is_block:
                 feat_dst = feat_src[:graph.number_of_dst_nodes()]
-                pos_dst = pos_src[:graph.number_of_dst_nodes()]
-
             msg_fn = fn.copy_src('h', 'm')
-            if edge_weight is not None:
-                assert edge_weight.shape[0] == graph.number_of_edges()
-                graph.edata['_edge_weight'] = edge_weight
-                msg_fn = fn.u_mul_e('h', '_edge_weight', 'm')
-
+            # if edge_weight is not None:
+            #     assert edge_weight.shape[0] == graph.number_of_edges()
+            #     graph.edata['_edge_weight'] = edge_weight
+            #     msg_fn = fn.u_mul_e('h', '_edge_weight', 'm')
             h_self = feat_dst
 
             # Handle the case of graphs without edges
@@ -92,16 +113,16 @@ class SpacialConv(nn.Module):
                 graph.dstdata['neigh'] = torch.zeros(
                     feat_dst.shape[0], self._in_src_feats).to(feat_dst)
 
-            # Determine whether to apply linear transformation before message passing A(XW)
-            lin_before_mp = self._in_src_feats > self._out_feats
-
             # Message Passing
             if self._aggre_type == 'spatial':
-                graph.srcdata['h'] = self.fc_neigh(feat_src) if lin_before_mp else feat_src
+                graph.srcdata['h'] = feat_src
+                graph.apply_edges(self.edge_weight_func)
+                edge_weight = graph
+                # g.apply_edges(lambda edges: {'hcat': torch.cat([edges.src['h'], edges.dst['h']], -1)})
                 graph.update_all(msg_fn, fn.mean('m', 'neigh'))
                 h_neigh = graph.dstdata['neigh']
-                if not lin_before_mp:
-                    h_neigh = self.fc_neigh(h_neigh)
+
+                h_neigh = self.fc_neigh(h_neigh)
             else:
                 raise KeyError('Aggregator type {} not recognized.'.format(self._aggre_type))
 
@@ -121,21 +142,12 @@ class SpacialConv(nn.Module):
             return rst
 
 
-def udf_u_pro_v(edges):
-    vector_pos = edges.dst['p'] - edges.src['p']
-    # a = np.linalg.norm(vector_pos) + 0.0001  # length
-    # vertical_z = [0, 0, 1]
-    # bz = vertical_z / np.linalg.norm(vertical_z)  # dz
-    # vector_pos_z = np.dot(vector_pos, bz) * bz
-    # horizontal_x = [1, 0, 0]
-
-
-class MultiHeadGATLayer(nn.Module):
-    def __init__(self, g, in_dim, out_dim, num_heads, merge='cat'):
-        super(MultiHeadGATLayer, self).__init__()
+class MultiHeadSpatialLayer(nn.Module):
+    def __init__(self, in_dim, out_dim, num_heads, merge='cat'):
+        super(MultiHeadSpatialLayer, self).__init__()
         self.heads = nn.ModuleList()
         for i in range(num_heads):
-            self.heads.append(GATConv(g, in_dim, out_dim))
+            self.heads.append(SpacialConv(in_dim, out_dim))
         self.merge = merge
 
     def forward(self, h):
@@ -269,6 +281,7 @@ class GATConv(nn.Module):
             [-0.5945, -0.4801],
             [ 0.1594,  0.3825]]], grad_fn=<BinaryReduceBackward>)
     """
+
     def __init__(self,
                  in_feats,
                  out_feats,
@@ -293,13 +306,13 @@ class GATConv(nn.Module):
         else:
             self.fc = nn.Linear(
                 self._in_src_feats, out_feats * num_heads, bias=False)
-        self.attn_l = nn.Parameter(th.FloatTensor(size=(1, num_heads, out_feats)))
-        self.attn_r = nn.Parameter(th.FloatTensor(size=(1, num_heads, out_feats)))
+        self.attn_l = nn.Parameter(torch.FloatTensor(size=(1, num_heads, out_feats)))
+        self.attn_r = nn.Parameter(torch.FloatTensor(size=(1, num_heads, out_feats)))
         self.feat_drop = nn.Dropout(feat_drop)
         self.attn_drop = nn.Dropout(attn_drop)
         self.leaky_relu = nn.LeakyReLU(negative_slope)
         if bias:
-            self.bias = nn.Parameter(th.FloatTensor(size=(num_heads * out_feats,)))
+            self.bias = nn.Parameter(torch.FloatTensor(size=(num_heads * out_feats,)))
         else:
             self.register_buffer('bias', None)
         if residual:
@@ -464,6 +477,3 @@ class GATConv(nn.Module):
                 return rst, graph.edata['a']
             else:
                 return rst
-
-
-

@@ -37,10 +37,10 @@ class SAGE(nn.Module):
         self.hid_size = hid_size
         # self.out_size = out_size
 
-    def forward(self, blocks, x):
+    def forward(self, blocks, x, pos):
         h = x
         for l, (layer, block) in enumerate(zip(self.layers, blocks)):
-            h = layer(block, h)
+            h = layer(block, h, pos)
             if l != len(self.layers) - 1:
                 h = F.relu(h)
                 h = self.dropout(h)
@@ -143,7 +143,7 @@ class GraphTransfomer(nn.Module):
             module.weight.data.fill_(1.0)
 
     def forward(self, blocks, x, pos):
-        gh = self.gnn(blocks, x)  # [1024, 1024]
+        gh = self.gnn(blocks, x, pos)  # [1024, 1024]
         gh = gh.unsqueeze(0)
         h = self.blocks(gh)
         h = self.ln_f(h)

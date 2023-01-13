@@ -8,7 +8,7 @@ from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborS
 import torch
 import torch.nn.functional as F
 import torchmetrics.functional as MF
-from geomodel_trans.model_visual_kit import visual_comparison_mesh
+from model_visual_kit import visual_comparison_mesh
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,8 @@ class GmeTrainer:
 
             for input_nodes, output_nodes, blocks in tqdm(test_dataloader):
                 x = blocks[0].srcdata['feat']
-                y = model(blocks, x)
+                pos = blocks[0].srcdata['position']
+                y = model(blocks, x, pos)
                 pred[output_nodes[0]:output_nodes[-1] + 1] = y.to(graph.device)
 
             visual_comparison_mesh(geodata=geodata, prediction=pred, label=graph.ndata['label'])
