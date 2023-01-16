@@ -10,17 +10,32 @@ import torch.nn.functional as F
 import torchmetrics.functional as MF
 import dgl
 import dgl.nn as dglnn
+from layers import MultiHeadSpatialLayer
 from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
 from tqdm import tqdm
 
 
 class GNN(nn.Module):
-    def __init__(self, in_feats, n_hidden, n_layers):
+    def __init__(self, coors, in_feats, out_feats, n_hidden, num_heads, n_layers):
         super().__init__()
         self.n_layers = n_layers
         self.n_hidden = n_hidden
         self.layers = nn.ModuleList()
-        self.layers.append(dglnn.SAGEConv(in_feats, n_hidden))
+        self.layers.append(MultiHeadSpatialLayer(coors, in_feats, out_feats, n_hidden, num_heads, False))
+        for l in range(1, n_layers-1):
+            self.layers.append(
+                MultiHeadSpatialLayer(coors, out_feats * num_heads, out_feats, n_hidden, num_heads, True))
+        self.layers.append(MultiHeadSpatialLayer(coors, out_feats * num_heads, out_feats, n_hidden, 1, True))
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, blocks, x):
+        h = x
+        for l, (layer, block) in enumerate(zip(self.layers, blocks)):
+            h = layer(block, h)
+            if l != len(self.layers) - 1:
+                h = F.leaky_relu(h)
+                h = self.dropout(h)
+        return h
 
 
 class SAGE(nn.Module):
@@ -124,8 +139,9 @@ class GraphTransfomer(nn.Module):
         self.config = config
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.drop = nn.Dropout(config.embd_pdrop)
-
-        self.gnn = SAGE(config.in_size, config.n_embd)
+        # coors, in_feats, out_feats, n_hidden, num_heads, n_layers
+        self.gnn = GNN(config.coors, config.in_size, config.n_embd, config.n_embd,
+                       config.gnn_n_head, config.gnn_n_layer)
         self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_embd)
         self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
@@ -142,8 +158,8 @@ class GraphTransfomer(nn.Module):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-    def forward(self, blocks, x, pos):
-        gh = self.gnn(blocks, x, pos)  # [1024, 1024]
+    def forward(self, blocks, x):
+        gh = self.gnn(blocks, x)  # [1024, 1024]
         gh = gh.unsqueeze(0)
         h = self.blocks(gh)
         h = self.ln_f(h)

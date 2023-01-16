@@ -1,7 +1,6 @@
 from sklearn import preprocessing
 import numpy as np
 import pyvista as pv
-import pyflann as pfn
 import os
 import pickle
 import scipy.spatial as spt
@@ -66,14 +65,18 @@ class GeoMeshParse(object):
         sample_op_to_idx = {sample_op: index for index, sample_op in enumerate(sample_op_type)}
 
         # 创建栅格格网格架
-        self.sample_regu_matrix(extent=extent)
+        self.sample_grid, self.output_grid_param = self.create_base_grid(extent=extent)
         # 获取采样点的标签
-        self.get_labels_standard()
+        self.get_sample_labels_standard()
         # 选择测试模型的样本形式
         if self.pre_train is False:
             for sample_op in sample_operator:
                 if sample_op not in sample_op_type:
                     break
+                # if sample_op == 'rand_pro':
+                #     self.sample_rand_pro()
+                # if sample_op == 'eq_interval':
+                #     self.sample_eq_interval()
                 if sample_op == 'rand_drills':
                     drill_pos = None
                     drill_num = 10
@@ -168,7 +171,9 @@ class GeoMeshParse(object):
             g.ndata['label'] = F.reshape(node_label, (g.num_nodes(),))
         return g
 
-    def create_empty_grid(self, extent=None):
+    # 这个函数必须要先调用
+    # 在原始grid中进行规则三维矩阵点采样，构建训练数据的格架，所有训练均在这个格架上进行
+    def create_base_grid(self, extent=None, set_scalar=True):
         if extent is not None:
             model_extent = extent
         elif self.output_grid_param is not None:
@@ -182,6 +187,14 @@ class GeoMeshParse(object):
         yrng = np.linspace(start=self.bound[2], stop=self.bound[3], num=ny)
         zrng = np.linspace(start=self.bound[4], stop=self.bound[5], num=nz)
         grid = pv.RectilinearGrid(xrng, yrng, zrng)
+        if set_scalar is True:
+            sample_points = grid.cell_centers().points
+            ckt = spt.cKDTree(self.ori_points)
+            d, pid = ckt.query(sample_points)
+            self.sample_idx = pid
+            self.sample_point = self.ori_points[self.sample_idx]
+            grid.cell_data['scalars'] = np.array(self.ori_label)[self.sample_idx]
+
         self.output_grid_param = extent
         return grid, extent
 
@@ -209,6 +222,7 @@ class GeoMeshParse(object):
             raise
         return minmax_pnt
 
+    # 将scalar转换为label, 并将其处理为从0开始的连续自然数
     def get_ori_label(self):
         if self.ori_scalar is None:
             raise ValueError
@@ -227,7 +241,7 @@ class GeoMeshParse(object):
         return label, label_num
 
     # 获取采样节点对应标签，标签形如[0,1,2,3,……]自然数列表，从0开始，依次递增
-    def get_labels_standard(self, index=None):
+    def get_sample_labels_standard(self, index=None):
         if self.ori_label is None:
             raise ValueError
         if index is not None:
@@ -297,7 +311,8 @@ class GeoMeshParse(object):
                     # 原来label为从0开始，若缺省值为0，则所有label+1
                     node_feat_data = np.array(list(map(lambda x: [x[0]+1], node_feat_data)))
                 devalues_idx = list(set(np.arange(len(self.sample_idx))) - set(self.train_idx))
-                node_feat_data[devalues_idx][0] = default_value
+                if len(devalues_idx) > 0:
+                    node_feat_data[devalues_idx][0] = default_value
                 node_feat_data = np.float32(node_feat_data)
                 node_feat_data.reshape(-1, 1)
         if self.node_feat is not None:
@@ -306,25 +321,11 @@ class GeoMeshParse(object):
             self.node_feat = node_feat_data
         return self.node_feat
 
-    # 这个函数必须要先调用
-    # 在原始grid中进行规则三维矩阵点采样，构建训练数据的格架，所有训练均在这个格架上进行
-    def sample_regu_matrix(self, extent=None):
-        if extent is None:
-            extent = [100, 100, 20]
-        self.sample_grid, self.output_grid_param = self.create_empty_grid(extent)
-        sample_points = self.sample_grid.cell_centers().points
-        ckt = spt.cKDTree(self.ori_points)
-        d, pid = ckt.query(sample_points)
-        # pid = list(set(sorted(pid)))
-        self.sample_idx = pid
-        self.sample_point = self.ori_points[self.sample_idx]
-        return pid
-
     # 训练集采样，从原始输入格网数据的cell的中心点集合中采样
     # 等间距采样
     def sample_eq_interval(self, interval=100):
         if self.sample_label is None:
-            self.get_labels_standard()
+            self.get_sample_labels_standard()
         pid = np.arange(0, len(self.sample_point), interval)
         pid = list(set(sorted(pid)))
         if self.train_idx is not None:
@@ -338,11 +339,11 @@ class GeoMeshParse(object):
     def sample_with_drills(self, drill_pos=None, drill_num=10, extent=None):
         if extent is None:
             extent = [100, 100, 20]
-        if self.output_grid_param is None:
-            self.sample_grid, self.output_grid_param = self.create_empty_grid(extent)
+        if self.sample_idx is None:
+            self.sample_grid, self.output_grid_param = self.create_base_grid(extent=extent)
         horizon_slice = self.sample_grid.slice(normal='z')
         if self.sample_label is None:
-            self.get_labels_standard()
+            self.get_sample_labels_standard()
         if drill_pos is not None:
             drill_num = len(drill_pos)
         else:
@@ -369,7 +370,7 @@ class GeoMeshParse(object):
             drills.append(drill)
         if self.train_plot_data is None:
             self.train_plot_data = []
-        self.train_plot_data.append([drill_pos, drill_num])
+        self.train_plot_data.append((drill_pos, drill_num))
 
         if self.train_plot_data_type is None:
             self.train_plot_data_type = []
@@ -388,7 +389,7 @@ class GeoMeshParse(object):
         if extent is None:
             extent = [100, 100, 20]
         if self.sample_label is None:
-            self.get_labels_standard()
+            self.get_sample_labels_standard()
         if sample_type is None:
             sample_type = {'x': 2, 'y': 2}
         if center_random is None:
@@ -396,8 +397,8 @@ class GeoMeshParse(object):
         else:
             center_random = {label: False if label not in center_random else center_random[label]
                              for label in sample_type.keys()}
-        if self.output_grid_param is None:
-            self.sample_grid, self.output_grid_param = self.create_empty_grid(extent)
+        if self.sample_idx is None:
+            self.sample_grid, self.output_grid_param = self.create_base_grid(extent=extent)
         axis_labels = ['x', 'y', 'z']
         label_to_index = {label: index for index, label in enumerate(axis_labels)}
 
@@ -460,7 +461,7 @@ class GeoMeshParse(object):
     # # 按比例随机采样
     # def sample_rand_pro(self, prop=0.8):
     #     if self.sample_label is None:
-    #         self.get_labels_standard()
+    #         self.get_sample_labels_standard()
     #     if prop >= 1 or prop <= 0:
     #         prop = 0.8
     #     points_sum = len(self.ori_points)
@@ -478,7 +479,7 @@ class GeoMeshParse(object):
     # def sample_rand_pro_label(self, prop=0.8, label=None):
     #     pid = []
     #     if self.sample_label is None:
-    #         self.get_labels_standard()
+    #         self.get_sample_labels_standard()
     #     label_dict = {}
     #     for item in np.unique(self.sample_label):
     #         label_dict[item] = []

@@ -91,9 +91,6 @@ class GmeModelList(object):
         self.access_model_data()
 
     def access_model_data(self):
-
-        mesh_paths = self.noddy_data.get_noddy_model_list_path_by_names(self.pre_train_model_list)
-        mesh_params = self.noddy_data.model_param_list_log
         self.process()
 
     def process(self):

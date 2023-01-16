@@ -17,15 +17,16 @@ class GraphTransConfig:
 
     # config.vocab_size, config.n_embd  config.embd_pdrop  n_layer out_size resid_pdrop n_head attn_pdrop
     def __init__(self, vocab_size, in_size, embd_pdrop=0.1, resid_pdrop=0.1, attn_pdrop=0.1, n_layer=12,
-                 gnn_layer_num=4, n_head=16, n_embd=512, out_size=4):
+                 gnn_layer_num=3, coors=3, n_head=2, gnn_n_head=2, n_embd=512, out_size=4):
         self.in_size = in_size  # 输入特征维度
         self.vocab_size = vocab_size  # 句子长度
-
+        self.coors = coors
         self.embd_pdrop = embd_pdrop
         self.resid_pdrop = resid_pdrop
         self.attn_pdrop = attn_pdrop
         self.n_layer = n_layer   # Transformer层数
         self.gnn_n_layer = gnn_layer_num    # gnn层数
+        self.gnn_n_head = gnn_n_head
         self.n_head = n_head    # Transformer中多头注意力的head_num
         self.n_embd = n_embd    # 隐藏层维度
         self.out_size = out_size   # 输出维度，分类数
@@ -63,7 +64,7 @@ class GmeTrainer:
         self.train_dataset = None
         self.val_dataset = None
         self.config = config
-
+        self.sample_neigh = [10, 20, 20]
         self.log_name = None
         self.iter_record_path = None
         # take over whatever gpus are on the system
@@ -81,7 +82,7 @@ class GmeTrainer:
         train_idx = data.train_idx[idx].to(self.device)
         val_idx = data.val_idx[idx].to(self.device)
         # 采样器
-        sampler = NeighborSampler([10, 20, 30, 30],  # fanout for [layer-0, layer-1, layer-2]
+        sampler = NeighborSampler(self.sample_neigh,  # fanout for [layer-0, layer-1, layer-2]
                                   prefetch_node_feats=['feat'],
                                   prefetch_labels=['label'])
 
@@ -123,7 +124,7 @@ class GmeTrainer:
         geodata = data.dataset.geodata[idx]
 
         feat = graph.ndata['feat']
-        sampler = NeighborSampler([10, 20, 30, 30],
+        sampler = NeighborSampler(self.sample_neigh,
                                   prefetch_node_feats=['feat'],
                                   prefetch_labels=['label'])
 
@@ -172,9 +173,8 @@ class GmeTrainer:
                 # forward the model
                 with torch.set_grad_enabled(is_train):  # torch.set_grad_enabled(False)与torch.no_grad()等价
                     x = blocks[0].srcdata['feat']
-                    pos = blocks[0].srcdata['position']
                     y = blocks[-1].dstdata['label']
-                    y_hat = model(blocks, x, pos)
+                    y_hat = model(blocks, x)
                     loss = F.cross_entropy(y_hat, y)
                     losses.append(loss.item())
                     total_loss += loss.item()

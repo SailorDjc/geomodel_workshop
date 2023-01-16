@@ -24,14 +24,12 @@ if __name__ == '__main__':
     # load and preprocess dataset
     print('Loading data')
     path_1 = os.path.abspath('..')
-    root_path = os.path.join(path_1, 'geomodel_trans')
+    root_path = os.path.join(path_1, 'geomodel_workshop')
     noddyData = NoddyModelData(root=r'F:\NoddyDataset', max_model_num=30)
     noddy_models = noddyData.get_noddy_model_list_names(model_num=30, sample_random=False)
     pre_train_model_list = []
     for item in [16, 1, 22, 8, 7]:
         pre_train_model_list.append(noddy_models[item])
-        mesh = noddyData.get_grid_model(noddy_models[item])
-        mesh.plot()
     # 只有第一次输入的noddy_model可以用到，之后代码会自动加载数据缓存
     gme_models = GmeModelList('gme_model', root=root_path, pre_train_model_list=pre_train_model_list[:2],
                               train_model_list=[pre_train_model_list[-1]], noddy_data=noddyData,
@@ -52,11 +50,12 @@ if __name__ == '__main__':
     print("in_size:", in_size)
 
     # 输出类别数
+    # 要将 C:\Users\用户名\.dgl\gme_model-as-nodepred 删除更新
     out_size = dataset.num_classes['labels'][model_idx]
 
     vocab_size = 512
     # 模型结构相关参数
-    mconf = GraphTransConfig(vocab_size, in_size, n_head=8, n_embd=512, out_size=out_size)
+    mconf = GraphTransConfig(vocab_size, in_size, n_head=2, n_embd=256, out_size=out_size)
     # 构建预测模型
     model = GraphTransfomer(mconf)
     trainer = GmeTrainer(model, dataset, tconf)
