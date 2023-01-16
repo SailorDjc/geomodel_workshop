@@ -238,6 +238,8 @@ class NoddyModelData(object):
             tar_files = self.get_raw_dataset_list()
             for file_name in tar_files:
                 if file_name in self.dataset_list:  # 加载在数据集列表中的数据集
+                    # if file_name in self.dataset_list_log.keys():
+                    #     continue
                     file = file_name + '.tar'
                     dir_tmp = os.path.join(self.raw_dir_path, file)
                     tar = tarfile.open(dir_tmp)
@@ -307,6 +309,7 @@ class NoddyModelData(object):
             files = os.listdir(path)
         else:
             print('data repo not exist')
+            return None
         for file in files:
             cur_path = os.path.join(path, file)
             if os.path.isdir(cur_path):
