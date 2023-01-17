@@ -55,8 +55,7 @@ class GeoMeshParse(object):
             node_feat = ['position']
         if extent is None:
             extent = [100, 100, 20]
-        if sample_operator is None:
-            sample_operator = ['regu_matrix']
+
         if edge_feat is None:
             edge_feat = ['euclidean']
         if self.normalize is True:

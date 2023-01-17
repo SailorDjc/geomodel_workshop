@@ -112,7 +112,7 @@ def visual_sample_data(geodata, plotter=None, camera=None, plot_points=False):
 
 def visual_comparison_mesh(geodata, prediction, label, plotter=None):
 
-    gen_mesh, _ = geodata.create_empty_grid(extent=geodata.output_grid_param)
+    gen_mesh, _ = geodata.create_base_grid(extent=geodata.output_grid_param)
     if isinstance(prediction, torch.Tensor):
         prediction = prediction.cpu().numpy()
     scalars = np.argmax(prediction, axis=1)

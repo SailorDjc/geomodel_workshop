@@ -10,22 +10,21 @@ import torch.nn.functional as F
 import torchmetrics.functional as MF
 import dgl
 import dgl.nn as dglnn
-from layers import MultiHeadSpatialLayer
+from layers import MultiHeadSpatialLayer, SpacialConv
 from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
 from tqdm import tqdm
 
 
 class GNN(nn.Module):
-    def __init__(self, coors, in_feats, out_feats, n_hidden, num_heads, n_layers):
+    def __init__(self, coors, in_feats, out_feats, n_hidden, n_layers):
         super().__init__()
         self.n_layers = n_layers
         self.n_hidden = n_hidden
         self.layers = nn.ModuleList()
-        self.layers.append(MultiHeadSpatialLayer(coors, in_feats, out_feats, n_hidden, num_heads, False))
-        for l in range(1, n_layers-1):
+        self.layers.append(SpacialConv(coors, in_feats, out_feats, n_hidden))
+        for l in range(1, n_layers):
             self.layers.append(
-                MultiHeadSpatialLayer(coors, out_feats * num_heads, out_feats, n_hidden, num_heads, True))
-        self.layers.append(MultiHeadSpatialLayer(coors, out_feats * num_heads, out_feats, n_hidden, 1, True))
+                SpacialConv(coors, out_feats, out_feats, n_hidden))
         self.dropout = nn.Dropout(0.5)
 
     def forward(self, blocks, x):
@@ -140,8 +139,7 @@ class GraphTransfomer(nn.Module):
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.drop = nn.Dropout(config.embd_pdrop)
         # coors, in_feats, out_feats, n_hidden, num_heads, n_layers
-        self.gnn = GNN(config.coors, config.in_size, config.n_embd, config.n_embd,
-                       config.gnn_n_head, config.gnn_n_layer)
+        self.gnn = GNN(config.coors, config.in_size, config.n_embd, config.gnn_n_head, config.gnn_n_layer)
         self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_embd)
         self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)

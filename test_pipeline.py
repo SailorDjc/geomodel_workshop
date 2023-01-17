@@ -25,12 +25,15 @@ if __name__ == '__main__':
     print('Loading data')
     path_1 = os.path.abspath('..')
     root_path = os.path.join(path_1, 'geomodel_workshop')
-    noddyData = NoddyModelData(root=r'F:\NoddyDataset', max_model_num=30)
+    noddyData = NoddyModelData(root=r'F:\djc\NoddyDataset', max_model_num=30)
     noddy_models = noddyData.get_noddy_model_list_names(model_num=30, sample_random=False)
     pre_train_model_list = []
     for item in [16, 1, 22, 8, 7]:
         pre_train_model_list.append(noddy_models[item])
     # 只有第一次输入的noddy_model可以用到，之后代码会自动加载数据缓存
+    mesh = noddyData.get_grid_model(pre_train_model_list[-1])
+    mesh.plot()
+
     gme_models = GmeModelList('gme_model', root=root_path, pre_train_model_list=pre_train_model_list[:2],
                               train_model_list=[pre_train_model_list[-1]], noddy_data=noddyData,
                               sample_operator=['axis_sections'],
@@ -40,10 +43,10 @@ if __name__ == '__main__':
     # initialize a trainer instance and kick off training
     # 模型训练相关参数
 
-    tconf = GmeTrainerConfig(max_epochs=800, num_workers=4,
+    tconf = GmeTrainerConfig(max_epochs=572, num_workers=4,
                              ckpt_path=os.path.join(root_path, 'processed', 'latest_tran.pth'))
 
-    model_idx = 0
+    model_idx = 2
     g = dataset[model_idx]
     # create GraphSAGE model
     in_size = g.ndata['feat'].shape[-1]
@@ -62,7 +65,7 @@ if __name__ == '__main__':
     # model training
     print('Training...')
 
-    trainer.train()
+    trainer.train(data_split_idx=model_idx)
 
 
 

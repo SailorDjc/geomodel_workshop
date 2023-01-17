@@ -9,6 +9,7 @@ import torch
 from dgl.data.utils import load_graphs, save_graphs
 from sklearn.model_selection import train_test_split
 from geodata_process import GeoMeshParse
+import pandas as pd
 
 
 def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None, add_inverse_edge=False):
@@ -67,35 +68,42 @@ def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None,
 class GmeModelList(object):
     def __init__(self, name, root, pre_train_model_list=None, train_model_list=None,
                  sample_operator=None, noddy_data=None, self_loop=False, add_inverse_edge=True,
-                 model_extern=None):
-        #
+                 model_extern=None, data_type='Noddy', dat_file_path=None, file_header=None):
+        # data_type数据集类型，'Noddy': 来自Noddy数据集， 'Wells': 钻井 .dat文件1格式， 'Points': 散点 .dat文件格式
+        # 注：.dat文件格式与Voxler软件一致
         if train_model_list is None:   # 一般只装一个model
             train_model_list = []
         if pre_train_model_list is None:  # 预训练模型， 列表中有多个模型
             pre_train_model_list = []
 
-        if sample_operator is None:
-            sample_operator = ['regu_matrix']
         self.noddy_data = noddy_data
         self.geodata = []
-        self.pre_train_model_list = pre_train_model_list  # 预训练
-        self.train_model_list = train_model_list  # 训练任务数据
+        self.pre_train_model_list = pre_train_model_list  # 预训练模型数据
+        self.train_model_list = train_model_list  # 训练任务模型数据
         self.model_extern = model_extern
-        self.sample_operator = sample_operator  # ['rand_drills', 'axis_sections']
-        self.self_loop = self_loop
-        self.add_inverse_edge = add_inverse_edge
-        self.root = root
-        self.name = name
-        self.num_classes = None
+        # 如果 model_extern为None,则使用原始Noddy数据集中的格网尺寸
+        self.sample_operator = sample_operator  # ['rand_drills', 'axis_sections'] 设置已知数据采样方式
+        self.self_loop = self_loop               # 添加自环
+        self.add_inverse_edge = add_inverse_edge  # 无向图
+        self.root = root              # 代码工作空间根目录， 会默认将处理后数据存放在 root/processed目录下
+        self.name = name              # 数据集名称
+        self.num_classes = None       # 数据集分类数目
+
+        self.data_type = data_type
+        self.dat_file_path = dat_file_path
+        self.file_header = file_header # 有无表头
         super(GmeModelList, self).__init__()
         self.access_model_data()
 
     def access_model_data(self):
-        self.process()
+        if self.data_type == 'Noddy':
+            self.process_noddy_data()
+        else:
+            self.process_dat_file()
 
-    def process(self):
+    def process_noddy_data(self):
         processed_dir = os.path.join(self.root, 'processed')
-        processed_file_path = os.path.join(processed_dir, 'gme_data_processed')
+        processed_file_path = os.path.join(processed_dir, 'gme_data_processed')  # 存储dgl_graph图数据
         processed_geodata_path = os.path.join(self.root, 'processed', 'geodata.pkl')
         # 如果存在处理后数据，则直接从文件加载
         if os.path.exists(processed_file_path):
@@ -105,15 +113,23 @@ class GmeModelList(object):
         else:
             # 批量处理每一个地质模型数据文件
             dgl_graph_list = []
-            if self.model_extern is None:
-                self.model_extern = [100, 100, 30]
+
             labels_num_list = []
             for model_idex in np.arange(len(self.pre_train_model_list)):
                 mesh = self.noddy_data.get_grid_model(self.pre_train_model_list[model_idex])
 
+                if self.model_extern is None:
+                    model_param_list_log = self.noddy_data.model_param_list_log
+                    if self.pre_train_model_list[model_idex] in model_param_list_log.keys():
+                        model_extern = model_param_list_log[self.pre_train_model_list[model_idex]][:3]
+                    else:
+                        model_extern = [100, 100, 30]
+                else:
+                    model_extern = self.model_extern
+
                 geodata = GeoMeshParse(mesh, normalize=False)
 
-                dgl_graph = geodata.execute(sample_operator=self.sample_operator, extent=self.model_extern,
+                dgl_graph = geodata.execute(sample_operator=self.sample_operator, extent=model_extern,
                                             edge_feat=['euclidean'], node_feat=['stratum'],  #
                                             center_random={'x': True, 'y': True},
                                             sample_type={'x': 2, 'y': 3}, drill_num=15)
@@ -127,8 +143,17 @@ class GmeModelList(object):
                 dgl_graph_list.append(dgl_graph)
             if self.train_model_list is not None:
                 mesh = self.noddy_data.get_grid_model(self.train_model_list[0])
+                if self.model_extern is None:
+                    model_param_list_log = self.noddy_data.model_param_list_log
+                    if self.train_model_list[0] in model_param_list_log.keys():
+                        model_extern = model_param_list_log[self.train_model_list[0]][:3]
+                    else:
+                        model_extern = [100, 100, 30]
+                else:
+                    model_extern = self.model_extern
+
                 geodata = GeoMeshParse(mesh, normalize=False, pre_train=False)
-                dgl_graph = geodata.execute(sample_operator=self.sample_operator, extent=self.model_extern,
+                dgl_graph = geodata.execute(sample_operator=self.sample_operator, extent=model_extern,
                                             edge_feat=['euclidean'], node_feat=['stratum'],  #
                                             center_random={'x': True, 'y': True},
                                             sample_type={'x': 2, 'y': 3}, drill_num=15)
@@ -147,6 +172,10 @@ class GmeModelList(object):
             self.save_geodata()
             self.graph, self.num_classes = load_graphs(processed_file_path)
             self.geodata = self.load_geodata()
+
+    def process_dat_file(self):
+        if self.dat_file_path is not None:
+            df = pd.read_csv(self.dat_file_path)
 
     def get_split_idx(self, idx):
         train, valid, test = None, None, None

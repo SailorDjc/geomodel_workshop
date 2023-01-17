@@ -101,11 +101,13 @@ class GmeTrainer:
     def load_checkpoint(self):
         raw_model = self.model.module if hasattr(self.model, "module") else self.model
         if os.path.exists(self.config.ckpt_path):
-            weights = torch.load(self.config.ckpt_path, map_location='cpu')
+            pretrain_dict = torch.load(self.config.ckpt_path, map_location='cpu')
             # 当前网络模型参数
             model_dict = raw_model.state_dict()
             # 更新参数，保存的模型参数与当前网络参数有部分不同
-            model_dict.update(weights)
+            pretrain_dict = {k: v for k, v in pretrain_dict.items() if (k in model_dict and 'p_layer' not in k)}
+
+            model_dict.update(pretrain_dict)
             raw_model.load_state_dict(model_dict)
             print("loading ", self.config.ckpt_path)
         return raw_model
@@ -139,10 +141,8 @@ class GmeTrainer:
 
             for input_nodes, output_nodes, blocks in tqdm(test_dataloader):
                 x = blocks[0].srcdata['feat']
-                pos = blocks[0].srcdata['position']
-                y = model(blocks, x, pos)
+                y = model(blocks, x)
                 pred[output_nodes[0]:output_nodes[-1] + 1] = y.to(graph.device)
-
             visual_comparison_mesh(geodata=geodata, prediction=pred, label=graph.ndata['label'])
             pred_test = pred[test_idx]
             label_test = graph.ndata['label'][test_idx].to(pred_test.device)
@@ -170,6 +170,7 @@ class GmeTrainer:
             total_loss = 0  # 每一epoch的总loss
             pbar = tqdm(enumerate(loader), total=len(loader)) if is_train else enumerate(loader)
             for it, (input_nodes, output_nodes, blocks) in pbar:
+                torch.cuda.empty_cache()
                 # forward the model
                 with torch.set_grad_enabled(is_train):  # torch.set_grad_enabled(False)与torch.no_grad()等价
                     x = blocks[0].srcdata['feat']

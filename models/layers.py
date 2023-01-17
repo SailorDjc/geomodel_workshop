@@ -25,7 +25,7 @@ class SpacialConv(nn.Module):
                  bias=True,
                  norm=None,
                  activation=None,
-                 eps=1e-7, ):
+                 eps=1e-7,):
         super(SpacialConv, self).__init__()
         valid_aggre_types = {'cat', 'mean'}
         if aggregator_type not in valid_aggre_types:
@@ -52,6 +52,7 @@ class SpacialConv(nn.Module):
             self.bias = nn.parameter.Parameter(torch.zeros(self._out_feats))
         else:
             self.register_buffer('bias', None)
+        self.res_fc = None
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -63,19 +64,6 @@ class SpacialConv(nn.Module):
         nn.init.xavier_uniform_(self.fc_spatial.weight, gain=gain)
         nn.init.xavier_uniform_(self.fc_neigh.weight, gain=gain)
 
-    # def _compatibility_check(self):
-    #     """Address the backward compatibility issue brought by #2747"""
-    #     if not hasattr(self, 'bias'):
-    #         dgl_warning("You are loading a GraphSAGE model trained from a old version of DGL, "
-    #                     "DGL automatically convert it to be compatible with latest version.")
-    #         bias = self.fc_neigh.bias
-    #         self.fc_neigh.bias = None
-    #         if hasattr(self, 'fc_self'):
-    #             if bias is not None:
-    #                 bias = bias + self.fc_self.bias
-    #                 self.fc_self.bias = None
-    #         self.bias = bias
-
     def edges_weight_func(self, edges):
         relative_pos = edges.dst['position'] - edges.src['position']
         spatial_scal = torch.norm(relative_pos, dim=1) + self.eps
@@ -84,10 +72,8 @@ class SpacialConv(nn.Module):
         ws = torch.div(w, spatial_scal)
         spatial_scaling = F.leaky_relu(self.fc_spatial(ws))  # [n_edges, coors, hidden_size * in_feats]
         n_edges = spatial_scaling.size(0)
-        # edges.src['h']  [n_edges, in_feats, 1]
         result = spatial_scaling.reshape(n_edges, self._in_src_feats, -1) * edges.src['h'].unsqueeze(-1)
-        # [n_edges, coors, in_feats, hidden_size]
-        return {'e_sp_wight': result.view(n_edges, -1)}   # [n_edges, hidden_size * in_feats]
+        return {'e_sp_wight': result.view(n_edges, -1)}
 
     def message_func(self, edges):
         edge_weight_neigh = edges.data['e_sp_wight']
@@ -122,11 +108,11 @@ class SpacialConv(nn.Module):
 
             graph.update_all(self.message_func, self.reduce_func)
             h_neigh = graph.dstdata['neigh_h']
-            if self._aggre_type == 'mean':
-                h_neigh = self.fc_neigh(h_neigh)  # [n_nodes, out_feats]
+            # if self._aggre_type == 'mean':
+            h_neigh = self.fc_neigh(h_neigh)  # [n_nodes, out_feats]
             # self._aggre_type == 'spatial':
-            else:
-                raise KeyError('Aggregator type {} not recognized.'.format(self._aggre_type))
+            # else:
+            #     raise KeyError('Aggregator type {} not recognized.'.format(self._aggre_type))
 
             # GraphSAGE GCN does not require fc_self.
             rst = self.fc_self(h_self) + h_neigh
@@ -166,7 +152,20 @@ class MultiHeadSpatialLayer(nn.Module):
         else:
             # merge using average
             rst = torch.mean(torch.stack(head_outs))
-        if self.res_fc is not None:
-            resval = self.res_fc(h)
-            rst = resval + rst
+        # if self.res_fc is not None:
+        #     resval = self.res_fc(h)
+        #     rst = resval + rst
         return rst
+
+    # def _compatibility_check(self):
+    #     """Address the backward compatibility issue brought by #2747"""
+    #     if not hasattr(self, 'bias'):
+    #         dgl_warning("You are loading a GraphSAGE model trained from a old version of DGL, "
+    #                     "DGL automatically convert it to be compatible with latest version.")
+    #         bias = self.fc_neigh.bias
+    #         self.fc_neigh.bias = None
+    #         if hasattr(self, 'fc_self'):
+    #             if bias is not None:
+    #                 bias = bias + self.fc_self.bias
+    #                 self.fc_self.bias = None
+    #         self.bias = bias
