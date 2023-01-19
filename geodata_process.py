@@ -11,42 +11,55 @@ import torch
 import copy
 import dgl.backend as F
 from sklearn.model_selection import train_test_split
+import pandas as pd
+from tqdm import tqdm
 
 
 class GeoMeshParse(object):
-    def __init__(self, mesh, normalize=False, pre_train=True):  # , index_path, create_flann=False
+    def __init__(self, mesh=None, name=None, normalize=False, pre_train=True, is_noddy=True):
         self.data = mesh
-
+        self.name = name
         self.normalize = normalize  # 坐标是否归一化
-        self.bound = mesh.bounds  # (xmin, xmax, ymin, ymax, zmin, zmax)
-        self.center = mesh.center   # 输入mesh的中心点坐标
-
-        # ori 即输入的原始地质格网数据
+        if mesh is not None:
+            self.bound = mesh.bounds  # (xmin, xmax, ymin, ymax, zmin, zmax)
+            self.center = mesh.center  # 输入mesh的中心点坐标
+            # ori 即输入的原始地质格网数据, 原始模型数据均不做更改，坐标、标签变换在 sample数据中进行
+            self.ori_points = mesh.cell_centers().points
+            self.ori_scalar = mesh.active_scalars
+            self.ori_label, self.ori_label_num = self.get_ori_label()  # 获取 ori_label
+        else:
+            self.bound = None
+            self.center = None
+            self.ori_points = None
+            self.ori_scalar = None
+            self.ori_label, self.ori_label_num = None, None
         self.ori_data_param = None  # 原始数据的维度 (nx, ny, nz)
-        self.ori_points = mesh.cell_centers().points
-        self.ori_scalar = mesh.active_scalars
-        self.ori_label, self.ori_label_num = self.get_ori_label()   # 获取 ori_label
-
         # sample数据，是一个规则grid格网，方便训练数据的可视化
-        self.sample_label = None        # np.array
-        self.sample_label_num = None    # int
-        self.sample_point = None        # list
+        self.sample_label = None  # np.array
+        self.sample_label_num = None  # int
+        self.grid_matrix_point = None  # list 格网点阵
         # self.sample_idx 是与 self.sample_grid 的每一个单元格一一对应的，是对ori_points的规则栅格采样，允许有重复，长度与sample_grid
         # 的单元格数目一致
-        self.sample_idx = None          # list
-        self.sample_grid = None         # mesh
+        # 当is_nodddy=True时，是从ori_points场数据中进行稀疏采样，当is_noddy=False时，则是将不规则离散点映射到建模网格上，
+        # 前者是多采少，后者是少采多。对于前者，sample_idx的主要作用是作为格网数据与原始数据的映射索引，ori_points[sample_idx]是网格点
+        # 阵列；而对于后者，ori_points相对于格网点阵是少量的，是唯一知道标签的点数据，需要将其与一一映射到各网点上，网格点阵没有映射到的点的
+        # 标签是未知的，此时的 sample_idx失去了原来的作用，应当为None，这时已知标签的点与格网点的映射索引应为 train_idx
+        # train_idx，其余为None
+        self.sample_idx = None  # list
+        self.sample_grid = None  # mesh
         #
-        self.edge_list = None           # list 边集（采样数据，包括训练数据与测试数据）
-        self.output_grid_param = None   # 输出grid的extern[3]: nx,ny,nz
+        self.edge_list = None  # list 边集（采样数据，包括训练数据与测试数据）
+        self.output_grid_param = None  # 输出grid的extern[3]: nx,ny,nz
 
         # 训练数据样本构建，随机散点、钻孔、剖面，作为带标签数据输入模型进行训练
-        self.pre_train = pre_train     # 是否为预训练，True则不进行钻孔、剖面采样，False采样设置train_idx
-        self.train_idx = None          # list 训练数据的idx索引
-        self.train_plot_data = None    # 用于可视化采样数据，这里只存储采样参数，不存模型数据
-        self.train_plot_data_type = None   # 采样数据类型(散点、钻孔、剖面)
-        self.train_sample_operator = None     # 采样操作类型
+        self.pre_train = pre_train  # 是否为预训练，True则不进行钻孔、剖面采样，False则采样设置train_idx
+        self.is_noddy = is_noddy  # 处理数据是否为Noddy，如果不是，则不进行任何采样处理
+        self.train_idx = None  # list 训练数据的idx索引
+        self.train_plot_data = None  # 用于可视化采样数据，这里只存储采样参数，不存模型数据
+        self.train_plot_data_type = None  # 采样数据类型(散点、钻孔、剖面)
+        self.train_sample_operator = None  # 采样操作类型
 
-        # 图特征
+        # 图特征  下面两个变量用来装数据
         self.node_feat = None  # 图节点特征    np.float32
         self.edge_feat = None  # 图边特征      np.float32
 
@@ -54,48 +67,53 @@ class GeoMeshParse(object):
         if node_feat is None:
             node_feat = ['position']
         if extent is None:
-            extent = [100, 100, 20]
+            extent = [100, 100, 30]
 
         if edge_feat is None:
             edge_feat = ['euclidean']
-        if self.normalize is True:
-            self.points_normalize()
         sample_op_type = ['rand_pro', 'eq_interval', 'rand_drills', 'axis_sections']
         sample_op_to_idx = {sample_op: index for index, sample_op in enumerate(sample_op_type)}
 
         # 创建栅格格网格架
-        self.sample_grid, self.output_grid_param = self.create_base_grid(extent=extent)
+        if self.ori_scalar is not None:
+            self.sample_grid, self.output_grid_param = self.create_base_grid(extent=extent, set_scalar=True)
+        else:
+            self.sample_grid, self.output_grid_param = self.create_base_grid(extent=extent, set_scalar=False)
+        if self.normalize is True:
+            self.points_normalize()
         # 获取采样点的标签
         self.get_sample_labels_standard()
         # 选择测试模型的样本形式
         if self.pre_train is False:
-            for sample_op in sample_operator:
-                if sample_op not in sample_op_type:
-                    break
-                # if sample_op == 'rand_pro':
-                #     self.sample_rand_pro()
-                # if sample_op == 'eq_interval':
-                #     self.sample_eq_interval()
-                if sample_op == 'rand_drills':
-                    drill_pos = None
-                    drill_num = 10
-                    if 'drill_pos' in kwargs.keys():
-                        drill_pos = kwargs['drill_pos']
-                    if 'drill_num' in kwargs.keys():
-                        drill_num = kwargs['drill_num']
-                    self.sample_with_drills(drill_pos=drill_pos, drill_num=drill_num, extent=extent)
-                if sample_op == 'axis_sections':
-                    sample_type = None
-                    center_random = False
-                    if 'sample_type' in kwargs.keys():
-                        sample_type = kwargs['sample_type']
-                    if 'center_random' in kwargs.keys():
-                        center_random = kwargs['center_random']
-                    self.sample_with_sections_along_axis(sample_type=sample_type, center_random=center_random,
-                                                         extent=extent)
+            if self.is_noddy:
+                for sample_op in sample_operator:
+                    if sample_op not in sample_op_type:
+                        break
+                    # if sample_op == 'rand_pro':
+                    #     self.sample_rand_pro()
+                    # if sample_op == 'eq_interval':
+                    #     self.sample_eq_interval()
+                    if sample_op == 'rand_drills':
+                        drill_pos = None
+                        drill_num = 10
+                        if 'drill_pos' in kwargs.keys():
+                            drill_pos = kwargs['drill_pos']
+                        if 'drill_num' in kwargs.keys():
+                            drill_num = kwargs['drill_num']
+                        self.sample_with_drills(drill_pos=drill_pos, drill_num=drill_num, extent=extent)
+                    if sample_op == 'axis_sections':
+                        sample_type = None
+                        center_random = False
+                        if 'sample_type' in kwargs.keys():
+                            sample_type = kwargs['sample_type']
+                        if 'center_random' in kwargs.keys():
+                            center_random = kwargs['center_random']
+                        self.sample_with_sections_along_axis(sample_type=sample_type, center_random=center_random,
+                                                             extent=extent)
         else:
-            x = np.arange(len(self.sample_idx))
-            self.train_idx, _ = train_test_split(x, test_size=0.2)
+            if self.is_noddy:
+                x = np.arange(len(self.grid_matrix_point))
+                self.train_idx, _ = train_test_split(x, test_size=0.2)
         # 生成三角网剖分
         self.get_triangulate_edges()
         # 生成边权重，以距离作为边权
@@ -113,7 +131,7 @@ class GeoMeshParse(object):
 
         # 为每一个节点添加一个固定属性-坐标 coord
         # edge_list  node_feat edge_feat node_label add_inverse_edge
-
+        print('Creating Dgl Graph Data')
         num_node = len(node_feat)
         num_edge = edge_list.shape[1]
         # 标签
@@ -152,7 +170,7 @@ class GeoMeshParse(object):
         else:
             graph['node_feat'] = None
         # 记录每一个图节点的空间坐标
-        sample_points = np.float32(self.sample_point)
+        sample_points = np.float32(self.grid_matrix_point)
         graph['position'] = sample_points[0:num_node]
 
         graph['num_nodes'] = num_node
@@ -172,7 +190,7 @@ class GeoMeshParse(object):
 
     # 这个函数必须要先调用
     # 在原始grid中进行规则三维矩阵点采样，构建训练数据的格架，所有训练均在这个格架上进行
-    def create_base_grid(self, extent=None, set_scalar=True):
+    def create_base_grid(self, extent=None, set_scalar=False):
         if extent is not None:
             model_extent = extent
         elif self.output_grid_param is not None:
@@ -191,22 +209,26 @@ class GeoMeshParse(object):
             ckt = spt.cKDTree(self.ori_points)
             d, pid = ckt.query(sample_points)
             self.sample_idx = pid
-            self.sample_point = self.ori_points[self.sample_idx]
+            self.grid_matrix_point = self.ori_points[self.sample_idx]
             grid.cell_data['scalars'] = np.array(self.ori_label)[self.sample_idx]
-
-        self.output_grid_param = extent
-        return grid, extent
+        else:
+            # 处理 .dat 数据
+            self.grid_matrix_point = grid.cell_centers().points
+            pid = grid.find_containing_cell(self.ori_points)
+            self.train_idx = pid
+        self.output_grid_param = model_extent
+        return grid, self.output_grid_param
 
     def is_connected_graph(self):
-        if self.sample_point is None or self.edge_list is None:
+        if self.grid_matrix_point is None or self.edge_list is None:
             return 'error'
         else:
             graph = nx.Graph(self.edge_list)
             is_connected = nx.is_connected(graph)
             return is_connected
 
-    # 如果normalize为False， 临时输出归一化坐标，但是对self.sample_point不做更新
-    def points_normalize(self, normalize=True, index=None):
+    # 如果normalize为False， 临时输出归一化坐标，但是对self.grid_matrix_point不做更新
+    def points_normalize(self, normalize=False, index=None):
         minmax_pnt = preprocessing.MinMaxScaler().fit_transform(self.ori_points)
         # index 是采样的索引index, 外部传入或内部设置
         if index is not None and isinstance(index, list):
@@ -215,7 +237,7 @@ class GeoMeshParse(object):
         elif self.sample_idx is not None:
             minmax_pnt = minmax_pnt[self.sample_idx]
             if normalize is True:
-                self.sample_point = minmax_pnt
+                self.grid_matrix_point = minmax_pnt
                 self.normalize = normalize
         else:
             raise
@@ -247,6 +269,18 @@ class GeoMeshParse(object):
             label = self.ori_label[index]
         elif self.sample_idx is not None:
             label = np.array(self.ori_label)[self.sample_idx]
+        elif self.is_noddy is False:
+            grid_point_label = []
+            for lid in np.arange(len(self.grid_matrix_point)):
+                if lid not in self.train_idx:
+                    grid_point_label.append([-1])
+                else:
+                    o_id = self.train_idx.index(lid)
+                    o_label = self.ori_label[o_id]
+                    grid_point_label.append([o_label])
+            self.sample_label = grid_point_label
+            unique_grid_label = np.unique(grid_point_label)
+            self.sample_label_num = len(unique_grid_label)
         else:
             raise ValueError
         unique_label = np.unique(label)
@@ -257,16 +291,18 @@ class GeoMeshParse(object):
 
     # 构建图结构边集合，采用delaunay三角剖分
     def get_triangulate_edges(self, pid=None):
+        print('Building Delaunay Tetgen')
         edge_list = []
         if pid is not None:
             vertex = self.ori_point[pid]
-        elif self.sample_idx is not None:
-            vertex = self.sample_point
+        elif self.grid_matrix_point is not None:
+            vertex = self.grid_matrix_point
         else:
             vertex = self.ori_points
         tri = spt.Delaunay(vertex)
         tet_list = tri.simplices
-        for tet in tet_list:
+        pbar = tqdm(enumerate(tet_list), total=len(tet_list))
+        for it, tet in pbar:
             for n_i in np.arange(len(tet)):
                 for n_j in np.arange(n_i + 1, len(tet)):
                     edge = [tet[n_i], tet[n_j]]
@@ -285,7 +321,7 @@ class GeoMeshParse(object):
         if normalize is True:
             sample_points = self.points_normalize()
         else:
-            sample_points = self.ori_points[self.sample_idx]
+            sample_points = self.grid_matrix_point
         for item in self.edge_list:
             if edge_feat == 'euclidean':
                 coord_i = sample_points[item[0]]
@@ -302,14 +338,14 @@ class GeoMeshParse(object):
     def get_node_feat(self, node_feat='stratum', has_train=True, default_value=0):
         node_feat_data = None
         if node_feat == 'position':
-            node_feat_data = np.float32(self.sample_point)
+            node_feat_data = np.float32(self.grid_matrix_point)
         if node_feat == 'stratum':
             node_feat_data = np.float32(self.sample_label)
             if has_train is True and self.train_idx is not None:
                 if default_value == 0:
                     # 原来label为从0开始，若缺省值为0，则所有label+1
-                    node_feat_data = np.array(list(map(lambda x: [x[0]+1], node_feat_data)))
-                devalues_idx = list(set(np.arange(len(self.sample_idx))) - set(self.train_idx))
+                    node_feat_data = np.array(list(map(lambda x: [x[0] + 1], node_feat_data)))
+                devalues_idx = list(set(np.arange(len(self.grid_matrix_point))) - set(self.train_idx))
                 if len(devalues_idx) > 0:
                     node_feat_data[devalues_idx][0] = default_value
                 node_feat_data = np.float32(node_feat_data)
@@ -325,7 +361,7 @@ class GeoMeshParse(object):
     def sample_eq_interval(self, interval=100):
         if self.sample_label is None:
             self.get_sample_labels_standard()
-        pid = np.arange(0, len(self.sample_point), interval)
+        pid = np.arange(0, len(self.grid_matrix_point), interval)
         pid = list(set(sorted(pid)))
         if self.train_idx is not None:
             self.train_idx.extend(pid)
@@ -351,7 +387,7 @@ class GeoMeshParse(object):
             drill_pos = random.sample(points, drill_num)
 
         pids = []
-        ckt = spt.cKDTree(self.sample_point)
+        ckt = spt.cKDTree(self.grid_matrix_point)
         drills = pv.MultiBlock()
         for drill_id in np.arange(drill_num):
             pos = drill_pos[drill_id]
@@ -402,7 +438,7 @@ class GeoMeshParse(object):
         label_to_index = {label: index for index, label in enumerate(axis_labels)}
 
         pids = []
-        ckt = spt.cKDTree(self.sample_point)
+        ckt = spt.cKDTree(self.grid_matrix_point)
 
         sections = pv.MultiBlock()
 
@@ -456,6 +492,48 @@ class GeoMeshParse(object):
         else:
             self.train_idx = pids
         return pids
+
+    def set_wells_from_dat_file(self, dat_file_path, file_header=None):
+        df = pd.read_table(dat_file_path, header=file_header, sep='\t', encoding='utf-8')
+
+    def set_points_from_dat_file(self, dat_file_path, **kwargs):
+        if not os.path.exists(dat_file_path):
+            raise ValueError
+        index_col = None
+        use_cols = [0, 1, 2, 3]
+        file_header = None
+        names = ['x', 'y', 'z', 'label']
+        if 'index_col' in kwargs.keys():
+            index_col = kwargs['index_col']
+        if 'names' in kwargs.keys():
+            names = kwargs['names']
+        if 'use_cols' in kwargs.keys():
+            use_cols = kwargs['use_cols']
+        if 'file_header' in kwargs.keys():
+            file_header = kwargs['file_header']
+        # usecols=[0, 1, 2, 3]
+        df = pd.read_table(dat_file_path, header=file_header, usecols=names,
+                           skip_blank_lines=False, comment="#", sep='\t', encoding='utf-8')
+        if file_header is not None and names is not None and len(names) == len(use_cols):
+            df.columns = names
+        points = [df.x, df.y, df.z]
+        self.name = os.path.splitext(os.path.basename(dat_file_path))[0]
+        self.ori_points = points
+        if len(points) > 3:
+            self.bound = [min(points[:, 0]), max(points[:, 0]), min(points[:, 1]), max(points[:, 1]),
+                          min(points[:, 2]), max(points[:, 2])]
+            self.center = [(self.bound[0] + self.bound[1]) / 2, (self.bound[3] + self.bound[4]) / 2,
+                           (self.bound[5] + self.bound[6]) / 2]
+        label_dict = {}
+        li = 0
+        for label in df.label.unique():
+            label_dict[label] = li
+            li += 1
+        df['stratum'] = df.label
+        df = df.replace({'stratum': label_dict})
+        self.ori_label = df['stratum']
+        self.ori_label_num = li
+
 
     # # 按比例随机采样
     # def sample_rand_pro(self, prop=0.8):

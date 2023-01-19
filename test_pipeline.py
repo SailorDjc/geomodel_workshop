@@ -30,14 +30,18 @@ if __name__ == '__main__':
     pre_train_model_list = []
     for item in [16, 1, 22, 8, 7]:
         pre_train_model_list.append(noddy_models[item])
+        # mesh = noddyData.get_grid_model(noddy_models[item])
+        # mesh.plot()
     # 只有第一次输入的noddy_model可以用到，之后代码会自动加载数据缓存
-    mesh = noddyData.get_grid_model(pre_train_model_list[-1])
-    mesh.plot()
-
+    # mesh = noddyData.get_grid_model(pre_train_model_list[-1])
+    # mesh.plot()
+    #
     gme_models = GmeModelList('gme_model', root=root_path, pre_train_model_list=pre_train_model_list[:2],
                               train_model_list=[pre_train_model_list[-1]], noddy_data=noddyData,
-                              sample_operator=['axis_sections'],
-                              add_inverse_edge=True)
+                              sample_operator=['axis_sections'], add_inverse_edge=True,
+                              data_type='Points',
+                              dat_file_path=r"E:\Code\duanjc\PyCode\GeoScience\drill_dense_scatter.dat", index_col=0,
+                              use_cols=[0, 1, 2, 3, 4], file_header=None, names=['id', 'x', 'y', 'z', 'label'])
     dataset = GeoDataset(gme_models)
 
     # initialize a trainer instance and kick off training
