@@ -72,7 +72,7 @@ def visual_sample_data(geodata, plotter=None, camera=None, plot_points=False):
         if plot_num < 3:
             column_num, row_num = plot_num, 1
         else:
-            column_num, row_num = 3, plot_num//3
+            column_num, row_num = 3, plot_num // 3
         plotter = pv.Plotter(shape=(row_num, column_num))
         row_it, col_it, sit = 0, 0, 0
         for it, sample_it in enumerate(sample_data):
@@ -111,7 +111,6 @@ def visual_sample_data(geodata, plotter=None, camera=None, plot_points=False):
 
 
 def visual_comparison_mesh(geodata, prediction, label, plotter=None):
-
     gen_mesh, _ = geodata.create_base_grid(extent=geodata.output_grid_param)
     if isinstance(prediction, torch.Tensor):
         prediction = prediction.cpu().numpy()
@@ -145,6 +144,14 @@ def visual_comparison_mesh(geodata, prediction, label, plotter=None):
         plotter[0, 1].add_mesh(gen_mesh.outline(), color="k")
         plotter[0, 1].add_axes()
     plotter.show()
+
+
+def visual_loss_picture():
+    pass
+
+
+def visual_acc_picture():
+    pass
 
 
 def generate_model_with_points():

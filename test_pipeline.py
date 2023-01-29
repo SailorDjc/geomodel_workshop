@@ -20,7 +20,6 @@ from models.model import GraphTransfomer
 from retrieve_noddy_files import NoddyModelData
 
 if __name__ == '__main__':
-
     # load and preprocess dataset
     print('Loading data')
     path_1 = os.path.abspath('..')
@@ -30,27 +29,22 @@ if __name__ == '__main__':
     pre_train_model_list = []
     for item in [16, 1, 22, 8, 7]:
         pre_train_model_list.append(noddy_models[item])
-        # mesh = noddyData.get_grid_model(noddy_models[item])
-        # mesh.plot()
     # 只有第一次输入的noddy_model可以用到，之后代码会自动加载数据缓存
-    # mesh = noddyData.get_grid_model(pre_train_model_list[-1])
-    # mesh.plot()
-    #
     gme_models = GmeModelList('gme_model', root=root_path, pre_train_model_list=pre_train_model_list[:2],
-                              train_model_list=[pre_train_model_list[-1]], noddy_data=noddyData,
+                              train_model_list=None, noddy_data=noddyData,
                               sample_operator=['axis_sections'], add_inverse_edge=True,
-                              data_type='Points',
-                              dat_file_path=r"E:\Code\duanjc\PyCode\GeoScience\drill_dense_scatter.dat", index_col=0,
-                              use_cols=[0, 1, 2, 3, 4], file_header=None, names=['id', 'x', 'y', 'z', 'label'])
+                              data_type='Noddy',  # 'Wells',  # 'Points',
+                              dat_file_path=r"E:\Code\duanjc\PyCode\GeoScience\drill_dense_scatter.dat",
+                              use_cols=[0, 1, 2, 3, 4], file_header=None, names=['id', 'x', 'y', 'z', 'label'],
+                              file_sep=' ', has_air=False)
     dataset = GeoDataset(gme_models)
 
     # initialize a trainer instance and kick off training
     # 模型训练相关参数
-
-    tconf = GmeTrainerConfig(max_epochs=572, num_workers=4,
+    tconf = GmeTrainerConfig(max_epochs=10, num_workers=4,
                              ckpt_path=os.path.join(root_path, 'processed', 'latest_tran.pth'))
 
-    model_idx = 2
+    model_idx = 0
     g = dataset[model_idx]
     # create GraphSAGE model
     in_size = g.ndata['feat'].shape[-1]
@@ -70,6 +64,3 @@ if __name__ == '__main__':
     print('Training...')
 
     trainer.train(data_split_idx=model_idx)
-
-
-

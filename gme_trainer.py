@@ -119,7 +119,7 @@ class GmeTrainer:
         torch.save(raw_model.state_dict(), self.config.ckpt_path)
 
     # data
-    def inference(self, data, idx=0):
+    def inference(self, data, idx=0, has_test_label=False):
         model = self.model.module
         test_idx = data.test_idx[idx]
         graph = data[idx].to(self.device)
@@ -146,7 +146,10 @@ class GmeTrainer:
             visual_comparison_mesh(geodata=geodata, prediction=pred, label=graph.ndata['label'])
             pred_test = pred[test_idx]
             label_test = graph.ndata['label'][test_idx].to(pred_test.device)
-            return MF.accuracy(pred_test, label_test)
+            accuracy = 0
+            if has_test_label:
+                accuracy = MF.accuracy(pred_test, label_test)
+            return accuracy
 
     def train(self, dataset=None, data_split_idx=0):
         model, config = self.model, self.config
@@ -167,7 +170,6 @@ class GmeTrainer:
             losses = []
             ys = []
             y_hats = []
-            total_loss = 0  # 每一epoch的总loss
             pbar = tqdm(enumerate(loader), total=len(loader)) if is_train else enumerate(loader)
             for it, (input_nodes, output_nodes, blocks) in pbar:
                 torch.cuda.empty_cache()
@@ -178,7 +180,6 @@ class GmeTrainer:
                     y_hat = model(blocks, x)
                     loss = F.cross_entropy(y_hat, y)
                     losses.append(loss.item())
-                    total_loss += loss.item()
                     # 计算epoch 的总体 accuracy
                     ys.append(y)
                     y_hats.append(y_hat)
@@ -193,13 +194,13 @@ class GmeTrainer:
                     acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys))
                     # report progress
                     pbar.set_description(
-                        f"epoch {epoch + 1} iter {it}: train loss {loss.item():.5f}. epoch total loss {total_loss:.5f} "
+                        f"epoch {epoch + 1} iter {it}: train loss {loss.item():.5f}. "
                         f"lr {lr:e}. acc {acc:.5f}")
 
             if not is_train:
-                test_loss = float(np.mean(losses))
-                logger.info("test loss: ", test_loss)
-                return test_loss
+                val_loss = float(np.mean(losses))
+                logger.info("test loss: ", val_loss)
+                return val_loss
             else:
                 train_loss = float(np.mean(losses))
                 return train_loss
