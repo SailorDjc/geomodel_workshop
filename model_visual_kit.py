@@ -7,6 +7,8 @@ import os
 from pyvistaqt import MultiPlotter
 from retrieve_noddy_files import NoddyModelData
 import copy
+import matplotlib.pyplot as plt
+import pandas as pd
 
 
 def clip_section(mesh, norm='x', origin=None, num=1):
@@ -110,7 +112,7 @@ def visual_sample_data(geodata, plotter=None, camera=None, plot_points=False):
         plotter.show()
 
 
-def visual_comparison_mesh(geodata, prediction, label, plotter=None):
+def visual_comparison_mesh(geodata, prediction, label, plotter=None, is_show=True, save_path=None):
     gen_mesh, _ = geodata.create_base_grid(extent=geodata.output_grid_param)
     if isinstance(prediction, torch.Tensor):
         prediction = prediction.cpu().numpy()
@@ -143,19 +145,65 @@ def visual_comparison_mesh(geodata, prediction, label, plotter=None):
         plotter[0, 1].add_mesh(gen_mesh, show_scalar_bar=True)
         plotter[0, 1].add_mesh(gen_mesh.outline(), color="k")
         plotter[0, 1].add_axes()
-    plotter.show()
+    if is_show:
+        plotter.show()
+    if save_path is not None:
+        if geodata.name is not None:
+            file_name = geodata.name + 'vtk'
+        else:
+            file_name = 'grid_model' + 'vtk'
+        gen_mesh.save(os.path.join(save_path, file_name))
 
 
-def visual_loss_picture():
-    pass
+def visual_loss_picture(train_loss, test_loss, title=None, x_label='epoch', y_label='Loss', save_path=None):
+    plt.figure(figsize=[14, 5])
+    plt.plot(train_loss, "ro-", label="Train Loss")
+    plt.plot(test_loss, "bs-", label="Val Loss")
+    plt.legend()
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    if title is not None:
+        plt.title(title)
+    if save_path is not None:
+        pic_name = 'loss_pic.jpg'
+        save_path = os.path.join(save_path, pic_name)
+        plt.savefig(save_path)
 
 
-def visual_acc_picture():
-    pass
+def visual_acc_picture(train_acc, test_acc, title=None, x_label='epoch', y_label='Acc', save_path=None):
+    plt.figure(figsize=[14, 5])
+    plt.plot(train_acc, "ro-", label="Train Acc")
+    plt.plot(test_acc, "bs-", label="Test Acc")
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.legend()
+    max_train_acc_value = max(train_acc)  # 求列表最大值
+    max_train_acc_idx = train_acc.index(max_train_acc_value)  # 求最大值对应索引
+    max_test_acc_value = max(test_acc)
+    max_test_acc_idx = test_acc.index(max_test_acc_value)
+    print('The {}th epoch, train acc reached the highest value: {}.'.format(max_train_acc_idx, max_train_acc_value))
+    print('The {}th epoch, test acc reached the highest value: {}.'.format(max_test_acc_idx, max_test_acc_value))
+    if title is not None:
+        plt.title(title)
+    if save_path is not None:
+        pic_name = 'acc_pic.jpg'
+        save_path = os.path.join(save_path, pic_name)
+        plt.savefig(save_path)
 
 
-def generate_model_with_points():
-    pass
+def read_train_loss_log_txt(file_path, **kwargs):
+    df = pd.read_table(file_path, sep=',', comment='=', header=None)
+    epoch_slice = df.iloc[:, 0].str.split(' ').tolist()
+    epoch = [int(item[-1]) for item in epoch_slice]
+    train_loss_slice = df.iloc[:, 1].str.split(' ').tolist()
+    train_loss = [float(item[-1]) for item in train_loss_slice]
+    train_acc_slice = df.iloc[:, 2].str.split(' ').tolist()
+    train_acc = [float(item[-1]) for item in train_acc_slice]
+    val_loss_slice = df.iloc[:, 3].str.split(' ').tolist()
+    val_loss = [float(item[-1]) for item in val_loss_slice]
+    val_acc_slice = df.iloc[:, 4].str.split(' ').tolist()
+    val_acc = [float(item[-1]) for item in val_acc_slice]
+    return epoch, train_loss, val_loss, train_acc, val_acc
 
 
 class VisualKit(object):
@@ -165,8 +213,14 @@ class VisualKit(object):
 
 if __name__ == '__main__':
     root_path = os.path.abspath('.')
-    noddyData = NoddyModelData(root=r'F:\NoddyDataset', max_model_num=10)
-    path_list = noddyData.get_noddy_model_list_names(model_num=10)
 
-    model = noddyData.get_grid_model(path_list[1])
-    model.plot()
+    noddyData = NoddyModelData(root=r'F:\djc\NoddyDataset', max_model_num=30)
+    noddy_models = noddyData.get_noddy_model_list_names(model_num=30, sample_random=False)
+    for item, model_name in enumerate(noddy_models):
+        model = noddyData.get_grid_model(model_name)
+        model.plot()
+    # path = r'E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\backup\2_1\tran_loss_log.txt'
+    # epoch, train_loss, val_loss, train_acc, val_acc = read_train_loss_log_txt(file_path=path)
+    # path = r'E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\backup\2_1'
+    # visual_acc_picture(train_acc=train_acc, test_acc=val_acc, save_path=path)
+    # visual_loss_picture(train_loss=train_loss, test_loss=val_loss, save_path=path)

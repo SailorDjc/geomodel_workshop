@@ -209,7 +209,9 @@ class NoddyModelData(object):
                         os.mkdir(output_dir)
                     output_path = os.path.join(output_dir, model_name)
                     pynoddy.compute_model(history, output_path)
+                    # pynoddy.compute_model(history, output_path, sim_type='GEOPHYSICS')
                     nout = pynoddy.output.NoddyOutput(output_path)
+                    # nout_geophysics = pynoddy.output.NoddyGeophysics(output_path)
                     # 获取noddy模型参数
                     nx = nout.nx
                     ny = nout.ny

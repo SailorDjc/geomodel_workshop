@@ -101,7 +101,6 @@ class SpacialConv(nn.Module):
             if graph.number_of_edges() == 0:
                 graph.dstdata['neigh'] = torch.zeros(
                     feat_dst.shape[0], self._in_src_feats).to(feat_dst)
-
             # Message Passing
             graph.srcdata['h'] = feat_src
             graph.apply_edges(self.edges_weight_func)

@@ -19,6 +19,12 @@ class GeoDataset(DGLDataset):
         self.split_ratio = split_ratio
         self.target_ntype = target_ntype
         self.num_classes = getattr(self.dataset, 'num_classes', None)
+        self.predict_num_classes = getattr(self.dataset, 'predict_num_classes', None)
+        if self.predict_num_classes is not None and self.num_classes is not None:
+            self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
+            predict_num_classes = self.predict_num_classes['labels'].numpy().tolist()
+            self.num_classes['labels'].extend(predict_num_classes)
+            self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
         self.train_idx = []
         self.val_idx = []
         self.test_idx = []

@@ -342,26 +342,65 @@ class GeoMeshParse(object):
         return edge_weight_dist
 
     # 获取节点特征
-    def get_node_feat(self, node_feat='stratum', has_train=True, default_value=0):
+    def get_node_feat(self, node_feat='position', has_train=True):  # , default_value=0, rand_mask_pro=0.5
         node_feat_data = None
         if node_feat == 'position':
-            node_feat_data = np.float32(self.grid_points)
-        if node_feat == 'stratum':
-            node_feat_data = np.float32(self.grid_point_label)
-            if has_train is True and self.train_idx is not None:
-                if default_value == 0:
-                    # 原来label为从0开始，若缺省值为0，则所有label+1
-                    node_feat_data = np.array(list(map(lambda x: [x[0] + 1], node_feat_data)))
-                devalues_idx = list(set(np.arange(len(self.grid_points))) - set(self.train_idx))
-                if len(devalues_idx) > 0:
-                    node_feat_data[devalues_idx][0] = default_value
-                node_feat_data = np.float32(node_feat_data)
-                node_feat_data.reshape(-1, 1)
+            # node_feat_data = np.float32(self.grid_points)
+            node_feat_data = np.float32(self.grid_points_normalize())
+        # if node_feat == 'stratum':
+        #     node_feat_data = np.float32(self.grid_point_label)
+        #     if has_train is True and self.train_idx is not None:
+        #         if default_value >= 0:
+        #             # 原来label为从0开始，若缺省值为0，则所有label+1
+        #             node_feat_data = np.array(list(map(lambda x: [x[0] + default_value + 1], node_feat_data)))
+        #         devalues_idx = list(set(np.arange(len(self.grid_points))) - set(self.train_idx))
+        #         # mask_size = int(rand_mask_pro * len(self.train_idx))
+        #         # rand_mask_idx = np.random.choice(self.train_idx, size=mask_size, replace=False)
+        #         if len(devalues_idx) > 0:
+        #             node_feat_data[devalues_idx] = [float(default_value)]
+        #         # node_feat_data[rand_mask_idx] = [float(default_value)]
+        #         node_feat_data = np.float32(node_feat_data)
+        #         node_feat_data.reshape(-1, 1)
         if self.node_feat is not None:
-            self.node_feat = np.hstack(self.node_feat, node_feat_data)
+            self.node_feat = np.hstack((self.node_feat, node_feat_data))
         else:
             self.node_feat = node_feat_data
         return self.node_feat
+
+    def extract_stratum_layer_points(self):
+        if self.grid_points is not None and self.grid_point_label is not None:
+            rand_point = self.grid_points[0]
+            rand_point_z = rand_point[2]
+            plane_points_idx_list = []
+            self.train_idx = []
+            for point_idx, point in enumerate(self.grid_points):
+                if point[2] == rand_point_z:
+                    plane_points_idx_list.append(point_idx)
+            for point_idx in plane_points_idx_list:
+                sample_point = self.grid_points[point_idx]
+                # 采样虚拟钻孔
+                pos_a = copy.deepcopy(sample_point)
+                pos_a[2] = self.bound[5]  # z_max
+                pos_b = copy.deepcopy(sample_point)
+                pos_b[2] = self.bound[4]  # z_min
+                drill_cell_idx = self.sample_grid.find_cells_along_line(pointa=pos_a, pointb=pos_b)
+                drill_cell_label = self.grid_point_label[drill_cell_idx]
+                # 从上至下遍历钻孔点
+                front_label = drill_cell_label[0]
+                extract_idx = [drill_cell_idx[0]]
+                for l_idx in range(0, len(drill_cell_label)):
+                    next_label = drill_cell_label[l_idx]
+                    if next_label != front_label:
+                        extract_idx.append(drill_cell_idx[l_idx])
+                        front_label = drill_cell_label[drill_cell_idx[l_idx]]
+                if drill_cell_idx[-1] not in extract_idx:
+                    extract_idx.append(drill_cell_idx[-1])
+                self.train_idx.extend(extract_idx)
+            if len(self.train_idx) == 0:
+                raise ValueError
+            self.train_idx = list(set(sorted(self.train_idx)))
+        else:
+            raise ValueError
 
     # 训练集采样，从原始输入格网数据的cell的中心点集合中采样
     # 等间距采样
@@ -557,8 +596,8 @@ class GeoMeshParse(object):
 
         self.ori_points = points
         if len(points) > 3:  # 至少三个点
-            self.bound = [min(points[:, 0])-epsilon, max(points[:, 0])+epsilon, min(points[:, 1])-epsilon,
-                          max(points[:, 1]+epsilon), min(points[:, 2])-epsilon, max(points[:, 2])+epsilon]
+            self.bound = [min(points[:, 0]) - epsilon, max(points[:, 0]) + epsilon, min(points[:, 1]) - epsilon,
+                          max(points[:, 1] + epsilon), min(points[:, 2]) - epsilon, max(points[:, 2]) + epsilon]
             self.center = [(self.bound[0] + self.bound[1]) / 2, (self.bound[2] + self.bound[3]) / 2,
                            (self.bound[4] + self.bound[5]) / 2]
         # 钻孔 Well

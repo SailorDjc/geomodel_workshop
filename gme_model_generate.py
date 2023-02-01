@@ -73,7 +73,7 @@ class GmeModelList(object):
         # data_type数据集类型，'Noddy': 来自Noddy数据集， 'Wells': 钻井 .dat文件1格式， 'Points': 散点 .dat文件格式
         # 注：.dat文件格式与Voxler软件一致
         if dgl_graph_param is None:
-            dgl_graph_param = [['stratum'], None]  # [[node_feat], [edge_feat]]
+            dgl_graph_param = [['position'], None]  # [[node_feat], [edge_feat]]
         if train_model_list is None:  # 一般只装一个model
             train_model_list = []
         if pre_train_model_list is None:  # 预训练模型， 列表中有多个模型
@@ -108,7 +108,8 @@ class GmeModelList(object):
         self.graph_log_data_path = os.path.join(processed_dir, 'graph_log.pkl')  # 存储dgl_graph的日志信息
         # 记录 dgl_graph, 以及图生成参数，包括node_feat类型, edge_feat类型,类别数, 节点数, 边数.
         self.result_model_path = os.path.join(processed_dir, 'result_gme_model.pkl')  # 存储输出结果地质模型，以及相应模型参数
-        self.graph, self.predict_graph = None, None
+        self.graph = None
+        self.predict_graph =  None
         super(GmeModelList, self).__init__()
         self.access_model_data(**kwargs)
 
@@ -129,18 +130,18 @@ class GmeModelList(object):
                 for idx, _ in enumerate(self.graph):
                     if idx in self.graph_log['pre_train_graph'].keys():
                         graph_name = self.graph_log['pre_train_graph'][idx][0]  # graph_name图名：model_name+'_'+timecode
-                        model_name = graph_name.split('_')[0]
+                        cur_model_name = graph_name.split('_')[0]
                         model_extern = self.graph_log['pre_train_graph'][idx][1]  # 采样格网尺寸
                         node_feat = self.graph_log['pre_train_graph'][idx][2]
                         edge_feat = self.graph_log['pre_train_graph'][idx][3]
 
-                        cur_extern = self.get_model_extern(model_name)
+                        cur_extern = self.get_model_extern(cur_model_name)
                         cur_node_feat = self.dgl_graph_param[0]
                         cur_edge_feat = self.dgl_graph_param[1]
                         # 删除重复加载的数据
                         for model_name in self.pre_train_model_list:
                             if model_extern == cur_extern and cur_node_feat == node_feat \
-                                    and edge_feat == cur_edge_feat:
+                                    and edge_feat == cur_edge_feat and model_name == cur_model_name:
                                 self.pre_train_model_list.remove(model_name)
         # 预测数据集
         if os.path.exists(self.processed_predict_graph_path):
@@ -150,18 +151,18 @@ class GmeModelList(object):
                 for idx, _ in enumerate(self.predict_graph):
                     if idx in self.graph_log['predict_graph'].keys():
                         graph_name = self.graph_log['predict_graph'][idx][0]  # graph_name图名：model_name+'_'+timecode
-                        model_name = graph_name.split('_')[0]
+                        cur_model_name = graph_name.split('_')[0]
                         model_extern = self.graph_log['predict_graph'][idx][1]  # 采样格网尺寸
                         node_feat = self.graph_log['predict_graph'][idx][2]
                         edge_feat = self.graph_log['predict_graph'][idx][3]
 
-                        cur_extern = self.get_model_extern(model_name)
+                        cur_extern = self.get_model_extern(cur_model_name)
                         cur_node_feat = self.dgl_graph_param[0]
                         cur_edge_feat = self.dgl_graph_param[1]
                         # 删除重复加载的数据
                         for model_name in self.train_model_list:
                             if model_extern == cur_extern and cur_node_feat == node_feat \
-                                    and edge_feat == cur_edge_feat:
+                                    and edge_feat == cur_edge_feat and model_name == cur_model_name:
                                 self.train_model_list.remove(model_name)
         if self.data_type == 'Noddy':
             if len(self.pre_train_model_list) > 0 or len(self.train_model_list) > 0:
@@ -182,9 +183,11 @@ class GmeModelList(object):
         # 容器初始化
         if self.graph is None:
             self.graph = []
+        if self.num_classes is None:
             self.num_classes = {'labels': []}
         if self.predict_graph is None:
             self.predict_graph = []
+        if self.predict_num_classes is None:
             self.predict_num_classes = {'labels': []}
         for model_index in np.arange(len(self.pre_train_model_list)):
             mesh = self.noddy_data.get_grid_model(self.pre_train_model_list[model_index])
@@ -194,7 +197,7 @@ class GmeModelList(object):
             dgl_graph = geodata.execute(sample_operator=self.sample_operator, extent=model_extern,
                                         edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
                                         center_random={'x': True, 'y': True},
-                                        sample_type={'x': 2, 'y': 3}, drill_num=15)
+                                        sample_type={'x': 2, 'y': 3}, drill_num=600)
             # 对标签进行处理
             label_num = geodata.grid_point_label_num
             labels_num_list.append(label_num)
@@ -232,7 +235,7 @@ class GmeModelList(object):
             dgl_graph = geodata.execute(sample_operator=self.sample_operator, extent=model_extern,
                                         edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],  #
                                         center_random={'x': True, 'y': True},
-                                        sample_type={'x': 2, 'y': 3}, drill_num=15)
+                                        sample_type={'x': 2, 'y': 3}, drill_num=600)
             # 对标签进行处理
             label_num = geodata.grid_point_label_num
             predict_labels_num_list.append(label_num)
@@ -256,6 +259,10 @@ class GmeModelList(object):
             self.predict_graph, self.predict_num_classes = load_graphs(self.processed_predict_graph_path)
 
     def process_dat_file(self, **kwargs):
+        if self.predict_graph is None:
+            self.predict_graph = []
+        if self.predict_num_classes is None:
+            self.predict_num_classes = {'labels': []}
         geodata = GeoMeshParse(normalize=False, pre_train=False)
         if self.data_type != 'Noddy':
             geodata.set_data_from_dat_file(dat_file_path=self.dat_file_path, data_type=self.data_type, **kwargs)
@@ -274,9 +281,6 @@ class GmeModelList(object):
                               save_idx=save_idx, extern=geodata.output_grid_param,
                               node_feat=self.dgl_graph_param[0], edge_feat=self.dgl_graph_param[1],
                               is_pre_train=False)
-        if self.predict_graph is None:
-            self.predict_graph = []
-            self.predict_num_classes = {'labels': []}
         self.predict_graph.append(dgl_graph)
         if torch.is_tensor(self.predict_num_classes['labels']):
             self.predict_num_classes['labels'] = self.predict_num_classes['labels'].numpy().tolist()
@@ -307,7 +311,7 @@ class GmeModelList(object):
         return {'train': train_idx, 'valid': valid_idx, 'test': test_idx}
 
     # 更新self.graph_log 添加dgl_graph数据信息       extern,      node_feat,   edge_feat
-    # {'pre_train_graph': {save_idx: [graph_name, [nx, ny, nz], ['stratum'], ['euclidean']]}
+    # {'pre_train_graph': {save_idx: [graph_name, [nx, ny, nz], ['position'], ['euclidean']]}
     #  'predict_graph': [......]}
     # save_idx 与 goedata 中的索引 geo_idx 对应，也与 graph中的索引对应
     # pre_train_graph中的save_idx=geo_idx, 与geodata的索引直接对应，而predict_graph中的save_idx=geo_idx-len(pre_train_graph)
@@ -327,10 +331,23 @@ class GmeModelList(object):
                 self.graph_log['predict_graph'][save_idx] = []
             self.graph_log['predict_graph'][save_idx] = [graph_name, extern, node_feat, edge_feat]
 
+    # 修改训练集比例
+    def change_train_idx_pro(self, model_index, train_pro):
+        if model_index < len(self.graph):
+            if self.geodata[model_index].is_noddy and self.geodata[model_index].pre_train:
+                x = np.arange(len(self.geodata[model_index].grid_points))
+                test_pro = 1 - train_pro
+                known_pro = self.geodata[model_index].known_pro
+                print('Changing Graph Data train_idx ...')
+                print('The known_pro before is {}, now is {}.'.format(known_pro, train_pro))
+                self.geodata[model_index].train_idx, _ = train_test_split(x, test_size=test_pro)
+            else:
+                raise ValueError
+
     # 获取采样格网尺寸
     def get_model_extern(self, model_name, default_extern=None):
         if default_extern is None:
-            default_extern = [120, 120, 50]
+            default_extern = [80, 80, 40]
         if self.model_extern is None:
             model_param_list_log = self.noddy_data.model_param_list_log
             if model_name in model_param_list_log.keys():
