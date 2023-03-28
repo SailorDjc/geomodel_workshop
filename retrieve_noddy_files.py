@@ -11,6 +11,7 @@ import time
 from tqdm import tqdm
 import pickle
 import copy
+from urllib.request import urlopen
 
 
 class NoddyModelData(object):
@@ -19,6 +20,7 @@ class NoddyModelData(object):
             max_model_num = 100
         if dataset_list is None:
             dataset_list = ['FOLD_FOLD_FOLD']
+        self.root = root  # 数据集根目录
         self.raw_dir_path = os.path.join(root, 'data', 'raw_data')  # raw_data: 存放tar格式数据集
         self.his_dir_path = os.path.join(root, 'data', 'his_dir')  # 按模型分文件夹存放，.his .grv .g00 .g12 .mag 等文件
         # 模型格网文件 .vtr 格式，可以直接读取，文件夹中建立模型列表txt文件
@@ -47,13 +49,31 @@ class NoddyModelData(object):
             # 如果 dataset_list为空，则默认将raw_data文件夹中的所有数据集加载
             # 检查数据集列表记录，与模型列表记录匹配
             self.dataset_list = self.get_raw_dataset_list()
-        self.extract_tar_files(self.his_dir_path)
+        else:
+            saved_tar_files = self.get_raw_dataset_list()
+            # 如果指定数据集不存在，则下载，若无法下载，则忽略
+            for dataset_name in self.dataset_list:
+                if dataset_name not in saved_tar_files:
+                    download_flag = self.download_dataset(dataset=dataset_name)
+                    if download_flag is False:
+                        continue
+        self.extract_tar_files(des_dir=self.his_dir_path)
         self.generate_model_by_his(self.output_dir, max_num=max_model_num)
 
         saved_files = self.get_all_noddy_model_names()
+        # 删除已经存储模型的中间文件和压缩包，节约存储空间
         self.delete_gz_files()
         self.delete_extra_model_files(dir_path=self.output_dir, file_names=saved_files)
         self.delete_extra_his_files(dir_path=self.his_dir_path, file_names=saved_files)
+
+    # 在线下载原始数据集
+    def download_dataset(self, dataset):
+        path = dataset
+        try:
+            data_stream = urlopen(path)
+        except:
+            print('open url error, cannot download dataset {}'.format(dataset))
+            return False
 
     def load_log_files(self):
         if os.path.exists(self.dataset_list_path):
@@ -85,6 +105,7 @@ class NoddyModelData(object):
             geodata = pickle.loads(file.read())
             return geodata
 
+    # 获取已有数据集名字
     def get_raw_dataset_list(self):
         tar_files = os.listdir(self.raw_dir_path)
         data_list = []
@@ -94,9 +115,6 @@ class NoddyModelData(object):
                 data_list.append(file)
         data_list = list(set(data_list))
         return data_list
-
-    def download_dataset(self):
-        pass
 
     # 获取所有noddy模型名
     def get_all_noddy_model_names(self):
@@ -201,7 +219,7 @@ class NoddyModelData(object):
                 if save_it > process_model_num:
                     break
                 file_path = self.model_his_list_log[model_name]
-                his_file = os.path.join(file_path, model_name) + '.his'
+                his_file = os.path.join(self.root, file_path, model_name) + '.his'
                 if os.path.exists(his_file):
                     history = os.path.join(his_file)
                     output_dir = os.path.join(model_dir, dataset)
@@ -239,6 +257,7 @@ class NoddyModelData(object):
         if self.dataset_list is not None:
             tar_files = self.get_raw_dataset_list()
             for file_name in tar_files:
+                # 对 self.dataset_list中所指定的数据集压缩包进行解压
                 if file_name in self.dataset_list:  # 加载在数据集列表中的数据集
                     # if file_name in self.dataset_list_log.keys():
                     #     continue
@@ -270,8 +289,9 @@ class NoddyModelData(object):
                                 if file_name not in self.dataset_list_log.keys():
                                     self.dataset_list_log[file_name] = []
                                 self.dataset_list_log[file_name].append(model_name)
-                                if model_name not in self.model_his_list_log.keys():   # 记录每个模型文件的地址
-                                    self.model_his_list_log[model_name] = model_his_dir_path
+                                if model_name not in self.model_his_list_log.keys():   # 记录每个模型文件的地址(相对路径)
+                                    self.model_his_list_log[model_name] = os.path.relpath(path=model_his_dir_path,
+                                                                                          start=self.root)
                     tar.close()
             self.save_data(self.dataset_list_path, self.dataset_list_log)
             self.save_data(self.model_his_list_path, self.model_his_list_log)

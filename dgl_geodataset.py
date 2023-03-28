@@ -11,7 +11,7 @@ from dgl.data import DGLDataset, utils
 import dgl.backend as F
 
 
-class GeoDataset(DGLDataset):
+class DglGeoDataset(DGLDataset):
 
     def __init__(self, dataset, split_ratio=None, target_ntype=None, **kwargs):
         self.graph = []
@@ -21,10 +21,13 @@ class GeoDataset(DGLDataset):
         self.num_classes = getattr(self.dataset, 'num_classes', None)
         self.predict_num_classes = getattr(self.dataset, 'predict_num_classes', None)
         if self.predict_num_classes is not None and self.num_classes is not None:
-            self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
-            predict_num_classes = self.predict_num_classes['labels'].numpy().tolist()
-            self.num_classes['labels'].extend(predict_num_classes)
+            if torch.is_tensor(self.num_classes['labels']):
+                self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
+            if torch.is_tensor(self.predict_num_classes['labels']):
+                self.predict_num_classes['labels'] = self.predict_num_classes['labels'].numpy().tolist()
+            self.num_classes['labels'].extend(self.predict_num_classes['labels'])
             self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
+            self.predict_num_classes = {'labels': torch.tensor(self.predict_num_classes['labels']).to(torch.long)}
         self.train_idx = []
         self.val_idx = []
         self.test_idx = []
@@ -75,14 +78,7 @@ class GeoDataset(DGLDataset):
         return len(self.graph)
 
     def save(self):
-        utils.save_graphs(os.path.join(self.save_path, 'graph_{}.bin'.format(self.hash)), self.graph)
-        dict_dgl = dict()
-        dict_dgl['split_ratio'] = self.split_ratio
-        dict_dgl['target_ntype'] = self.target_ntype
-        num_classes = self.num_classes['labels']
-        dict_dgl['num_classes'] = num_classes.tolist()
-        with open(os.path.join(self.save_path, 'info_{}.json'.format(self.hash)), 'w') as f:
-            json.dump(dict_dgl, f)
+        pass
 
     def load(self):
         with open(os.path.join(self.save_path, 'info_{}.json'.format(self.hash)), 'r') as f:
