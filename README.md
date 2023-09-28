@@ -9,3 +9,5 @@
 * torchmetrics
 * matplotlib
 * xgboost
+* pytest
+* pynoddy
