@@ -11,28 +11,36 @@ import time
 from tqdm import tqdm
 import pickle
 import copy
+import requests
+from contextlib import closing
+import hashlib
 from urllib.request import urlopen
+import random
+import time
+import shutil
 
 
 class NoddyModelData(object):
     def __init__(self, root=None, save_dir_name='model_data', dataset_list=None, max_model_num=None):
         if max_model_num is None:  # 生成模型的个数
             max_model_num = 100
-        if dataset_list is None:
+        if dataset_list is None or len(dataset_list) == 0:
             dataset_list = ['FOLD_FOLD_FOLD']
+        self.cur_dataset = dataset_list[0]
         self.root = root  # 数据集根目录
         self.raw_dir_path = os.path.join(root, 'data', 'raw_data')  # raw_data: 存放tar格式数据集
         self.his_dir_path = os.path.join(root, 'data', 'his_dir')  # 按模型分文件夹存放，.his .grv .g00 .g12 .mag 等文件
         # 模型格网文件 .vtr 格式，可以直接读取，文件夹中建立模型列表txt文件
         self.output_dir = os.path.join(root, 'data', save_dir_name)
         # 数据日志记录文件
-        # dataset - model_files  记录有哪些数据集
+        # dataset - model_files  记录有哪些数据集  {dataset:[model_name]}
         self.dataset_list_path = os.path.join(root, 'data', 'dataset_list_log.pkl')  # 记录有哪些模型文件数据集
-        # model_files-file_path
+        # model_files-file_path  记录每个模型对应的his文件地址  {model_name:his_file_path}
         self.model_his_list_path = os.path.join(root, 'data', 'model_his_list_log.pkl')  # 记录每一个模型his文件的地址列表
-        # vtr_model_list
+        # vtr_model_list  记录每个dataset存储了哪些vtk_model  {dataset:[model_name]} 形式上与dataset_list_log一致
         self.grid_model_list_path = os.path.join(root, 'data', 'grid_model_list_log.pkl')  # 记录已生成的格网模型列表
-        # noddy model grid param  (nx, ny, nz, ClassNum)
+        # noddy model grid param   记录了模型的基本参数 {model_name:[nx, ny, nz, cell_x, cell_y, cell_z, extent_x,
+        #                                                                  extent_y, extent_z]}
         self.model_param_list_path = os.path.join(root, 'data', 'model_param_list_log.pkl')  # noddy格网模型参数
         # 加载数据集元数据
         self.dataset_list_log, self.model_his_list_log, self.grid_model_list_log, self.model_param_list_log = \
@@ -43,21 +51,24 @@ class NoddyModelData(object):
             os.mkdir(self.his_dir_path)
         if not os.path.exists(self.output_dir):
             os.mkdir(self.output_dir)
+        if not os.path.exists(self.raw_dir_path):
+            os.mkdir(self.raw_dir_path)
 
         self.dataset_list = dataset_list  # 指定加载的数据集
+        # 会先到 raw_data文件夹中搜索，搜索不到就下载
+        saved_tar_files = self.get_raw_dataset_list()
         if self.dataset_list is None:
             # 如果 dataset_list为空，则默认将raw_data文件夹中的所有数据集加载
             # 检查数据集列表记录，与模型列表记录匹配
-            self.dataset_list = self.get_raw_dataset_list()
+            self.dataset_list = saved_tar_files
         else:
-            saved_tar_files = self.get_raw_dataset_list()
             # 如果指定数据集不存在，则下载，若无法下载，则忽略
             for dataset_name in self.dataset_list:
                 if dataset_name not in saved_tar_files:
                     download_flag = self.download_dataset(dataset=dataset_name)
                     if download_flag is False:
                         continue
-        self.extract_tar_files(des_dir=self.his_dir_path)
+        self.extract_his_files_from_tar_files(des_dir=self.his_dir_path)
         self.generate_model_by_his(self.output_dir, max_num=max_model_num)
 
         saved_files = self.get_all_noddy_model_names()
@@ -68,9 +79,28 @@ class NoddyModelData(object):
 
     # 在线下载原始数据集
     def download_dataset(self, dataset):
-        path = dataset
+        his_filter = dataset.split('_')
+        if len(his_filter) != 3:
+            print("Geological events need to have three.")
+            return False
+        url = "https://cloudstor.aarnet.edu.au/plus/s/UxnVSkHfnr7chW9/download?path=%2F&files="
+        path = url + dataset + '.tar'
+        start_time = time.time()
+        filepath = os.path.join(self.raw_dir_path, dataset + '.tar')
         try:
-            data_stream = urlopen(path)
+            r = requests.get(path, stream=True)
+            size = 0  # 初始化已下载大小
+            chunk_size = 1024  # 每次下载的数据大小
+            content_size = int(r.headers['content-length'])  # 下载文件总大小
+            if r.status_code == 200:  # 判断是否响应成功
+                # 开始下载，显示下载文件大小
+                print('Start download, [File size]:{size:.2f} MB'.format(size=content_size / chunk_size))
+                with open(filepath, 'wb') as f:  # 显示进度条
+                    for data in r.iter_content(chunk_size=chunk_size):
+                        f.write(data)
+                        size += len(data)
+                        print('\r' + '[Download progress]:%s%.2f%%' %
+                              ('>' * int(size * 50 / content_size), float(size / content_size * 100)), end=' ')
         except:
             print('open url error, cannot download dataset {}'.format(dataset))
             return False
@@ -124,12 +154,12 @@ class NoddyModelData(object):
             all_model_list.extend(model_list)
         return all_model_list
 
-    def get_noddy_model_list_names(self, dataset='FOLD_FOLD_FOLD', model_num=100, sample_random=False):
+    def get_noddy_model_list_names(self, dataset='FOLD_FOLD_FOLD', model_num=-1, sample_random=False):
         if model_num <= 0:
             return []
         if dataset not in self.grid_model_list_log.keys():
             return []
-        if model_num > self.get_model_num(dataset=dataset):
+        if model_num > self.get_model_num(dataset=dataset) or model_num == -1:
             model_num = self.get_model_num(dataset=dataset)
         model_list = self.grid_model_list_log[dataset]
         if sample_random is True:
@@ -168,6 +198,23 @@ class NoddyModelData(object):
         else:
             return None
 
+    def get_grid_model_by_idx(self, dataset:str, idx: [int]):
+        model_num = self.get_model_num(dataset=dataset)
+        model_names = self.get_noddy_model_list_names(dataset=dataset)
+        if isinstance(idx, list):
+            model_names = [model_names[id] for id in idx if 0 <= id < model_num]
+            grid_model_path_map = self.get_noddy_model_list_path_by_names(model_names)
+            grid_models = []
+            for model_name in model_names:
+                if model_name in grid_model_path_map.keys():
+                    bin_path = grid_model_path_map[model_name] + '.pkl'
+                    grid_model = self.load_data(bin_path)
+                    model_names.append(grid_model)
+            return grid_models
+        else:
+            print('idx is not list type.')
+            return []
+
     # dataset='FOLD_FOLD_FOLD'
     def get_model_num(self, dataset=None):
         if dataset is not None:
@@ -198,9 +245,9 @@ class NoddyModelData(object):
                         if not file_name.endswith('.pkl'):
                             os.remove(path)
 
-    def generate_model_by_his(self, model_dir, max_num=None):
+    def generate_model_by_his(self, model_dir, dataset_name=None, max_num=None):
         # 已生成模型数
-        model_saved_num = self.get_model_num()
+        model_saved_num = self.get_model_num(dataset=dataset_name)
         if max_num is not None and max_num > model_saved_num:
             process_model_num = max_num - model_saved_num
         elif max_num is not None:
@@ -252,7 +299,7 @@ class NoddyModelData(object):
         self.save_data(self.grid_model_list_path, self.grid_model_list_log)
         self.save_data(self.model_param_list_path, self.model_param_list_log)
 
-    def extract_tar_files(self, des_dir):
+    def extract_his_files_from_tar_files(self, des_dir):
         print('Decompressing and extracting Model Files')
         if self.dataset_list is not None:
             tar_files = self.get_raw_dataset_list()
@@ -289,7 +336,7 @@ class NoddyModelData(object):
                                 if file_name not in self.dataset_list_log.keys():
                                     self.dataset_list_log[file_name] = []
                                 self.dataset_list_log[file_name].append(model_name)
-                                if model_name not in self.model_his_list_log.keys():   # 记录每个模型文件的地址(相对路径)
+                                if model_name not in self.model_his_list_log.keys():  # 记录每个模型文件的地址(相对路径)
                                     self.model_his_list_log[model_name] = os.path.relpath(path=model_his_dir_path,
                                                                                           start=self.root)
                     tar.close()
@@ -325,6 +372,43 @@ class NoddyModelData(object):
             if name in file_names:
                 os.remove(file_path)
 
+    def delete_dataset_files(self, dataset_name_list: list):
+        # 先根据 log 中的记录，删除dataset文件
+        # 再清除 log 文件中关于dataset的记录
+        for dataset_name in dataset_name_list:
+            print('Deleting Dataset:{} Files'.format(dataset_name))
+            raw_files = self.get_raw_dataset_list()
+            if dataset_name in raw_files:
+                raw_file_path = os.path.join(self.raw_dir_path, dataset_name + '.tar')
+                if os.path.exists(raw_file_path):
+                    os.remove(raw_file_path)
+            # 删除 his 文件
+            for root, dirs, fs, in os.walk(self.his_dir_path):
+                if dataset_name in dirs:
+                    his_dir = os.path.join(root, dataset_name)
+                    file_names = [file_name.split('.')[0] for file_name in os.listdir(his_dir)]
+                    self.delete_extra_his_files(dir_path=his_dir, file_names=file_names)
+                    # 删除空目录
+                    shutil.rmtree(path=his_dir)
+                    break
+            # 删除 model_data
+            for root, dirs, fs in os.walk(self.output_dir):
+                if dataset_name in dirs:
+                    model_dir = os.path.join(root, dataset_name)
+                    self.delete_extra_model_files(dir_path=model_dir, file_names=os.listdir(model_dir))
+                    shutil.rmtree(path=model_dir)
+                    break
+            # 清理 log 文件中的记录
+            if dataset_name in self.dataset_list_log.keys():
+                for model_name in self.dataset_list_log[dataset_name]:
+                    if model_name in self.model_his_list_log.keys():
+                        del self.model_his_list_log[model_name]
+                    if model_name in self.grid_model_list_log.keys():
+                        del self.grid_model_list_log[model_name]
+                    if model_name in self.model_param_list_log.keys():
+                        del self.model_param_list_log[model_name]
+                del self.dataset_list_log[dataset_name]
+
     # path: 要传入文件夹绝对路径, filelist:在调用时一定要传[]，因为是对象函数，之前调用产生的路径列表可能会留存
     def get_filelist(self, path, filelist):
         if os.path.exists(path):
@@ -340,3 +424,8 @@ class NoddyModelData(object):
                 filelist.append(cur_path)
         return filelist
 
+
+if __name__ == '__main__':
+    noddyData = NoddyModelData(root=r'F:\djc\NoddyDataset', max_model_num=10)
+    noddyData.delete_dataset_files(dataset_name_list=['DYKE_TILT_TILT'])
+    noddyData.get_grid_model()

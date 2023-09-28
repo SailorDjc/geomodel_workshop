@@ -11,7 +11,7 @@ import dgl.nn as dglnn
 from dgl.data import AsNodePredDataset
 from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
 from dgl_geodataset import DglGeoDataset
-from gme_model_generate import GmeModelList
+from gme_model_generate import GmeModelGraphList
 import tqdm
 import argparse
 
@@ -19,6 +19,7 @@ from pyvistaqt import MultiPlotter
 from gme_trainer import GmeTrainer, GmeTrainerConfig, GraphTransConfig
 from models.model import GraphTransfomer, GraphModel, SAGEModel, SAGETransfomer, GraphTransfomerNet
 from retrieve_noddy_files import NoddyModelData
+from data_structure.grids import Grid
 import model_visual_kit as mvk
 
 if __name__ == '__main__':
@@ -27,37 +28,24 @@ if __name__ == '__main__':
     path_1 = os.path.abspath('..')
     root_path = os.path.join(path_1, 'geomodel_workshop')
     noddyData = NoddyModelData(root=r'F:\djc\NoddyDataset', max_model_num=50)
-    noddy_models = noddyData.get_noddy_model_list_names(model_num=50, sample_random=False)
-    pre_train_model_list = []
-    for item in [6, 42, 0, 1, 7, 9, 16]:  # [0, 1, 6, 7, 9, 15, 16, 21, 24, 33, 34, 39, 42, 44]:
-        pre_train_model_list.append(noddy_models[item])
+    noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0, 1, 6])
+    grid_list = []
+    for noddy_grid in noddy_grid_list:
+        grid = Grid(grid_vtk=noddy_grid)
+        grid = grid.resample_grid(dim=np.array([120, 120, 80]))
+        grid_list.append(grid)
     model_idx = 0
     # 只有第一次输入的noddy_model可以用到，之后代码会自动加载数据缓存
-    gme_models = GmeModelList('gme_model', root=root_path, pre_train_model_list=None, model_extern=[120, 120, 50],
-                              noddy_data=noddyData,  # train_model_list=pre_train_model_list[3:4],
-                              sample_operator=['rand_drills'],  # ['axis_sections'],
-                              add_inverse_edge=True,
-                              data_type='Noddy', drill_num=60)  # # 'Wells',  # 'Points'
+    gme_models = GmeModelGraphList('gme_model', root=root_path,
+                                   grid_data=grid_list,
+                                   sample_operator=['rand_drills'],  # ['axis_sections'],
+                                   add_inverse_edge=True,
+                                   drill_num=60)  # # 'Wells',  # 'Points'
+
     geodata = gme_models.geodata[model_idx]
-    # train_x, train_y, test_x, test_y, bound = gme_models.predict_with_interpolate(model_idx=model_idx, method='idw')  # iso_list=[0, 1, 2, 3, 4, 5], save_path=rbf_path
-    # geodata.export_drill_dict_dat_file(
-    #     file_path=r'E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\train_data.dat')
 
-    # gme_models.process_external_fields_model(
-    #     intput_file_path=r"E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\Gridder.vtk",
-    #     model_idx=0, iso_list=[0, 1, 2, 3, 4, 5])
-
-    rf_path = os.path.join(root_path, 'processed', 'rf.vtk')
-    # gme_models.predict_with_interpolate(model_idx=0, method='rbf', iso_list=[0, 1, 2, 3, 4, 5], save_path=rbf_path)
-    gme_models.predict_with_machine_learning_method(model_idx=model_idx, method='rf', save_path=rf_path)
-    # gme_models.set_dat_file_regular_grid(dat_file_path=os.path.join(root_path, 'processed', 'sample_drills.dat'),
-    #                                      regular_grid_type='auto', is_save=True)
-    # gme_models.set_dat_file_unregular_grid(dat_file_path=os.path.join(root_path, 'processed', 'sample_drills.dat'),
-    #                                        edge_list_path=os.path.join(root_path, 'processed', 'sample_drills.edge'),
-    #                                        grid_node_file_path=os.path.join(root_path, 'processed', 'sample_drills.node'),
-    #                                        data_type='Wells', file_header=None, is_save=True)
-    ##
-
+    xgboost_path = os.path.join(root_path, 'processed', 'xgboost_ori.vtk')
+    gme_models.predict_with_machine_learning_method(model_idx=0, method='xgboost', save_path=xgboost_path)
 
     dataset = DglGeoDataset(gme_models)
 
@@ -83,7 +71,7 @@ if __name__ == '__main__':
     # vocab_size = 512
     # 模型结构相关参数
     model_config = GraphTransConfig(in_size=in_size, n_head=4, n_embd=512, out_size=out_size, gnn_layer_num=4,
-                                    gnn_n_head=3, n_layer=3,)
+                                    gnn_n_head=3, n_layer=3, )
     # 构建预测模型
     model = GraphTransfomer(model_config)
     # model = GraphTransfomerNet(model_config)
@@ -95,3 +83,8 @@ if __name__ == '__main__':
     print('Training...')
 
     trainer.train(data_split_idx=model_idx, has_test_label=True)
+
+    #####
+    gme_models.set_dat_file_regular_grid(
+        dat_file_path=r"E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\drills.csv",
+        is_create_graph=True, names=['x', 'y', 'z', 'label'], file_sep=',')

@@ -13,6 +13,7 @@ import pandas as pd
 import scipy.spatial as spt
 import sklearn
 import scipy.spatial as spt
+from geodata_process import GeoMeshParse
 
 
 # 根据给定采样轴向与采样位置，在给定模型中采样虚拟剖面
@@ -237,7 +238,8 @@ def visual_sample_data(geodata, is_show=True, camera=None, drill_radius=1, plot_
                     drill_points = drill_points_labels[:, 0:3]
                     drill_label = drill_points_labels[:, 3]
                     lines = np.hstack([len(drill_points), list(np.arange(0,
-                                                                         len(drill_points)))])  # [[len(drill_points)], list(np.arange(0, len(drill_points)))]
+                                                                         len(
+                                                                             drill_points)))])  # [[len(drill_points)], list(np.arange(0, len(drill_points)))]
                     drill = pv.PolyData(drill_points, lines=lines)
                     drill.point_data['stratum'] = drill_label
                     drills.append(drill)
@@ -482,11 +484,6 @@ def visual_confusion_matrix(y_pred, y_true, labels=None, is_show=True, is_normal
         plt.figure(figsize=(8, 8))
 
 
-
-
-
-
-
 # edge_list: [num_edge, 2]
 # 可视化边集，将三角网处理成边集 edge_list，可以用该函数可视化
 def visual_edge_list(edge_list, edge_points, is_show=True, e_color='gray', add_points=False, points_idx=None,
@@ -623,7 +620,8 @@ def test_3(geodata):
 
 
 def test_4():
-    geomodel = get_vtk_mesh_from_file(r"E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\backup\论文实验\real_world_data\3_12\vtk_model.vtk")
+    geomodel = get_vtk_mesh_from_file(
+        r"E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\backup\论文实验\real_world_data\3_12\vtk_model.vtk")
     bound = geomodel.bounds
     slices_x_0 = clip_section_along_axis(geomodel, sample_axis='x', scroll_scale=0.07)
     slices_x_1 = clip_section_along_axis(geomodel, sample_axis='x', scroll_scale=0.5)
@@ -648,13 +646,26 @@ class VisualKit(object):
 
 
 if __name__ == '__main__':
-
     display_noddy_datasets()
-
-    test_4()
-    mesh_path = r"E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\vtk_model.vtk"
+    # display_noddy_datasets()
+    mesh_path = r"E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\interface.vtp"
     mesh = get_vtk_mesh_from_file(mesh_path)
     mesh.plot()
+    noddyData = NoddyModelData(root=r'F:\djc\NoddyDataset', max_model_num=50)
+    noddy_models = noddyData.get_noddy_model_list_names(model_num=50, sample_random=False)
+    pre_train_model_list = []
+    # for item in [0, 1, 6, 9, 42, 7, 16, 21, 24,
+    #              34]:  # [0, 1, 6, 7, 9, 15, 16, 21, 24, 33, 34, 39, 42, 44]:  [0, 1, 7, 9, 16]
+    mesh = noddyData.get_grid_model(noddy_models[0])  # 1, 6
+    mesh.plot()
+    geodata = GeoMeshParse(mesh=mesh)
+    geodata.execute(extent=[100, 100, 50])
+    train_idx = geodata.extract_interface_points(rarefy_ratio=0.1)
+    geodata.export_points_data_to_xml_polydata_file(points=geodata.grid_points[train_idx],
+                                                    labels=geodata.grid_point_label[train_idx],
+                                                    save_path=r'E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\interface.vtp')
+
+    test_4()
 
     # root_path = os.path.abspath('.')
     out_path = r"E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\dataset"

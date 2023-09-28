@@ -2,11 +2,8 @@
 
 import os
 import json
-
-import dgl
 import numpy as np
 import torch
-
 from dgl.data import DGLDataset, utils
 import dgl.backend as F
 
