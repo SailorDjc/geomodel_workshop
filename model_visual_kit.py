@@ -13,7 +13,7 @@ import pandas as pd
 import scipy.spatial as spt
 import sklearn
 import scipy.spatial as spt
-from geodata_process import GeoMeshParse
+from geograph_parse import GeoMeshGraphParse
 
 
 # 根据给定采样轴向与采样位置，在给定模型中采样虚拟剖面

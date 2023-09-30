@@ -9,6 +9,8 @@ import math
 import scipy.spatial as spt
 from data_structure.points import PointSet
 from data_structure.boreholes import BoreholeSet, Borehole
+import time
+import os
 
 
 class Section(object):
@@ -21,7 +23,12 @@ class Section(object):
             self.trajectory_line = None  # 轨迹线 numpy.ndarray  3D points
             self.dims = None
             self.bounds = self.get_points_data().bounds
+
             self.vtk_data = None
+
+            self.tmp_dump_str = 'tmp' + str(int(time.time()))
+            self.save_path = None
+
             if sample_spacing is not None:
                 new_surf = self.create_implict_surface_reconstruct()
                 self.vtk_data = new_surf
@@ -217,6 +224,19 @@ class Section(object):
     def clip_line_with_bounds(self, line_points: np.ndarray, grid_bounds: np.ndarray):
         return line_points
 
+    def save(self, dir_path: str):
+        if self.vtk_data is not None and isinstance(self.vtk_data, pv.PolyData):
+            self.save_path = os.path.join(dir_path, self.tmp_dump_str)
+            self.vtk_data.save(filename=self.save_path+'.vtk')
+            self.vtk_data = 'dumped'
+
+    def load(self):
+        if self.vtk_data is not None:
+            if self.save_path is not None and os.path.exists(self.save_path+'.vtk'):
+                self.vtk_data = pv.read(filename=self.save_path+'.vtk')
+            else:
+                raise ValueError('vtk data file does not exist')
+
 
 class SectionSet(object):
     def __init__(self):
@@ -229,6 +249,15 @@ class SectionSet(object):
 
     def __getitem__(self, idx):
         return self.sections[idx]
+
+    def save(self, dir_path: str):
+        for s_id in np.arange(len(self.sections)):
+            self.sections[s_id].save(dir_path=dir_path)
+            self.sections[s_id] = 'dumped'
+
+    def load(self):
+        for s_id in np.arange(len(self.sections)):
+            self.sections[s_id].load()
 
 
 if __name__ == "__main__":

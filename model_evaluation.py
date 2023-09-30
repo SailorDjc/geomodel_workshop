@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import pyvista as pv
 import model_visual_kit as mvk
-from gme_model_generate import GmeModelList
+from geomodel_analysis import GmeModelList
 import os
 from retrieve_noddy_files import NoddyModelData
 import pandas as pd

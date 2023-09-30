@@ -8,6 +8,9 @@ import copy
 import scipy.spatial as spt
 import pyvista as pv
 
+# Parameters:
+# grid : data_structure.grids.Grid
+# sample_operator: list ['None', 'uniformly_points', 'eq_interval_points', 'rand_drills', 'axis_sections']
 
 class GeoGridDataSampler(object):
     def __init__(self, grid: Grid = None, sample_operator: list = None, **kwargs):
@@ -15,14 +18,15 @@ class GeoGridDataSampler(object):
         self.sample_operator = sample_operator
         self.grid_points = None
         self.bounds = None
+        if grid is not None:
+            self.grid_points = grid.grid_points
+            self.bounds = grid.bounds
         self.sample_num = 0  # 采样次数
         self.sample_data_list = []  # 采样数据
         self.kwargs = kwargs
 
     def execute(self, **kwargs):
         if self.grid is not None:
-            self.grid_points = self.grid.grid_points
-            self.bounds = self.grid.bounds
             self.kwargs.update(kwargs)
             sample_op_type = ['None', 'uniformly_points', 'eq_interval_points', 'rand_drills', 'axis_sections']
             idx_to_sample_op = {index: sample_op for index, sample_op in enumerate(sample_op_type)}
@@ -40,15 +44,13 @@ class GeoGridDataSampler(object):
                             points_num = self.kwargs['points_num']
                         else:
                             raise ValueError('Need to set value of parameter points_num.')
-                        sample_data = self.uniformly_sample_grid_for_points(n_points=points_num)
-                        self.sample_data_list.append(sample_data)
+                        self.uniformly_sample_grid_for_points(n_points=points_num)
                     if sample_op == 'eq_interval_points':
                         if 'interval' in self.kwargs.keys():
                             interval = self.kwargs['interval']
                         else:
                             raise ValueError('Need to set value of parameter interval.')
-                        sample_data = self.uniformly_interval_sample_grid_for_points(interval=interval)
-                        self.sample_data_list.append(sample_data)
+                        self.uniformly_interval_sample_grid_for_points(interval=interval)
                     if sample_op == 'rand_drills':
                         drill_num = None
                         drill_pos = None
@@ -58,8 +60,7 @@ class GeoGridDataSampler(object):
                             drill_num = self.kwargs['drill_num']
                         if drill_pos is None and drill_num is None:
                             raise ValueError('Need to input parameter drill_pos or drill_num.')
-                        sample_data = self.random_sample_grid_for_boreholes(drill_pos=drill_pos, drill_num=drill_num)
-                        self.sample_data_list.append(sample_data)
+                        self.random_sample_grid_for_boreholes(drill_pos=drill_pos, drill_num=drill_num)
                     if sample_op == 'axis_sections':
                         sample_axis = None
                         section_num = 1
@@ -80,12 +81,9 @@ class GeoGridDataSampler(object):
                             raise ValueError(
                                 'This method need to input 5 parameters, including sample_axis, section_num,'
                                 'scroll_pos, resolution_xy and resolution_z.')
-                        sample_data = self.sample_with_sections_along_axis(sample_axis=sample_axis
-                                                                           , section_num=section_num
-                                                                           , scroll_pos=scroll_pos
-                                                                           , resolution_xy=resolution_xy
-                                                                           , resolution_z=resolution_z)
-                        self.sample_data_list.append(sample_data)
+                        self.sample_with_sections_along_axis(sample_axis=sample_axis, section_num=section_num
+                                                             , scroll_pos=scroll_pos, resolution_xy=resolution_xy
+                                                             , resolution_z=resolution_z)
         else:
             raise ValueError('The grid data is empty.')
 
@@ -126,6 +124,8 @@ class GeoGridDataSampler(object):
                 cells_labels = np.full_like(cells_ids, fill_value=label, dtype=int)
                 cells_series[cells_ids] = cells_labels
         self.grid.grid_points_series = cells_series
+        self.grid.classes = np.unique(cells_series)
+        self.grid.classes_num = len(self.grid.classes)
 
     def uniformly_interval_sample_grid_for_points(self, interval=100):
         if self.grid is None:
@@ -137,6 +137,7 @@ class GeoGridDataSampler(object):
         sample_points = self.grid_points[pid]
         points_data = PointSet(points=sample_points, point_labels=point_labels)
         self.sample_data_list.append(points_data)
+        self.sample_num += 1
         return points_data
 
     def uniformly_sample_grid_for_points(self, n_points):
@@ -185,6 +186,7 @@ class GeoGridDataSampler(object):
             one_borehole = self.sample_grid_for_borehole(pos=pos)
             one_borehole.borehole_id = it
             borehole_list.append(one_borehole=one_borehole)
+        borehole_list.generate_vtk_data_as_tube(borehole_radius=5, is_tube=True)
         self.sample_data_list.append(borehole_list)
         self.sample_num += 1
         return borehole_list
@@ -195,9 +197,10 @@ class GeoGridDataSampler(object):
         pos_a[2] = self.grid.bounds[5]  # z_max
         pos_b[2] = self.grid.bounds[4]  # z_min
         # 沿直线采样
-        sample_line = self.grid.vtk_data.sample_over_line(pointa=pos_a, pointb=pos_b)
-        line_points = sample_line.cell_centers().points
-        pid = self.grid.vtk_data.find_cells_along_line(line_points)
+        # sample_line = self.grid.vtk_data.sample_over_line(pointa=pos_a, pointb=pos_b)
+        # line_points = sample_line.points
+        pid = self.grid.vtk_data.find_cells_along_line(pointa=pos_a, pointb=pos_b)
+        line_points = self.grid.grid_points[pid]
         line_series = self.grid.grid_points_series[pid]
         one_borehole = Borehole(points=line_points, series=line_series, is_virtual=True)
         return one_borehole
@@ -220,11 +223,14 @@ class GeoGridDataSampler(object):
                                                                                        , resolution_z=resolution_z
                                                                                        , grid_bounds=self.bounds))
             section_list.append(section)
+        self.sample_data_list.append(section_list)
         self.sample_num += 1
         return section_list
 
     # 获取采样点相对于格网点的索引(通过最近邻搜索计算得到) , idx=None 返回所有数据， idx=0则返回第一个采样数据
-    def get_sample_points_indexex_for_grid_points(self, idx=None):
+    def get_sample_points_indexex_for_grid_points(self, idx=None) -> list:  # 返回 index
+        if self.grid_points is None:
+            raise ValueError('Grid points should not be empty.')
         ckt = spt.cKDTree(self.grid_points)
         points_indexes = []
         for sample_id, sample_data in enumerate(self.sample_data_list):
@@ -238,8 +244,8 @@ class GeoGridDataSampler(object):
                 d, pid = ckt.query(sample_points)
                 points_indexes.extend(pid)
             if idx is not None and idx == sample_id:
-                return list(set(sorted(pid)))
-            points_indexes = list(set(sorted(points_indexes)))
+                return list(sorted(np.unique(pid)))
+            points_indexes = list(sorted(np.unique(points_indexes)))
         return points_indexes
 
     # 获取采样点数据
@@ -252,3 +258,11 @@ class GeoGridDataSampler(object):
         elif isinstance(sample_data, (BoreholeSet, SectionSet)):
             sample_data = sample_data.get_points_data()
             return sample_data
+
+    def save(self, dir_path: str):
+        for s_id in np.arange(len(self.sample_data_list)):
+            self.sample_data_list[s_id].save(dir_path=dir_path)
+
+    def load(self):
+        for s_id in np.arange(len(self.sample_data_list)):
+            self.sample_data_list[s_id].load()

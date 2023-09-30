@@ -4,6 +4,8 @@ import pyvista as pv
 import scipy.spatial as spt
 import copy
 from sklearn.cluster import DBSCAN
+import time
+import os
 
 
 def compute_nearest_neighbor_dist_from_pts(coords: np.ndarray):
@@ -16,7 +18,7 @@ def compute_nearest_neighbor_dist_from_pts(coords: np.ndarray):
 # 获取点云数据集的包围盒
 # Parameters: coords 输入是np.array 的二维数组，且坐标是3D坐标
 # xy_buffer z_buffer 为大于0的浮点数，是包围盒的缓冲距离
-def get_bounds_from_coords(coords: np.ndarray, xy_buffer=None, z_buffer=None):
+def get_bounds_from_coords(coords: np.ndarray, xy_buffer=0, z_buffer=0):
     assert coords.ndim == 2, "input coords array is not 2D array"
     assert coords.shape[1] == 3, "input coords are not 3D"
 
@@ -83,6 +85,9 @@ class PointSet(object):
         self.scalar_color_map = {}  # 根据scalar的值范围确定颜色  self.set_color_with_label=False
         self.set_color_with_label = True
         self.epsilon = 0.00001  # 足够小，作为距离阈值
+
+        self.tmp_dump_str = 'tmp' + str(int(time.time()))
+        self.save_path = None
 
     def is_empty(self):
         if self.points is not None and self.labels is not None:
@@ -222,6 +227,25 @@ class PointSet(object):
 
     def __getitem__(self, idx):
         return self.points[idx]
+
+    def save(self, dir_path: str):
+        if self.vtk_point_data is not None and isinstance(self.vtk_point_data, pv.PolyData):
+            self.save_path = os.path.join(dir_path, self.tmp_dump_str)
+            self.vtk_point_data.save(filename=self.save_path+'_p.vtk')
+            self.vtk_point_data = 'dumped'
+        if self.vtk_vector_data is not None and isinstance(self.vtk_vector_data, pv.PolyData):
+            self.save_path = os.path.join(dir_path, self.tmp_dump_str)
+            self.vtk_vector_data.save(filename=self.save_path+'_v.vtk')
+            self.vtk_vector_data = 'dumped'
+
+    def load(self):
+        if self.save_path is not None:
+            if self.vtk_point_data is not None and os.path.exists(self.save_path+'_p.vtk'):
+                self.vtk_point_data = pv.read(filename=self.save_path+'_p.vtk')
+            if self.vtk_vector_data is not None and os.path.exists(self.save_path+'_v.vtk'):
+                self.vtk_vector_data = pv.read(filename=self.save_path+'_v.vtk')
+        else:
+            raise ValueError('vtk data file does not exist')
 
 
 if __name__ == "__main__":

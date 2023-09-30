@@ -9,6 +9,7 @@ import scipy.spatial as spt
 from data_structure.points import PointSet, get_bounds_from_coords
 from data_structure.boreholes import Borehole, BoreholeSet
 from data_structure.sections import Section, SectionSet
+import time
 import copy
 import os
 
@@ -103,37 +104,38 @@ class Grid(object):
         self.scalar_grad_norm = None  # 正则化梯度  dict
 
         self.label_dict = None  # 标签映射字典
+        self.classes_num = 0  #
+        self.classes = None  # 类别
+
+        self.tmp_dump_str = 'tmp' + str(int(time.time()))
+        self.save_path = None
+
         # 外部输入的vtk规则网格
         self.vtk_data = grid_vtk
-        if grid_vtk is not None and isinstance(grid_vtk, pv.RectilinearGrid):
-            self.dims = grid_vtk.GetDimensions()
-            self.bounds = np.array(grid_vtk.bounds)
-            self.grid_points = grid_vtk.cell_centers().points
-            self.standardize_labels_from_vtk_data()  # 处理标签
-            self.grid_points_num = self.grid_points.shape[0]
-
-        elif grid_vtk is None and grid_vtk_path is not None and os.path.exists(grid_vtk_path):
-            self.vtk_data = pv.read(grid_vtk_path)
-            self.dims = self.vtk_data.GetDimensions()
-            self.bounds = np.array(self.vtk_data.bounds)
-            self.grid_points = self.vtk_data.cell_centers().points
-            self.standardize_labels_from_vtk_data()  # 处理标签
-            self.grid_points_num = self.grid_points.shape[0]
-        else:
+        if self.vtk_data is None and (grid_vtk_path is None or not os.path.exists(grid_vtk_path)):
             self.dims = None
             self.bounds = None
+        else:
+            # 传入的grid_vtk优先级更高，传入路径次之
+            if self.vtk_data is None and grid_vtk_path is not None and os.path.exists(grid_vtk_path):
+                self.vtk_data = pv.read(grid_vtk_path)
+            if isinstance(self.vtk_data, pv.RectilinearGrid):
+                self.dims = grid_vtk.GetDimensions()
+                self.bounds = np.array(grid_vtk.bounds)
+                self.grid_points = self.vtk_data.cell_centers().points
+                self.standardize_labels_from_vtk_data()  # 处理标签
+                self.grid_points_num = self.grid_points.shape[0]
 
     # 将labels映射为连续自然数，从0开始，或按照传入的字典进行标签转换 , default_value 默认未知标签为-1
     def standardize_labels_from_vtk_data(self, label_dict: dict = None, default_value=-1):
         series_labels = self.vtk_data.active_scalars
-        old_label = []
-        for item in series_labels:
-            old_label.append(int(item))
+        if series_labels is None:
+            raise ValueError('The input data has not scalar values.')
+        old_label = np.trunc(series_labels)
         unique_label = np.unique(old_label)
         sorted_label = sorted(unique_label)
         if label_dict is not None:
             # 判断label_dict 是否符合要求
-            flag = True
             for idx, item in enumerate(sorted_label):
                 if item not in label_dict.keys():
                     raise ValueError('The input label_dict is invalid.')
@@ -143,8 +145,14 @@ class Grid(object):
         else:
             label_dict = {}
             for idx, item in enumerate(sorted_label):
+                if item == default_value:  # 对于默认未知值则不改变
+                    label_dict[item] = item
+                    continue
                 label_dict[item] = idx
             new_label = np.vectorize(label_dict.get)(np.array(old_label))
+        self.label_dict = label_dict
+        self.classes_num = len(label_dict.values())
+        self.classes = np.array(list(label_dict.values()))
         self.grid_points_series = new_label
 
     # 可以自由创建 1维、2维、3维网格，如果是规则沿轴向，则只需要dim和bounds参数，也可以通过分割间断点序列xx,yy,zz来自定义网格
@@ -286,9 +294,9 @@ class Grid(object):
                 self.vtk_data = new_vtk_grid
                 self.dims = new_vtk_grid.GetDimensions()
                 self.bounds = np.array(new_vtk_grid.bounds)
-                return new_vtk_grid
+                return self.__add_properties_to_vtk_object_if_present(grid=self)
             else:
-                new_grid = Grid(grid_vtk=new_vtk_grid)
+                new_grid = Grid(model_name=self.model_name, grid_vtk=new_vtk_grid)
                 if self.grid_points_series is not None:
                     new_grid.grid_points_series = self.grid_points_series[pid]
                 if self.scalar_series is not None and isinstance(self.scalar_series, dict):
@@ -301,7 +309,7 @@ class Grid(object):
                     for scalar_name, scalar_grad_norm_values in self.scalar_grad_norm.keys():
                         new_grid.set_scalar_grad_norm(scalar_grad_norm_pred=scalar_grad_norm_values[pid]
                                                       , series_name=scalar_name)
-                return new_grid
+                return self.__add_properties_to_vtk_object_if_present(grid=new_grid)
 
     def __len__(self):
         return self.grid_points_num
@@ -374,20 +382,22 @@ class Grid(object):
             self.scalar_grad_norm = {}
         self.scalar_grad_norm[scalar_name] = scalar_grad_norm_pred
 
-    def __add_properties_to_vtk_object_if_present(self):
-        assert self.vtk_data is not None, "there is no grid vtk object"
-        if self.grid_points_series is not None:
-            add_np_property_to_vtk_object(self.vtk_data, "Scalar Field", self.grid_points_series, continuous=False)
-        if self.scalar_series is not None and isinstance(self.scalar_series, dict):
-            for scalar_name, scalars_values in self.scalar_series.keys():  # series_name = "Scalar Field" + str(i)
-                add_np_property_to_vtk_object(self.vtk_data, scalar_name, scalars_values)
-        if self.scalar_grad is not None and isinstance(self.scalar_grad, dict):
-            for scalar_name, scalars_grad_values in self.scalar_grad.keys():  # "Scalar Gradient" + str(i)
-                add_np_property_to_vtk_object(self.vtk_data, scalar_name, scalars_grad_values)
-        if self.scalar_grad_norm is not None and isinstance(self.scalar_grad, dict):
-            for scalar_name, scalars_grad_norm_values in self.scalar_grad_norm.keys():  # "Scalar Gradient Norm"+str(i)
-                add_np_property_to_vtk_object(self.vtk_data, scalar_name, scalars_grad_norm_values)
-        return self.vtk_data
+    @staticmethod
+    def __add_properties_to_vtk_object_if_present(grid):
+        assert isinstance(grid, Grid), "Input data should be of Grid type"
+        assert grid.vtk_data is not None, "there is no grid vtk object"
+        if grid.grid_points_series is not None:
+            add_np_property_to_vtk_object(grid.vtk_data, "Scalar Field", grid.grid_points_series, continuous=False)
+        if grid.scalar_series is not None and isinstance(grid.scalar_series, dict):
+            for scalar_name, scalars_values in grid.scalar_series.keys():  # series_name = "Scalar Field" + str(i)
+                add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_values)
+        if grid.scalar_grad is not None and isinstance(grid.scalar_grad, dict):
+            for scalar_name, scalars_grad_values in grid.scalar_grad.keys():  # "Scalar Gradient" + str(i)
+                add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_grad_values)
+        if grid.scalar_grad_norm is not None and isinstance(grid.scalar_grad, dict):
+            for scalar_name, scalars_grad_norm_values in grid.scalar_grad_norm.keys():  # "Scalar Gradient Norm"+str(i)
+                add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_grad_norm_values)
+        return grid
 
     def process_model_outputs(self, map_to_original_class_ids=None):
         # 1) remap unit predictions to original class ids
@@ -395,7 +405,7 @@ class Grid(object):
             if isinstance(map_to_original_class_ids, dict):
                 self.grid_points_series = np.vectorize(map_to_original_class_ids.get)(self.grid_points_series)
         # 2) add model properties to vtk object
-        self.vtk_data = self.__add_properties_to_vtk_object_if_present()
+        self.vtk_data = self.__add_properties_to_vtk_object_if_present(grid=self).vtk_data
 
     def match_external_grid_to_this_grid(self, external_grid):
         if isinstance(external_grid, Grid):
@@ -418,6 +428,19 @@ class Grid(object):
                         self.scalar_grad_norm[scalar_name] = scalars_grad_norm_value[pid]
         else:
             raise ValueError('Please input an object of Grid class.')
+
+    def save(self, dir_path: str):
+        if self.vtk_data is not None and isinstance(self.vtk_data, pv.RectilinearGrid):
+            self.save_path = os.path.join(dir_path, self.tmp_dump_str + '.vtk')
+            self.vtk_data.save(filename=self.save_path)
+            self.vtk_data = 'dumped'
+
+    def load(self):
+        if self.vtk_data is not None:
+            if self.save_path is not None and os.path.exists(self.save_path):
+                self.vtk_data = pv.read(filename=self.save_path)
+            else:
+                raise ValueError('vtk data file does not exist')
 
 
 class GridPointDataDistributedSampler(object):

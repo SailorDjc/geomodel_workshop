@@ -48,11 +48,11 @@ class NoddyModelData(object):
 
         # 检查文件夹是否存在，不存在就新建
         if not os.path.exists(self.his_dir_path):
-            os.mkdir(self.his_dir_path)
+            os.makedirs(self.his_dir_path)
         if not os.path.exists(self.output_dir):
-            os.mkdir(self.output_dir)
+            os.makedirs(self.output_dir)
         if not os.path.exists(self.raw_dir_path):
-            os.mkdir(self.raw_dir_path)
+            os.makedirs(self.raw_dir_path)
 
         self.dataset_list = dataset_list  # 指定加载的数据集
         # 会先到 raw_data文件夹中搜索，搜索不到就下载
@@ -88,7 +88,10 @@ class NoddyModelData(object):
         start_time = time.time()
         filepath = os.path.join(self.raw_dir_path, dataset + '.tar')
         try:
-            r = requests.get(path, stream=True)
+            headers = {
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                              ' (KHTML, like Gecko) Chrome/65.0.3325.181 Safari/537.36'}
+            r = requests.get(path, stream=True, headers=headers, timeout=3)
             size = 0  # 初始化已下载大小
             chunk_size = 1024  # 每次下载的数据大小
             content_size = int(r.headers['content-length'])  # 下载文件总大小
@@ -154,12 +157,10 @@ class NoddyModelData(object):
             all_model_list.extend(model_list)
         return all_model_list
 
-    def get_noddy_model_list_names(self, dataset='FOLD_FOLD_FOLD', model_num=-1, sample_random=False):
-        if model_num <= 0:
-            return []
+    def get_noddy_model_list_names(self, dataset='FOLD_FOLD_FOLD', model_num: int = -1, sample_random=False):
         if dataset not in self.grid_model_list_log.keys():
             return []
-        if model_num > self.get_model_num(dataset=dataset) or model_num == -1:
+        if model_num <= 0 or model_num > self.get_model_num(dataset=dataset):
             model_num = self.get_model_num(dataset=dataset)
         model_list = self.grid_model_list_log[dataset]
         if sample_random is True:
@@ -209,7 +210,7 @@ class NoddyModelData(object):
                 if model_name in grid_model_path_map.keys():
                     bin_path = grid_model_path_map[model_name] + '.pkl'
                     grid_model = self.load_data(bin_path)
-                    model_names.append(grid_model)
+                    grid_models.append(grid_model)
             return grid_models
         else:
             print('idx is not list type.')

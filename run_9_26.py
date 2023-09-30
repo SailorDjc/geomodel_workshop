@@ -11,7 +11,7 @@ import dgl.nn as dglnn
 from dgl.data import AsNodePredDataset
 from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
 from dgl_geodataset import DglGeoDataset
-from gme_model_generate import GmeModelGraphList
+from geomodel_analysis import GmeModelGraphList
 import tqdm
 import argparse
 
@@ -20,42 +20,46 @@ from gme_trainer import GmeTrainer, GmeTrainerConfig, GraphTransConfig
 from models.model import GraphTransfomer, GraphModel, SAGEModel, SAGETransfomer, GraphTransfomerNet
 from retrieve_noddy_files import NoddyModelData
 from data_structure.grids import Grid
-import model_visual_kit as mvk
+from geograph_parse import GeoMeshGraphParse
+from data_structure.data_sampler import GeoGridDataSampler
+
 
 if __name__ == '__main__':
     # load and preprocess dataset
     print('Loading data')
     path_1 = os.path.abspath('..')
     root_path = os.path.join(path_1, 'geomodel_workshop')
-    noddyData = NoddyModelData(root=r'F:\djc\NoddyDataset', max_model_num=50)
-    noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0, 1, 6])
+    noddyData = NoddyModelData(root=r'F:\NoddyDataset', max_model_num=10)
+    noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0])  # 1 6
     grid_list = []
     for noddy_grid in noddy_grid_list:
         grid = Grid(grid_vtk=noddy_grid)
-        grid = grid.resample_grid(dim=np.array([120, 120, 80]))
+        grid.resample_grid(dim=np.array([50, 50, 30]))
         grid_list.append(grid)
     model_idx = 0
+
     # 只有第一次输入的noddy_model可以用到，之后代码会自动加载数据缓存
     gme_models = GmeModelGraphList('gme_model', root=root_path,
                                    grid_data=grid_list,
-                                   sample_operator=['rand_drills'],  # ['axis_sections'],
+                                   sample_operator=['axis_sections'],  # ['axis_sections'],
                                    add_inverse_edge=True,
-                                   drill_num=60)  # # 'Wells',  # 'Points'
+                                   drill_num=10)  # # 'Wells',  # 'Points'
 
-    geodata = gme_models.geodata[model_idx]
+    plot_data = gme_models.geodata[model_idx].sample_data.sample_data_list[0].get_sample_vtk_data()
+    plot_data.plot()
 
-    xgboost_path = os.path.join(root_path, 'processed', 'xgboost_ori.vtk')
-    gme_models.predict_with_machine_learning_method(model_idx=0, method='xgboost', save_path=xgboost_path)
+    # xgboost_path = os.path.join(root_path, 'processed', 'xgboost_ori.vtk')
+    # gme_models.predict_with_machine_learning_method(model_idx=0, method='xgboost', save_path=xgboost_path)
 
     dataset = DglGeoDataset(gme_models)
 
     # initialize a trainer instance and kick off training
     # 模型训练相关参数
-    save_path_1 = r'E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\vtk_model.vtk'
+    # save_path_1 = r'E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\processed\vtk_model.vtk'
     trainer_config = GmeTrainerConfig(max_epochs=14000, batch_size=512, num_workers=4, learning_rate=1e-4,
                                       ckpt_path=os.path.join(root_path, 'processed', 'latest_tran.pth'),
                                       output_dir=os.path.join(root_path, 'output'),
-                                      out_put_grid_file_name=save_path_1,
+                                      out_put_grid_file_name=os.path.join(gme_models.processed_dir, 'vtk_model.vtk'),
                                       sample_neigh=[10, 10, 15, 15])
 
     g = dataset[model_idx]
