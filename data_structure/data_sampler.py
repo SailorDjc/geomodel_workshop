@@ -213,8 +213,7 @@ class GeoGridDataSampler(object):
             cell_indices = np.argwhere(cell_indices > 0).flatten()
             # 为防止圆柱体半径过小，没有包含任何网格点，这里添加圆柱中心线经过的网格索引
             line_indices = self.grid.vtk_data.find_cells_along_line(pointa=hole_top_pos, pointb=hole_bottom_pos)
-            cell_indices = np.unique(np.hstack((cell_indices, line_indices)))
-
+            cell_indices = np.array(np.unique(np.hstack((cell_indices, line_indices))), dtype=int)
             boreholes_points = self.grid_points[cell_indices]
             for one_layer in one_borehole.holelayer_list:
                 top_pos_z = one_layer.top_pos[2]
