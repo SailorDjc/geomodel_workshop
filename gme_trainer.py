@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 import torchmetrics.functional as MF
 import torchmetrics
-from model_visual_kit import visual_loss_picture, visual_acc_picture, visual_sample_data
+from utils.plot_utils import visual_loss_picture, visual_acc_picture
 import model_visual_kit as mvk
 from datetime import datetime
 from sklearn.metrics import mean_squared_error
@@ -170,8 +170,8 @@ class GmeTrainer:
                 pred[output_nodes] = y.to(graph.device)
             scalars = np.argmax(pred.cpu().numpy(), axis=1)
             gen_mesh = mvk.generate_model_on_base_grid(geodata, pred, save_path=save_path)
-            drills = mvk.visual_sample_data(geodata, is_show=is_show, drill_radius=2)
-            mvk.visual_multiple_model(geodata.sample_grid, gen_mesh, drills[0])  # , box=geodata.sample_grid_outline
+            # drills = mvk.visual_sample_data(geodata, is_show=is_show, drill_radius=2)
+            # mvk.visual_multiple_model(geodata.sample_grid, gen_mesh, drills[0])  # , box=geodata.sample_grid_outline
             # mvk.export_points_labels_dat_file(
             #     file_path=r'E:\Code\duanjc\PyCode\GeoScience\geomodel_workshop\output\pred.dat',
             #     pred=scalars)

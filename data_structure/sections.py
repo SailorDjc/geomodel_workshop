@@ -1,6 +1,6 @@
 import pyvista as pv
 import numpy as np
-from vtkmodules.all import vtkPoints, vtkCellArray, vtkCellData, vtkPolyData, vtkSurfaceReconstructionFilter \
+from vtkmodules.all import vtkCellArray, vtkPoints, vtkCellData, vtkPolyData, vtkSurfaceReconstructionFilter \
     , vtkProbeFilter
 from vtkmodules.util import numpy_support
 from scipy.interpolate import interp1d, interp2d
@@ -9,28 +9,51 @@ import math
 import scipy.spatial as spt
 from data_structure.points import PointSet
 from data_structure.boreholes import BoreholeSet, Borehole
+from utils.vtk_utils import add_np_property_to_vtk_object
 import time
 import os
 
 
 class Section(object):
-    def __init__(self, points: np.ndarray = None, series: np.ndarray = None, sample_spacing=None, sample_grid=None):
+    def __init__(self, vtk_data=None, vtk_data_path=None, points: np.ndarray = None, series: np.ndarray = None
+                 , sample_spacing=None, sample_grid=None, name=None):
+        self.name = name
         if points is not None and series is not None:
             self.points = points
-            self.points_num = points.shape[0]
+
             self.series = series
+            # 标量
             self.scalars = None  # {}
+            self.scalar_grad = None  # 梯度
+            self.scalar_grad_norm = None
+
             self.trajectory_line = None  # 轨迹线 numpy.ndarray  3D points
             self.dims = None
-            self.bounds = self.get_points_data().bounds
-
+            self.resolution = None
             self.vtk_data = None
 
-            self.tmp_dump_str = 'tmp' + str(int(time.time()))
-            self.save_path = None
+            self.classes = None
+            self.classes_num = 0
+            self.label_dict = None
 
-            if sample_spacing is not None:
-                new_surf = self.create_implict_surface_reconstruct()
+            self.tmp_dump_str = 'tmp' + str(int(time.time()))
+            if vtk_data is not None or (vtk_data_path is not None and os.path.exists(vtk_data_path)):
+                self.vtk_data = vtk_data
+                if self.vtk_data is None:
+                    self.vtk_data = pv.read(filename=vtk_data_path)
+                if isinstance(vtk_data, pv.RectilinearGrid):
+                    self.dims = vtk_data.GetDimensions()
+                    self.points = vtk_data.cell_centers().points
+                    self.standardize_labels_from_vtk_data()
+                if isinstance(vtk_data, (pv.PolyData, pv.UnstructuredGrid)):
+                    self.dims = None
+                    self.points = vtk_data.cell_centers().points
+                    self.standardize_labels_from_vtk_data()
+            if sample_spacing is not None and self.points is not None and sample_grid is not None and vtk_data is None \
+                    and vtk_data_path is None:
+                self.points_num = points.shape[0]
+                self.bounds = self.get_points_data().bounds
+                new_surf = self.create_implict_surface_reconstruct(sample_spacing=sample_spacing)
                 self.vtk_data = new_surf
                 self.prob_volume(grid=sample_grid, surf=new_surf)
 
@@ -40,6 +63,62 @@ class Section(object):
             for k, v in self.scalars.keys():
                 points_data.set_scalars(scalars=v, scalar_name=k)
         return points_data
+
+    def get_classes(self):
+        if self.classes is None:
+            if self.series is None:
+                raise ValueError('This grid lacks labels.')
+            else:
+                self.classes = sorted(np.unique(self.series))
+                self.classes_num = len(self.classes)
+        return self.classes
+
+    # 将labels映射为连续自然数，从0开始，或按照传入的字典进行标签转换 , default_value 默认未知标签为-1
+    def standardize_labels_from_vtk_data(self, label_dict: dict = None, default_value=-1):
+        series_labels = self.vtk_data.active_scalars
+        if series_labels is None:
+            raise ValueError('The input data has not scalar values.')
+        old_label = np.trunc(series_labels)
+        unique_label = np.unique(old_label)
+        sorted_label = sorted(unique_label)
+        if label_dict is not None:
+            # 判断label_dict 是否符合要求
+            for idx, item in enumerate(sorted_label):
+                if item not in label_dict.keys():
+                    raise ValueError('The input label_dict is invalid.')
+                if idx + 1 < len(sorted_label) and item + 1 != label_dict[idx + 1]:
+                    raise ValueError('The input label_dict is invalid.')
+            new_label = np.vectorize(label_dict.get)(np.array(old_label))
+        else:
+            label_dict = {}
+            for idx, item in enumerate(sorted_label):
+                if item == default_value:  # 对于默认未知值则不改变
+                    label_dict[item] = item
+                    continue
+                label_dict[item] = idx
+            new_label = np.vectorize(label_dict.get)(np.array(old_label))
+        self.label_dict = label_dict
+        self.classes_num = len(label_dict.values())
+        self.classes = np.array(list(label_dict.values()))
+        self.series = new_label
+        self.__add_properties_to_vtk_object_if_present(grid=self)
+
+    @staticmethod
+    def __add_properties_to_vtk_object_if_present(grid):
+        assert isinstance(grid, Section), "Input data should be of Section type"
+        assert grid.vtk_data is not None, "there is no grid vtk object"
+        if grid.series is not None:
+            add_np_property_to_vtk_object(grid.vtk_data, "Scalar Field", grid.series, continuous=False)
+        if grid.scalars is not None and isinstance(grid.scalars, dict):
+            for scalar_name, scalars_values in grid.scalars.keys():  # series_name = "Scalar Field" + str(i)
+                add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_values)
+        if grid.scalar_grad is not None and isinstance(grid.scalar_grad, dict):
+            for scalar_name, scalars_grad_values in grid.scalar_grad.keys():  # "Scalar Gradient" + str(i)
+                add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_grad_values)
+        if grid.scalar_grad_norm is not None and isinstance(grid.scalar_grad, dict):
+            for scalar_name, scalars_grad_norm_values in grid.scalar_grad_norm.keys():  # "Scalar Gradient Norm"+str(i)
+                add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_grad_norm_values)
+        return grid
 
     # 设置剖面网格点 self.points
     def set_surface(self, surf: pv.PolyData):
@@ -117,6 +196,7 @@ class Section(object):
                                     , grid_bounds: np.ndarray
                                     , direction: np.ndarray = np.array([0, 0, -1])
                                     , depth=None, is_extent_xy=False):
+        self.resolution = np.array([resolution_xy, resolution_xy, resolution_z])
         if trajectory_line_xy.shape[0] > 1 and trajectory_line_xy.ndim == 2:
             # 记录轨迹线
             if depth is None:
@@ -158,20 +238,22 @@ class Section(object):
             raise ValueError('Trajectory line input is not supported.')
 
     # 隐式表面重建，根据一堆网格点来隐式地构建表面， 待修改
-    def create_implict_surface_reconstruct(self, grid_points: np.ndarray, sample_spacing, neighbour_size=20):
+    def create_implict_surface_reconstruct(self, sample_spacing,
+                                           neighbour_size=20) -> pv.PolyData:
         surface = vtkSurfaceReconstructionFilter()
         poly_data = vtkPolyData
-        points = vtkPoints()
-        points.SetData(grid_points)
-        poly_data.SetPoints(points)
+        v_points = vtkPoints()
+        v_points.SetData(numpy_support.numpy_to_vtk(self.points))
+        poly_data.SetPoints(v_points)
         surface.SetInputData(poly_data)
         surface.SetNeighborhoodSize(neighbour_size)
         surface.SetSampleSpacing(sample_spacing)
+        self.resolution = np.array([sample_spacing, sample_spacing, sample_spacing])
         surface.Update()
         surface = pv.wrap(surface)
         return surface
 
-    # 输入的 line_points 的 x坐标必须是单调增的
+    # 用于对线上的点进行加密，输入的 line_points 的 x坐标必须是单调增的
     def densify_line_xy_points_with_interp(self, line_points: np.ndarray, resolution_xy, is_smooth=False
                                            , grid_bounds: np.ndarray = None, is_extent=False):
         control_line_xy = line_points[:, 0:2]
@@ -211,14 +293,25 @@ class Section(object):
     # 地质探针，待修改
     def prob_volume(self, grid, surf: pv.PolyData):
         probe_volume = vtkProbeFilter()
-        probe_volume.SetSourceData(grid)
+        probe_volume.SetSourceData(grid.vtk_data)
         probe_volume.SetInputData(surf)
         probe_volume.Update()
         out = probe_volume.GetOutput()
         arr = out.GetPointData().GetArray("Scalar Field")
         out.GetPointData().SetScalars(arr)
         out = pv.wrap(out)
-        out.plot()
+        self.vtk_data = out
+        return out
+
+    def detach_vtk_component_with_label(self):
+        if self.vtk_data is None:
+            raise ValueError('The vtk_data of the section is empty.')
+        classes = self.get_classes()
+        vtk_dict = {}
+        if isinstance(self.vtk_data, (pv.UnstructuredGrid, pv.PolyData)):
+            for item in classes:
+                vtk_dict[item] = self.vtk_data.threshold(value=[item - 0.001, item + 0.001])
+        return vtk_dict
 
     # 直线段的窗口裁剪 待修改
     def clip_line_with_bounds(self, line_points: np.ndarray, grid_bounds: np.ndarray):
@@ -226,26 +319,41 @@ class Section(object):
 
     def save(self, dir_path: str):
         if self.vtk_data is not None and isinstance(self.vtk_data, pv.PolyData):
-            self.save_path = os.path.join(dir_path, self.tmp_dump_str)
-            self.vtk_data.save(filename=self.save_path+'.vtk')
+            save_path = os.path.join(dir_path, self.tmp_dump_str)
+            self.vtk_data.save(filename=save_path + '.vtk')
             self.vtk_data = 'dumped'
 
-    def load(self):
-        if self.vtk_data is not None:
-            if self.save_path is not None and os.path.exists(self.save_path+'.vtk'):
-                self.vtk_data = pv.read(filename=self.save_path+'.vtk')
+    def load(self, dir_path: str):
+        save_path = os.path.join(dir_path, self.tmp_dump_str)
+        if self.vtk_data == 'dumped':
+            if os.path.exists(save_path + '.vtk'):
+                self.vtk_data = pv.read(filename=save_path + '.vtk')
             else:
                 raise ValueError('vtk data file does not exist')
 
 
 class SectionSet(object):
-    def __init__(self):
+    def __init__(self, name):
         self.sections = []
         self.sections_num = 0
+        self.name = name
 
     def append(self, section: Section):
         self.sections.append(section)
         self.sections_num += 1
+
+    def get_points_data(self):
+        points_data_list = []
+        for sec in self.sections:
+            points_data_list.append(sec.get_points_data())
+        if len(points_data_list) > 0:
+            points_data_list = PointSet.points_data_merge(points_data_list=points_data_list)
+        return points_data_list
+
+    def get_section(self, idx):
+        if idx < 0 or idx >= len(self.sections):
+            raise ValueError('The input index is out of range.')
+        return self.sections[idx]
 
     def __getitem__(self, idx):
         return self.sections[idx]

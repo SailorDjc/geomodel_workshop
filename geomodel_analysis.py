@@ -140,31 +140,32 @@ class GmeModelGraphList(object):
         dgl_graph_list = []
         labels_num_list = []
         save_flag = False
-        for model_index in np.arange(len(self.grid_data)):
-            mesh = self.grid_data[model_index]
-            geodata = GeoMeshGraphParse(mesh, name=mesh.model_name)
-            dgl_graph = geodata.execute(sample_operator=self.sample_operator,
-                                        edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
-                                        feat_normalize=True, **self.kwargs)
-            # 对标签进行处理
-            label_num = geodata.classes_num
-            labels_num_list.append(label_num)
-            # 已存储数据集
-            pre_save_graph_num = len(self.graph)
-            is_connected = geodata.is_connected_graph()
-            print('is_connected:', is_connected)
-            self.geodata.append(geodata)
-            dgl_graph_list.append(dgl_graph)
-            self.update_graph_log(model_name=mesh.model_name,
-                                  save_idx=model_index + pre_save_graph_num,
-                                  node_feat=self.dgl_graph_param[0], edge_feat=self.dgl_graph_param[1],
-                                  edge_num=dgl_graph.num_edges(), node_num=dgl_graph.num_nodes())
-            save_flag = True
-        self.graph.extend(dgl_graph_list)
-        if torch.is_tensor(self.num_classes['labels']):
-            self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
-        self.num_classes['labels'].extend(labels_num_list)
-        self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
+        if self.grid_data is not None:
+            for model_index in np.arange(len(self.grid_data)):
+                mesh = self.grid_data[model_index]
+                geodata = GeoMeshGraphParse(mesh, name=mesh.name)
+                dgl_graph = geodata.execute(sample_operator=self.sample_operator,
+                                            edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
+                                            feat_normalize=True, **self.kwargs)
+                # 对标签进行处理
+                label_num = geodata.classes_num
+                labels_num_list.append(label_num)
+                # 已存储数据集
+                pre_save_graph_num = len(self.graph)
+                is_connected = geodata.is_connected_graph()
+                print('is_connected:', is_connected)
+                self.geodata.append(geodata)
+                dgl_graph_list.append(dgl_graph)
+                self.update_graph_log(model_name=mesh.model_name,
+                                      save_idx=model_index + pre_save_graph_num,
+                                      node_feat=self.dgl_graph_param[0], edge_feat=self.dgl_graph_param[1],
+                                      edge_num=dgl_graph.num_edges(), node_num=dgl_graph.num_nodes())
+                save_flag = True
+            self.graph.extend(dgl_graph_list)
+            if torch.is_tensor(self.num_classes['labels']):
+                self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
+            self.num_classes['labels'].extend(labels_num_list)
+            self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
         # 数据存储
         if save_flag is True:
             print('Saving...')

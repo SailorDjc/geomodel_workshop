@@ -22,7 +22,12 @@ from retrieve_noddy_files import NoddyModelData
 from data_structure.grids import Grid
 from geograph_parse import GeoMeshGraphParse
 from data_structure.data_sampler import GeoGridDataSampler
-
+from data_structure.boreholes import BoreholeSet, Borehole
+from data_structure.sections import SectionSet, Section
+import pyvista as pv
+from utils.vtk_utils import CreateLUT
+from utils.plot_utils import contorl_visibility_with_layer_label, control_threshold_with_scalars \
+    , control_clip_with_plane, control_clip_with_spline
 
 if __name__ == '__main__':
     # load and preprocess dataset
@@ -33,20 +38,38 @@ if __name__ == '__main__':
     noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0])  # 1 6
     grid_list = []
     for noddy_grid in noddy_grid_list:
-        grid = Grid(grid_vtk=noddy_grid)
-        grid.resample_grid(dim=np.array([50, 50, 30]))
+        grid = Grid(grid_vtk=noddy_grid, name='GeoGrid')
+        grid.resample_regular_grid(dim=np.array([150, 150, 120]))
         grid_list.append(grid)
     model_idx = 0
+
+    geodata_drills = GeoGridDataSampler(grid=grid_list[0], sample_operator=['rand_drills'], drill_num=25
+                                        , sample_data_names=['drills'])
+    geodata_drills.execute()
+    # 钻孔数据
+    boreholes_data = geodata_drills.sample_data_list[0]
+    # 将钻孔数据映射到空网格上
+    geodata_sample = GeoGridDataSampler()
+    geodata_sample.set_base_grid_by_boreholes(boreholes=boreholes_data, dims=np.array([150, 150, 120]))
+    geodata_sample.execute()
+
+    new_grid = geodata_sample.grid
+    # plotter_1 = control_clip_with_plane(grid=grid_list[0], only_section=True)
+    # plotter_1.show()
+    plotter_2 = contorl_visibility_with_layer_label(geo_object_list=[boreholes_data, new_grid], grid_smooth=False
+                                                    , show_edge=False)
+    plotter_2.show()
 
     # 只有第一次输入的noddy_model可以用到，之后代码会自动加载数据缓存
     gme_models = GmeModelGraphList('gme_model', root=root_path,
                                    grid_data=grid_list,
-                                   sample_operator=['axis_sections'],  # ['axis_sections'],
+                                   sample_operator=['rand_drills', 'axis_sections'],
+                                   # ['axis_sections'],'axis_sections'
+                                   sample_axis='x', section_num=1, scroll_pos=[0.5], resolution_xy=10, resolution_z=10,
                                    add_inverse_edge=True,
-                                   drill_num=10)  # # 'Wells',  # 'Points'
+                                   drill_num=10)
 
     plot_data = gme_models.geodata[model_idx].sample_data.sample_data_list[0].get_sample_vtk_data()
-    plot_data.plot()
 
     # xgboost_path = os.path.join(root_path, 'processed', 'xgboost_ori.vtk')
     # gme_models.predict_with_machine_learning_method(model_idx=0, method='xgboost', save_path=xgboost_path)

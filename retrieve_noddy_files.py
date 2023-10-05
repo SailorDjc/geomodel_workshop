@@ -21,9 +21,8 @@ import shutil
 
 
 class NoddyModelData(object):
-    def __init__(self, root=None, save_dir_name='model_data', dataset_list=None, max_model_num=None):
-        if max_model_num is None:  # 生成模型的个数
-            max_model_num = 100
+    def __init__(self, root=None, save_dir_name='model_data', dataset_list: list = None, max_model_num=30
+                 , is_check_files_consistency=False):
         if dataset_list is None or len(dataset_list) == 0:
             dataset_list = ['FOLD_FOLD_FOLD']
         self.cur_dataset = dataset_list[0]
@@ -45,37 +44,52 @@ class NoddyModelData(object):
         # 加载数据集元数据
         self.dataset_list_log, self.model_his_list_log, self.grid_model_list_log, self.model_param_list_log = \
             self.load_log_files()
-
+        self.is_check_files_consistency = is_check_files_consistency
         # 检查文件夹是否存在，不存在就新建
         if not os.path.exists(self.his_dir_path):
             os.makedirs(self.his_dir_path)
+            self.is_check_files_consistency = True
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
+            self.is_check_files_consistency = True
         if not os.path.exists(self.raw_dir_path):
             os.makedirs(self.raw_dir_path)
+            self.is_check_files_consistency = True
 
         self.dataset_list = dataset_list  # 指定加载的数据集
         # 会先到 raw_data文件夹中搜索，搜索不到就下载
         saved_tar_files = self.get_raw_dataset_list()
         if self.dataset_list is None:
-            # 如果 dataset_list为空，则默认将raw_data文件夹中的所有数据集加载
+            # 如果 dataset_list为空，则默认不操作，不加载新的数据
             # 检查数据集列表记录，与模型列表记录匹配
-            self.dataset_list = saved_tar_files
+            self.dataset_list = list(self.grid_model_list_log.keys())
         else:
             # 如果指定数据集不存在，则下载，若无法下载，则忽略
+            saved_model_num = 0
             for dataset_name in self.dataset_list:
                 if dataset_name not in saved_tar_files:
+                    self.is_check_files_consistency = True
                     download_flag = self.download_dataset(dataset=dataset_name)
                     if download_flag is False:
                         continue
-        self.extract_his_files_from_tar_files(des_dir=self.his_dir_path)
-        self.generate_model_by_his(self.output_dir, max_num=max_model_num)
+                # 检查已经存储的模型数量，如果数量不够，则开启一致性检查
+                if dataset_name in self.grid_model_list_log.keys():
+                    saved_model_num += len(self.grid_model_list_log[dataset_name])
+            # 生成模型的个数
+            max_model_num = saved_model_num
+            if max_model_num > saved_model_num:
+                self.is_check_files_consistency = True
 
+        # 进行一致性检查，解压文件，生成参数文件
+        if self.is_check_files_consistency:
+            self.extract_his_files_from_tar_files(des_dir=self.his_dir_path)
+            self.generate_model_by_his(self.output_dir, max_num=max_model_num)
         saved_files = self.get_all_noddy_model_names()
         # 删除已经存储模型的中间文件和压缩包，节约存储空间
-        self.delete_gz_files()
-        self.delete_extra_model_files(dir_path=self.output_dir, file_names=saved_files)
-        self.delete_extra_his_files(dir_path=self.his_dir_path, file_names=saved_files)
+        if self.is_check_files_consistency:
+            self.delete_gz_files()
+            self.delete_extra_model_files(dir_path=self.output_dir, file_names=saved_files)
+            self.delete_extra_his_files(dir_path=self.his_dir_path, file_names=saved_files)
 
     # 在线下载原始数据集
     def download_dataset(self, dataset):
@@ -104,7 +118,7 @@ class NoddyModelData(object):
                         size += len(data)
                         print('\r' + '[Download progress]:%s%.2f%%' %
                               ('>' * int(size * 50 / content_size), float(size / content_size * 100)), end=' ')
-        except:
+        except requests.exceptions.ConnectionError:
             print('open url error, cannot download dataset {}'.format(dataset))
             return False
 
@@ -199,7 +213,7 @@ class NoddyModelData(object):
         else:
             return None
 
-    def get_grid_model_by_idx(self, dataset:str, idx: [int]):
+    def get_grid_model_by_idx(self, dataset: str, idx: [int]):
         model_num = self.get_model_num(dataset=dataset)
         model_names = self.get_noddy_model_list_names(dataset=dataset)
         if isinstance(idx, list):

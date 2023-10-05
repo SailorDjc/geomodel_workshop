@@ -207,7 +207,6 @@ class GeoMeshGraphParse(object):
         self.edge_list = new_edge_list
         return new_edge_list
 
-    # 待迁移
     # 构建的是二维规则网格，网格是根据现有三维模型网格确定的，格网点坐标不变，是从三维中剖切出来的
     def get_triangulate_edges_2d(self, axis_label='x'):
         axis_labels = ['x', 'y', 'z']
@@ -281,7 +280,7 @@ class GeoMeshGraphParse(object):
         if self.sample_data is not None:
             self.sample_data.save(dir_path=dir_path)
 
-    def load(self):
+    def load(self, dir_path):
         if self.data is not None:
             self.data.load()
         if self.sample_data is not None:

@@ -51,7 +51,8 @@ class Borehole(object):
         self.update_holelayer_list()
 
     class Holelayer(object):
-        def __init__(self, coord_top, coord_bottom, layer_label, azimuth=0, dip=90, is_virtual=False, borehole_id=None):
+        def __init__(self, coord_top, coord_bottom, layer_label, azimuth=0, dip=90, is_virtual=False
+                     , buffer_dist_xy=5, borehole_id=None):
             self.borehole_id = borehole_id  # 所属钻孔标识
             self.top_pos = coord_top  # 顶部点
             self.bottom_pos = coord_bottom  # 底部点
@@ -59,6 +60,7 @@ class Borehole(object):
             self.dip = dip  # 倾角
             self.layer_label = layer_label  # 地层编号(编码)
             self.is_virtual = is_virtual  # 是否是虚拟地层
+            self.buffer_dist_xy = buffer_dist_xy  # 钻孔控制范围
 
     def update_holelayer_list(self):
         self.holelayer_list = []  # 清空
@@ -197,18 +199,24 @@ class Borehole(object):
 
 # 钻孔集
 class BoreholeSet(Dataset):
-    def __init__(self, points: np.ndarray = None, series: np.ndarray = None, borehole_idx: np.ndarray = None):
+    def __init__(self, points: np.ndarray = None, series: np.ndarray = None, borehole_idx: np.ndarray = None
+                 , radius: float = 10, name=None):
+        self.name = name
         self.points = points  # 二维
         self.points_num = 0
         self.series = series
         self.boreholes_index = borehole_idx  # 钻孔点集索引, 记录每个钻孔首个点在点集中的索引, 必须是递增序列
         self.borehole_num = 0
-        self.boreholes_list = []
+        self.boreholes_list = []  # 存储Borehole的列表
         self.bounds = None
+        self.radius = radius
+
+        self.classes = None
+        self.classes_num = 0
+
         self.vtk_data = None
 
         self.tmp_dump_str = 'tmp' + str(int(time.time()))
-        self.save_path = None
 
         # 通过坐标数组和标签数组，初始化钻孔
         if self.points is not None and self.series is not None and self.boreholes_index is not None:
@@ -220,13 +228,23 @@ class BoreholeSet(Dataset):
                     cur_borehole_pn = self.boreholes_index[hole_id]  # 当前钻孔点数
                     borehole_points = []
                     borehole_series = []
-                    for p_j in np.arange(start=start_iter, stop=start_iter+cur_borehole_pn):
+                    for p_j in np.arange(start=start_iter, stop=start_iter + cur_borehole_pn):
                         borehole_points.append(np.array(self.points[p_j]))
                         borehole_series.append(np.array(self.series[p_j]))
-                    one_borehole = Borehole(points=np.array(borehole_points), series=np.array(borehole_series))
+                    one_borehole = Borehole(points=np.array(borehole_points), series=np.array(borehole_series)
+                                            , radius=self.radius)
                     self.boreholes_list.append(one_borehole)
                     self.borehole_num += 1
                     start_iter += cur_borehole_pn  # 更新索引
+
+    def get_classes(self):
+        if self.classes is None:
+            if self.series is None:
+                raise ValueError('This borehole dataset lacks labels.')
+            else:
+                self.classes = sorted(np.unique(self.series))
+                self.classes_num = len(self.classes)
+        return self.classes
 
     def select_virtual_bolehole(self, is_virtual=True):
         select_boreholes = []
@@ -239,7 +257,7 @@ class BoreholeSet(Dataset):
 
     def append(self, one_borehole: Borehole):
         if not isinstance(one_borehole, Borehole):
-            raise TypeError('')
+            raise TypeError('The input data should be Borehole type.')
         else:
             self.boreholes_list.append(one_borehole)
             if one_borehole.points is None or one_borehole.points_num < 2:
@@ -261,6 +279,13 @@ class BoreholeSet(Dataset):
             self.borehole_num += 1
             self.bounds = get_bounds_from_coords(self.points)
             self.points_num = self.points.shape[0]
+            _ = self.get_classes()
+
+    def set_boreholes_control_buffer_dist_xy(self, radius: float):
+        for hole_id in range(len(self.boreholes_list)):
+            self.boreholes_list[hole_id].buffer_dist_xy = radius
+            for layer_id in range(self.boreholes_list[hole_id].holelayer_num):
+                self.boreholes_list[hole_id].holelayer_list[layer_id].buffer_dist_xy = radius
 
     def generate_vtk_data_as_tube(self, borehole_radius=1.0, is_tube=True):
         # 遍历钻孔
@@ -335,6 +360,37 @@ class BoreholeSet(Dataset):
         label_arr = np.concatenate(labels, axis=0)
         points_data = PointSet(points=point_arr, point_labels=label_arr)
         return points_data
+
+    # 按标签拆分，返回每一类标签所属的cell
+    def detach_vtk_component_with_label(self):
+        vtk_dict = {}
+        for one_hole in self.boreholes_list:
+            for one_layer in one_hole.holelayer_list:
+                label = one_layer.layer_label
+                points = np.vstack((one_layer.top_pos, one_layer.bottom_pos))
+                vtk_data = pv.PolyData(points, lines=np.array([2, 0, 1]))
+                vtk_data.cell_data['Scalar Field'] = np.array(label)
+                vtk_data = vtk_data.tube(radius=one_layer.buffer_dist_xy)
+                if label not in vtk_dict.keys():
+                    vtk_dict[label] = []
+                vtk_dict[label].append(vtk_data)
+        for key in vtk_dict.keys():
+            vtk_dict[key] = self.merge_vtk_lines(vtk_dict[key])
+        return vtk_dict
+
+    def merge_vtk_lines(self, poly_lines: list):
+        if len(poly_lines) == 0:
+            raise ValueError('Input data is empty.')
+        else:
+            vtk_data = None
+            for one_line in poly_lines:
+                if not isinstance(one_line, pv.PolyData):
+                    raise ValueError('Only support pv.PolyData type input.')
+                if vtk_data is None:
+                    vtk_data = one_line
+                else:
+                    vtk_data = vtk_data.merge(one_line)
+            return vtk_data
 
     # 创建钻孔集的凸包，获取凸包面体与外框
     def get_boreholes_convexhull_bouding_surface_and_outline(self):
@@ -451,15 +507,14 @@ class BoreholeSet(Dataset):
         if self.vtk_data is not None and isinstance(self.vtk_data, pv.MultiBlock):
             num = self.vtk_data.n_blocks
             if num > 0:
-                self.save_path = os.path.join(dir_path, self.tmp_dump_str)
-                path = self.save_path + '.vtm'
-                self.vtk_data.save(filename=path)
+                save_path = os.path.join(dir_path, self.tmp_dump_str)
+                self.vtk_data.save(filename=save_path + '.vtm')
                 self.vtk_data = 'dumped'
 
-    def load(self):
+    def load(self, dir_path: str):
         if self.vtk_data == 'dumped':
-            if self.save_path is not None and os.path.exists(self.save_path + '.vtm'):
-                self.vtk_data = pv.read(filename=self.save_path+'.vtm')
+            save_path = os.path.join(dir_path, self.tmp_dump_str)
+            if os.path.exists(save_path + '.vtm'):
+                self.vtk_data = pv.read(filename=save_path + '.vtm')
             else:
                 raise ValueError('vtk data file does not exist')
-

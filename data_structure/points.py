@@ -7,6 +7,8 @@ from sklearn.cluster import DBSCAN
 import time
 import os
 
+from typing import List
+
 
 def compute_nearest_neighbor_dist_from_pts(coords: np.ndarray):
     neighbors = NearestNeighbors(n_neighbors=2, algorithm='brute').fit(coords)
@@ -63,7 +65,9 @@ def concat_coords_from_datasets(*datasets):
 
 
 class PointSet(object):
-    def __init__(self, points: np.ndarray = None, point_labels: np.ndarray = None, vectors: np.ndarray = None):
+    def __init__(self, points: np.ndarray = None, point_labels: np.ndarray = None, vectors: np.ndarray = None
+                 , name=None):
+        self.name = name
         self.points = points
         self.labels = point_labels
         self.points_num = 0
@@ -74,35 +78,100 @@ class PointSet(object):
         # 矢量
         self.vectors = vectors
         # 标量
-        self.scalars = None   # dict
+        self.scalars = None  # dict
         self.scalars_grad = None  # dict
-        self.scalars_grad_norm = None # dict
+        self.scalars_grad_norm = None  # dict
 
         self.vtk_vector_data = None
         self.vtk_point_data = None
 
         self.color_map = {}  # 颜色字典，key为label  self.set_color_with_label=True
         self.scalar_color_map = {}  # 根据scalar的值范围确定颜色  self.set_color_with_label=False
-        self.set_color_with_label = True
+        self.color_mode = 1  # set_color_with_label
         self.epsilon = 0.00001  # 足够小，作为距离阈值
 
         self.tmp_dump_str = 'tmp' + str(int(time.time()))
-        self.save_path = None
 
     def is_empty(self):
         if self.points is not None and self.labels is not None:
-            return True
-        else:
-            return False
+            if self.points.shape[0] > 0:
+                return False
+        return True
 
     # 使用append方法，合并Pointset，会导致scalars和vectors丢失
     def append(self, item):
         if isinstance(item, PointSet):
-            if item.is_empty():
-                np.append(self.points, values=item.points, axis=0)
-                np.append(self.labels, values=item.labels, axis=0)
-                self.points_num += item.points_num
-                self.bounds = get_bounds_from_coords(self.points)
+            if item.is_empty() and self.is_empty():
+                new_item = self.points_data_merge([self, item])
+                self.points_num += new_item.points_num
+                self.bounds = get_bounds_from_coords(new_item.points)
+                self.set_points(new_item.points)
+                self.set_labels(new_item.labels)
+                self.scalars = new_item.scalars
+                self.scalars_grad = new_item.scalars_grad
+                self.scalars_grad_norm = None
+            else:
+                raise ValueError('Neither of the two merged objects can be null.')
+
+    @staticmethod
+    def points_data_merge(points_data_list: list):
+        # 要合并的PointSet对象要先进行数据检查，确保合并共有属性
+        points_merge = []
+        labels_merge = []
+        vectors_merge = []
+        scalras_merge = []
+        scalars_grad_merge = []
+        for data in points_data_list:
+            if not isinstance(data, PointSet) and data.points_num == 0:
+                raise ValueError('Input data should be PointSet type.')
+            else:
+                if data.is_empty():
+                    points_merge.append(data.points)
+                    labels_merge.append(data.labels)
+                    if data.vectors is not None:
+                        vectors_merge.append(data.vectors)
+                    if data.scalars is not None:
+                        scalras_merge.append(data.scalars)
+                    if data.scalars_grad is not None:
+                        scalars_grad_merge.append(data.scalars_grad)
+        if len(points_data_list) == 0:
+            raise ValueError('Input list is empty.')
+        else:
+            points_merge = np.vstack(points_merge)
+            labels_merge = np.vstack(labels_merge)
+            points_data_merge = PointSet(points=points_merge, point_labels=labels_merge)
+            if len(vectors_merge) == len(points_data_list):
+                vectors_merge = np.vstack(vectors_merge)
+                points_data_merge.set_vectors(vectors=vectors_merge)
+            if len(scalras_merge) == len(points_data_list):
+                keys_map = scalras_merge[0].keys()
+                scalars_common_merge = {}
+                for key in keys_map:
+                    scalars_common_merge[key] = []
+                    for item in scalras_merge:
+                        if key in item.keys():
+                            scalars_common_merge[key].append(item[key])
+                        else:
+                            scalars_common_merge.pop(key)  # 只要有一个PointSet中没有相应属性，则该属性不保留
+                            break
+                for key in scalars_common_merge.keys():
+                    scalars_value = np.vstack(scalars_common_merge[key])
+                    points_data_merge.set_scalars(scalars=scalars_value, scalar_name=key)
+            if len(scalars_grad_merge) == len(points_data_list):
+                keys_map = scalars_grad_merge[0].keys()
+                scalars_grad_common_merge = {}
+                for key in keys_map:
+                    scalars_grad_common_merge[key] = []
+                    for item in scalars_grad_merge:
+                        if key in item.keys():
+                            scalars_grad_common_merge[key].append(item[key])
+                        else:
+                            scalars_grad_common_merge.pop(key)  # 只要有一个PointSet中没有相应属性，则该属性不保留
+                            break
+                for key in scalars_grad_common_merge.keys():
+                    scalars_grad_value = np.vstack(scalars_grad_common_merge[key])
+                    points_data_merge.set_scalars_grad(scalars_grad=scalars_grad_value, scalar_name=key)
+            return points_data_merge
 
     # 去除重复点， 距离小于阈值可以认为是重复点
     def remove_duplicate_points(self):
@@ -229,23 +298,26 @@ class PointSet(object):
         return self.points[idx]
 
     def save(self, dir_path: str):
+        save_path = os.path.join(dir_path, self.tmp_dump_str)
         if self.vtk_point_data is not None and isinstance(self.vtk_point_data, pv.PolyData):
-            self.save_path = os.path.join(dir_path, self.tmp_dump_str)
-            self.vtk_point_data.save(filename=self.save_path+'_p.vtk')
+            self.vtk_point_data.save(filename=save_path + '_p.vtk')
             self.vtk_point_data = 'dumped'
         if self.vtk_vector_data is not None and isinstance(self.vtk_vector_data, pv.PolyData):
-            self.save_path = os.path.join(dir_path, self.tmp_dump_str)
-            self.vtk_vector_data.save(filename=self.save_path+'_v.vtk')
+            self.vtk_vector_data.save(filename=save_path + '_v.vtk')
             self.vtk_vector_data = 'dumped'
 
-    def load(self):
-        if self.save_path is not None:
-            if self.vtk_point_data is not None and os.path.exists(self.save_path+'_p.vtk'):
-                self.vtk_point_data = pv.read(filename=self.save_path+'_p.vtk')
-            if self.vtk_vector_data is not None and os.path.exists(self.save_path+'_v.vtk'):
-                self.vtk_vector_data = pv.read(filename=self.save_path+'_v.vtk')
-        else:
-            raise ValueError('vtk data file does not exist')
+    def load(self, dir_path: str):
+        save_path = os.path.join(dir_path, self.tmp_dump_str)
+        if self.vtk_point_data == 'dumped':
+            if os.path.exists(save_path + '_p.vtk'):
+                self.vtk_point_data = pv.read(filename=save_path + '_p.vtk')
+            else:
+                raise ValueError('vtk data file does not exist')
+        if self.vtk_vector_data == 'dumped':
+            if os.path.exists(save_path + '_v.vtk'):
+                self.vtk_vector_data = pv.read(filename=save_path + '_v.vtk')
+            else:
+                raise ValueError('vtk data file does not exist')
 
 
 if __name__ == "__main__":

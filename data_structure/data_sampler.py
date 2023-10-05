@@ -1,23 +1,42 @@
 from data_structure.grids import Grid
 from data_structure.sections import SectionSet, Section
 from data_structure.boreholes import BoreholeSet, Borehole
-from data_structure.points import PointSet
+from data_structure.points import PointSet, get_bounds_from_coords
 import numpy as np
 import random
 import copy
 import scipy.spatial as spt
 import pyvista as pv
+from utils.vtk_utils import vtk_polydata_to_vtk_unstructured_grid, create_closed_cylinder_surface
+
 
 # Parameters:
 # grid : data_structure.grids.Grid
-# sample_operator: list ['None', 'uniformly_points', 'eq_interval_points', 'rand_drills', 'axis_sections']
-
+#   外部输入网格，在该网格基础上进行采样操作
+# sample_operator: list
+# 列表中包含如下一个或多个字符串，指定不同的采样操作，根据列表中的操作指令字符串数量，来进行相应次数的采样
+#   ['None', 'uniformly_points', 'eq_interval_points', 'rand_drills', 'axis_sections']
+#   1. ‘None’:  无操作，不进行额外采样
+#   2. ‘uniformly_points’: 均匀采样
+#   3. 'eq_interval_points': 根据点索引等索引间距采样
+#   4. ‘rand_drills’: 随机钻孔采样  若指定钻孔采样，需要添加额外的参数
+#       drill_pos -np.ndarray 或 list 指定钻孔采样位置的3d points，坐标的z值可以随机
+#       drill_num -int  指定采样钻孔数目，随机采样
+#       drill_pos和drill_num二选其一，两者都有则以drill_pos为准
+#   5. ‘axis_sections’: 轴向剖面采样， 需要添加额外参数
+#       sample_axis -str 采样轴,指定 'x','y','z',
+#       section_num -int 指定剖面数量
+#       scroll_pos -list  0-1之间的小数值，个数与section_num对应，指定剖面切割位置，用于滑动切割剖面
+#       resolution_xy -float  指定剖面xy水平方向的网格分辨率
+#       resolution_z  -float  指定剖面z轴纵向上的网格分辨率
 class GeoGridDataSampler(object):
-    def __init__(self, grid: Grid = None, sample_operator: list = None, **kwargs):
+    def __init__(self, grid: Grid = None, sample_operator: list = None, sample_data_names: list = None, **kwargs):
         self.grid = grid
         self.sample_operator = sample_operator
         self.grid_points = None
         self.bounds = None
+        self.names = sample_data_names
+
         if grid is not None:
             self.grid_points = grid.grid_points
             self.bounds = grid.bounds
@@ -64,7 +83,7 @@ class GeoGridDataSampler(object):
                     if sample_op == 'axis_sections':
                         sample_axis = None
                         section_num = 1
-                        scroll_pos = 0.5
+                        scroll_pos = [0.5]
                         resolution_xy = None
                         resolution_z = None
                         if 'sample_axis' in self.kwargs.keys():
@@ -87,43 +106,129 @@ class GeoGridDataSampler(object):
         else:
             raise ValueError('The grid data is empty.')
 
+    def get_sample_data(self, idx):
+        if idx < 0 or idx >= len(self.sample_data_list):
+            raise ValueError('The input index is out of range.')
+        return self.sample_data_list[idx]
+
     def set_base_grid_by_boreholes(self, boreholes: BoreholeSet, dims: np.ndarray
-                                   , bounds: np.ndarray = None, is_regular=True):
+                                   , bounds: np.ndarray = None, cell_density: np.ndarray = None, is_regular=True):
         if bounds is None:
             bounds = boreholes.bounds
-            grid = Grid(model_name='gme_base_grid')
-            if is_regular:
-                sample_grid = grid.create_vtk_grid_by_rect_bounds(dim=dims, bounds=bounds)
-            else:
-                convexhull_2d = boreholes.get_points_data().get_convexhull_2d()
-                sample_grid, grid_outline = grid.create_vtk_grid_by_unregular_bounds(dims=dims, bounds=bounds
-                                                                                     , convexhull_2d=convexhull_2d)
+        if dims.shape[0] != 3:
+            raise ValueError('This method can only set three dimensions grid.')
+        if cell_density is None:
+            x_r = (bounds[1] - bounds[0]) / dims[0]
+            y_r = (bounds[3] - bounds[2]) / dims[1]
+            z_r = (bounds[5] - bounds[4]) / dims[2]
+            cell_density = np.array([x_r, y_r, z_r])
+        boreholes.set_boreholes_control_buffer_dist_xy(radius=1.5 * (cell_density[0] + cell_density[1]))
+        grid = Grid(name='gme_base_grid')
+        if is_regular:
+            sample_grid = grid.create_vtk_grid_by_rect_bounds(dim=dims, bounds=bounds)
+        else:
+            convexhull_2d = boreholes.get_points_data().get_convexhull_2d()
+            sample_grid, grid_outline = grid.create_vtk_grid_by_unregular_bounds(dims=dims, bounds=bounds
+                                                                                 , convexhull_2d=convexhull_2d
+                                                                                 , cell_density=cell_density)
+        # 将钻孔点标签映射到格网上，未知标签的格网点值默认为-1
+        grid.set_vtk_grid(grid_vtk=sample_grid)
+        self.grid = grid
+        self.sample_operator = ['None']
+        self.sample_data_list.append(boreholes)
+        self.grid_points = self.grid.grid_points
+        self.sample_num += 1
+        self.set_map_boreholes_labels_to_base_grid(boreholes=boreholes)
+
+    def set_base_grid_2d_by_boreholes(self, boreholes: BoreholeSet, dims: np.ndarray = None,
+                                      bounds: np.ndarray = None, principal_axis: str = 'x', resolution_xy: float = None
+                                      , resolution_z: float = None):
+        if bounds is None:
+            bounds = boreholes.bounds
+        top_points = boreholes.get_top_points()
+        # 将钻孔顶点坐标，沿着主方向轴进行排序，默认x轴
+        axis_labels = ['x', 'y']
+        label_to_index = {label: index for index, label in enumerate(axis_labels)}
+        axis = principal_axis.lower()
+        if axis in axis_labels:
+            line_points_sort_ind = np.lexsort((top_points[:, 1 - label_to_index[axis]]
+                                               , top_points[:, label_to_index[axis]]))
+            line_points_sorted = top_points[line_points_sort_ind]
+            section = Section()
+            if resolution_xy is None or resolution_z is None:
+                if dims is None:
+                    raise ValueError('Need to input dims parameters or resolution parameters.')
+                x_length = bounds[1] - bounds[0]
+                y_length = bounds[3] - bounds[2]
+                z_length = bounds[5] - bounds[4]
+                resolution_xy = (x_length / dims[0] + y_length / dims[1]) * 0.5
+                resolution_z = z_length / dims[2]
+            grid_bounds = get_bounds_from_coords(boreholes.get_points_data().points)
+            boreholes.set_boreholes_control_buffer_dist_xy(radius=3 * resolution_xy)
+            grid_2d = section.create_surface_by_sweepline(trajectory_line_xy=line_points_sorted
+                                                          , grid_bounds=grid_bounds
+                                                          , resolution_xy=resolution_xy
+                                                          , resolution_z=resolution_z)
+            # 由 PolyData 转成 UnstructuredGrid
+            ugrid = vtk_polydata_to_vtk_unstructured_grid(grid_2d)
+
+            grid = Grid(name='gme_base_grid_2d')
             # 将钻孔点标签映射到格网上，未知标签的格网点值默认为-1
-            grid.set_vtk_grid(grid_vtk=sample_grid)
+            grid.set_vtk_grid(grid_vtk=ugrid)
             self.grid = grid
             self.sample_operator = ['None']
+            self.sample_data_list = []
             self.sample_data_list.append(boreholes)
             self.grid_points = self.grid.grid_points
             self.sample_num += 1
             self.set_map_boreholes_labels_to_base_grid(boreholes=boreholes)
-        else:
-            raise ValueError('Please input bounds array.')
 
     # 将钻孔采样标签映射到空白网格上
     def set_map_boreholes_labels_to_base_grid(self, boreholes: BoreholeSet):
         # 遍历钻孔每一个分段，寻找与base_grid的交集
         # 默认 -1 为未知值
-        cells_series = np.full_like(self.grid.grid_points, fill_value=-1)
+        cells_series = np.full((len(self.grid.grid_points),), fill_value=-1)
+        z_buffer = 2
+        if self.bounds is not None and self.grid.dims is not None:
+            z_buffer = (self.bounds[5] - self.bounds[4]) / self.grid.dims[2]
         for one_borehole in boreholes:
+            # 搜索范围上下缓冲一下，防止漏选
+            hole_top_pos = one_borehole.top_pos
+            hole_top_pos[2] += z_buffer
+            hole_bottom_pos = one_borehole.bottom_pos
+            hole_bottom_pos -= z_buffer
+            line_center = np.divide(np.add(hole_top_pos, hole_bottom_pos), 2)
+            line_direction = np.subtract(hole_top_pos, hole_bottom_pos)
+            if np.linalg.norm(line_direction) == 0:
+                raise ValueError('Borehole data occur except error')
+            line_direction_norm = line_direction / np.linalg.norm(line_direction)
+            height = np.linalg.norm(hole_top_pos - hole_bottom_pos)
+            radius = one_borehole.buffer_dist_xy
+            cylinder_surface = pv.Cylinder(center=line_center, direction=line_direction_norm
+                                           , height=height, radius=radius, capping=True)
+            cylinder_surface = cylinder_surface.extract_surface()
+            points_data = pv.PolyData(self.grid.grid_points)
+            cell_indices = points_data.select_enclosed_points(cylinder_surface, check_surface=False)
+            cell_indices = cell_indices.point_data['SelectedPoints']
+            cell_indices = np.argwhere(cell_indices > 0).flatten()
+            # 为防止圆柱体半径过小，没有包含任何网格点，这里添加圆柱中心线经过的网格索引
+            line_indices = self.grid.vtk_data.find_cells_along_line(pointa=hole_top_pos, pointb=hole_bottom_pos)
+            cell_indices = np.unique(np.hstack((cell_indices, line_indices)))
+
+            boreholes_points = self.grid_points[cell_indices]
             for one_layer in one_borehole.holelayer_list:
-                top_pos = one_layer.top_pos
-                bottom_pos = one_layer.bottom_pos
+                top_pos_z = one_layer.top_pos[2]
+                bottom_pos_z = one_layer.bottom_pos[2]
                 label = one_layer.layer_label
-                cells_ids = self.grid.vtk_data.find_cells_along_line(pointa=top_pos, pointb=bottom_pos)
-                cells_ids = np.array(list(sorted(set(cells_ids))))
-                cells_labels = np.full_like(cells_ids, fill_value=label, dtype=int)
-                cells_series[cells_ids] = cells_labels
+                layer_indices = np.argwhere((boreholes_points[:, 2] <= top_pos_z) &
+                                            (boreholes_points[:, 2] > bottom_pos_z)).flatten()
+
+                cells_labels = np.full_like(layer_indices, fill_value=label, dtype=int)
+                indices = cell_indices[layer_indices]
+                cells_series[indices] = cells_labels
+
         self.grid.grid_points_series = cells_series
+        self.grid.vtk_data.cell_data['Scalar Field'] = cells_series
         self.grid.classes = np.unique(cells_series)
         self.grid.classes_num = len(self.grid.classes)
 
@@ -135,7 +240,12 @@ class GeoGridDataSampler(object):
         pid = list(set(sorted(pid)))
         point_labels = self.grid.grid_points_series[pid]
         sample_points = self.grid_points[pid]
-        points_data = PointSet(points=sample_points, point_labels=point_labels)
+        if self.names is None:
+            name = None
+        else:
+            name = self.names[len(self.sample_data_list)]
+        points_data = PointSet(points=sample_points, point_labels=point_labels
+                               , name=name)
         self.sample_data_list.append(points_data)
         self.sample_num += 1
         return points_data
@@ -165,12 +275,19 @@ class GeoGridDataSampler(object):
         sample_points = np.vstack((xx, yy, zz)).reshape(3, -1).T
         pid = self.grid.vtk_data.find_containing_cell(sample_points)
         point_labels = self.grid.grid_points_series[pid]
-        points_data = PointSet(points=sample_points, point_labels=point_labels)
+        if self.names is None:
+            name = None
+        else:
+            name = self.names[len(self.sample_data_list)]
+        points_data = PointSet(points=sample_points, point_labels=point_labels
+                               , name=name)
         self.sample_data_list.append(points_data)
         self.sample_num += 1
         return points_data
 
-    def random_sample_grid_for_boreholes(self, drill_pos=None, drill_num=10):
+    def random_sample_grid_for_boreholes(self, drill_pos=None, drill_num=None):
+        if drill_num is None:
+            drill_num = 10
         if self.grid is None:
             raise ValueError('Need to input grid first.')
         horizon_slice = self.grid.vtk_data.slice(normal='z')
@@ -180,7 +297,11 @@ class GeoGridDataSampler(object):
             # 获取grid水平切面，在切面上随机选取cell的中心点，打钻孔
             points = horizon_slice.cell_centers().points.tolist()
             drill_pos = random.sample(points, drill_num)
-        borehole_list = BoreholeSet()
+        if self.names is None:
+            name = None
+        else:
+            name = self.names[len(self.sample_data_list)]
+        borehole_list = BoreholeSet(name=name)
         for it, drill_id in enumerate(np.arange(drill_num)):
             pos = drill_pos[drill_id]
             one_borehole = self.sample_grid_for_borehole(pos=pos)
@@ -197,11 +318,13 @@ class GeoGridDataSampler(object):
         pos_a[2] = self.grid.bounds[5]  # z_max
         pos_b[2] = self.grid.bounds[4]  # z_min
         # 沿直线采样
-        # sample_line = self.grid.vtk_data.sample_over_line(pointa=pos_a, pointb=pos_b)
-        # line_points = sample_line.points
         pid = self.grid.vtk_data.find_cells_along_line(pointa=pos_a, pointb=pos_b)
         line_points = self.grid.grid_points[pid]
         line_series = self.grid.grid_points_series[pid]
+        # line_points_z = line_points[::-1, 2]
+        line_points_sort_ind = np.argsort(line_points[:, 2])
+        line_points = line_points[line_points_sort_ind[::-1]]
+        line_series = line_series[line_points_sort_ind[::-1]]
         one_borehole = Borehole(points=line_points, series=line_series, is_virtual=True)
         return one_borehole
 
@@ -210,15 +333,22 @@ class GeoGridDataSampler(object):
                                         , resolution_xy=None, resolution_z=None):
         if self.grid is None:
             raise ValueError('Need to input grid first.')
-        section_list = SectionSet()
+        if resolution_xy is None:
+            resolution_xy = (self.bounds[1] - self.bounds[0] + self.bounds[3] - self.bounds[2]) * 0.5 * 0.01
+        if resolution_z is None:
+            resolution_z = (self.bounds[5] - self.bounds[4]) * 0.01
+        scroll_size = scroll_pos
+        if scroll_pos is None or (isinstance(scroll_pos, (list, np.ndarray)) and len(scroll_pos) != section_num):
+            scroll_size = [random.uniform(0, 1) for i in range(section_num)]
+        if self.names is None:
+            name = None
+        else:
+            name = self.names[len(self.sample_data_list)]
+        section_list = SectionSet(name=name)
         for s_i in np.arange(section_num):
-            if scroll_pos is None:  # 随机剖切
-                scroll_size = scroll_pos[s_i]
-            else:
-                scroll_size = random.uniform(0, 1)
             section = Section()
             section.prob_volume(grid=self.grid, surf=section.create_surface_along_axis(along_axis=sample_axis
-                                                                                       , scroll_scale=scroll_size
+                                                                                       , scroll_scale=scroll_size[s_i]
                                                                                        , resolution_xy=resolution_xy
                                                                                        , resolution_z=resolution_z
                                                                                        , grid_bounds=self.bounds))
@@ -235,6 +365,10 @@ class GeoGridDataSampler(object):
         points_indexes = []
         for sample_id, sample_data in enumerate(self.sample_data_list):
             pid = []
+            if idx is not None:
+                if idx != sample_id:
+                    continue
+                return list(sorted(np.unique(pid)))
             if isinstance(sample_data, PointSet):
                 sample_points = sample_data.points
                 d, pid = ckt.query(sample_points)
@@ -243,8 +377,6 @@ class GeoGridDataSampler(object):
                 sample_points = sample_data.get_points_data().points
                 d, pid = ckt.query(sample_points)
                 points_indexes.extend(pid)
-            if idx is not None and idx == sample_id:
-                return list(sorted(np.unique(pid)))
             points_indexes = list(sorted(np.unique(points_indexes)))
         return points_indexes
 

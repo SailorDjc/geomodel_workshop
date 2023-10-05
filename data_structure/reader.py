@@ -54,7 +54,16 @@ class ReadExportFile(object):
         header = None
         sep = ' '
         use_cols = [0, 1, 2, 3]
-        globals().update(kwargs)
+        if 'comment' in kwargs.keys():
+            comment = kwargs['comment']
+        if 'encoding' in kwargs.keys():
+            encoding = kwargs['encoding']
+        if 'header' in kwargs.keys():
+            header = kwargs['header']
+        if 'sep' in kwargs.keys():
+            sep = kwargs['sep']
+        if 'use_cols' in kwargs.keys():
+            use_cols = kwargs['use_cols']
         df_points = pd.read_table(dat_file_path, header=header, comment=comment, sep=sep, encoding=encoding)
         columns_num = df_points.columns.size()
         if columns_num >= max(use_cols):
@@ -88,7 +97,16 @@ class ReadExportFile(object):
         comment = "#"
         encoding = 'utf-8'
         use_cols_edge = [0, 1]
-        use_cols_node = [0, 1, 2]
+        if 'comment' in kwargs.keys():
+            comment = kwargs['comment']
+        if 'encoding' in kwargs.keys():
+            encoding = kwargs['encoding']
+        if 'header' in kwargs.keys():
+            header = kwargs['header']
+        if 'sep' in kwargs.keys():
+            sep = kwargs['sep']
+        if 'use_cols_edge' in kwargs.keys():
+            use_cols_edge = kwargs['use_cols_edge']
         globals().update(kwargs)
         df_edge = pd.read_table(edge_file_path, header=header, comment=comment, sep=sep, encoding=encoding)
         cols_edge_num = df_edge.columns.size()

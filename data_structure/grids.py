@@ -3,7 +3,7 @@ from torch.utils.data import Dataset
 import numpy as np
 from vtkmodules.all import vtkStructuredGrid, vtkImageData, vtkPoints, vtkCellCenters
 from vtkmodules.util import numpy_support
-from utils.vtk_utils import add_np_property_to_vtk_object
+from utils.vtk_utils import add_np_property_to_vtk_object, create_closed_surface_by_convexhull_2d
 import pyvista as pv
 import scipy.spatial as spt
 from data_structure.points import PointSet, get_bounds_from_coords
@@ -90,10 +90,10 @@ class Grid(object):
      Dataset includes:
      points: a matrix containing all 3D grid points [x, y, z]"""
 
-    def __init__(self, model_name=None, grid_vtk=None, grid_vtk_path=None, grid_points: np.ndarray = None, series=None):
+    def __init__(self, name=None, grid_vtk=None, grid_vtk_path=None, grid_points: np.ndarray = None, series=None):
         self.bounds = None
         self._center = None
-        self.model_name = model_name
+        self.name = name
         self.grid_points = None
         self.grid_points_num = 0
         self.grid_points_series = None  # 地层标签 np.ndarray([self.grid_points_num, ])
@@ -108,7 +108,6 @@ class Grid(object):
         self.classes = None  # 类别
 
         self.tmp_dump_str = 'tmp' + str(int(time.time()))
-        self.save_path = None
 
         # 外部输入的vtk规则网格
         self.vtk_data = grid_vtk
@@ -119,12 +118,24 @@ class Grid(object):
             # 传入的grid_vtk优先级更高，传入路径次之
             if self.vtk_data is None and grid_vtk_path is not None and os.path.exists(grid_vtk_path):
                 self.vtk_data = pv.read(grid_vtk_path)
-            if isinstance(self.vtk_data, pv.RectilinearGrid):
-                self.dims = grid_vtk.GetDimensions()
-                self.bounds = np.array(grid_vtk.bounds)
+            if isinstance(self.vtk_data, (pv.RectilinearGrid, pv.StructuredGrid, pv.UnstructuredGrid)):
+                if isinstance(self.vtk_data, pv.UnstructuredGrid):
+                    self.dims = None
+                else:
+                    self.dims = self.vtk_data.GetDimensions()
+                self.bounds = np.array(self.vtk_data.bounds)
                 self.grid_points = self.vtk_data.cell_centers().points
                 self.standardize_labels_from_vtk_data()  # 处理标签
                 self.grid_points_num = self.grid_points.shape[0]
+
+    def get_classes(self):
+        if self.classes is None:
+            if self.grid_points_series is None:
+                raise ValueError('This grid lacks labels.')
+            else:
+                self.classes = sorted(np.unique(self.grid_points_series))
+                self.classes_num = len(self.classes)
+        return self.classes
 
     # 将labels映射为连续自然数，从0开始，或按照传入的字典进行标签转换 , default_value 默认未知标签为-1
     def standardize_labels_from_vtk_data(self, label_dict: dict = None, default_value=-1):
@@ -139,7 +150,7 @@ class Grid(object):
             for idx, item in enumerate(sorted_label):
                 if item not in label_dict.keys():
                     raise ValueError('The input label_dict is invalid.')
-                if idx + 1 < len(sorted_label) and item + 1 != label_dict[idx+1]:
+                if idx + 1 < len(sorted_label) and item + 1 != label_dict[idx + 1]:
                     raise ValueError('The input label_dict is invalid.')
             new_label = np.vectorize(label_dict.get)(np.array(old_label))
         else:
@@ -154,9 +165,11 @@ class Grid(object):
         self.classes_num = len(label_dict.values())
         self.classes = np.array(list(label_dict.values()))
         self.grid_points_series = new_label
+        self.__add_properties_to_vtk_object_if_present(grid=self)
 
     # 可以自由创建 1维、2维、3维网格，如果是规则沿轴向，则只需要dim和bounds参数，也可以通过分割间断点序列xx,yy,zz来自定义网格
-    def create_vtk_grid_by_rect_bounds(self, dim: np.ndarray = None, bounds: np.ndarray = None, grid_buffer_xy=0):
+    @staticmethod
+    def create_vtk_grid_by_rect_bounds(dim: np.ndarray = None, bounds: np.ndarray = None, grid_buffer_xy=0):
         if dim is None or bounds is None:
             raise ValueError('Bounds array can not be None')
         else:
@@ -177,88 +190,24 @@ class Grid(object):
 
     # 在规则格网的基础上，通过一个2d凸包范围切割格网
     def create_vtk_grid_by_unregular_bounds(self, dims: np.ndarray, bounds: np.ndarray
-                                            , convexhull_2d: np.ndarray, cell_density=None):
-        top_surface_points = copy.deepcopy(convexhull_2d)
-        top_surface_points[:, 2] = bounds[5]  # z_max
-        bottom_surface_points = copy.deepcopy(convexhull_2d)
-        bottom_surface_points[:, 2] = bounds[4]  # z_min
-        # 面三角化
-        surface_points = np.concatenate((top_surface_points, bottom_surface_points), axis=0)
-        # 顶面
-        pro_point_2d = top_surface_points[:, 0:2]
-        points_num = len(top_surface_points)
-        tri = spt.Delaunay(pro_point_2d)
-        tet_list = tri.simplices
-        faces_top = []
-        for it, tet in enumerate(tet_list):
-            face = np.int64([3, tet[0], tet[1], tet[2]])
-            faces_top.append(face)
-        faces_top = np.int64(faces_top)
-        # 底面的组织与顶面相同，face中的点号加一个points_num
-        faces_bottom = []
-        for it, face in enumerate(faces_top):
-            face_new = copy.deepcopy(face)
-            face_new[1:4] = np.add(face[1:4], points_num)
-            faces_bottom.append(face_new)
-        faces_bottom = np.int64(faces_bottom)
-        faces_total = np.concatenate((faces_top, faces_bottom), axis=0)
-        # 侧面
-        # 需要先将三维度点投影到二维，上下面构成一个矩形，三角化
-        surf_line_pnt_id = list(np.arange(points_num))
-        surf_line_pnt_id.append(0)  # 环状线，首位相连
-        surf_line_pnt_id_0 = copy.deepcopy(surf_line_pnt_id)  #
-        surf_line_pnt_id_0 = np.add(surf_line_pnt_id_0, points_num)
-        surf_line_pnt_id_total = np.concatenate((surf_line_pnt_id, surf_line_pnt_id_0), axis=0)
-        top_line = []
-        bottom_line = []
-        for lit in np.arange(points_num + 1):
-            xy_top = np.array([lit, self.bounds[5]])
-            xy_bottom = np.array([lit, self.bounds[4]])
-            top_line.append(xy_top)
-            bottom_line.append(xy_bottom)
-        top_line = np.array(top_line)
-        bottom_line = np.array(bottom_line)
-        line_pnt_total = np.concatenate((top_line, bottom_line), axis=0)
-        # 矩形三角化
-        tri = spt.Delaunay(line_pnt_total)
-        tet_list = tri.simplices
-        faces_side = []
-        for it, tet in enumerate(tet_list):
-            item_0 = tet[0]
-            item_1 = tet[1]
-            item_2 = tet[2]
-            face = np.int64(
-                [3, surf_line_pnt_id_total[item_0], surf_line_pnt_id_total[item_1], surf_line_pnt_id_total[item_2]])
-            faces_side.append(face)
-        faces_side = np.int64(faces_side)
-        faces_total = np.concatenate((faces_total, faces_side), axis=0)
-        convex_surface = pv.PolyData(surface_points, faces=faces_total)
-        line_boundary = []
-        line_top = [len(surf_line_pnt_id)]
-        line_bottom = [len(surf_line_pnt_id)]
-        for lid in np.arange(len(surf_line_pnt_id)):
-            line_top.append(surf_line_pnt_id[lid])
-            line_bottom.append(surf_line_pnt_id_0[lid])
-            line_of_side = [2, surf_line_pnt_id[lid], surf_line_pnt_id_0[lid]]
-            line_boundary.append(np.int64(line_of_side))
-        line_top = np.int64(line_top)
-        line_bottom = np.int64(line_bottom)
-        line_boundary.append(line_top)
-        line_boundary.append(line_bottom)
-        line_boundary = np.concatenate(line_boundary, axis=0)
-        grid_outline = pv.PolyData(surface_points, lines=line_boundary)
+                                            , convexhull_2d: np.ndarray, cell_density: np.ndarray = None):
+        convex_surface, grid_outline = create_closed_surface_by_convexhull_2d(bounds=bounds
+                                                                              , convexhull_2d=convexhull_2d)
         if cell_density is None:
             if dims is None:
                 raise ValueError('Need to input dims parameters.')
-            x_length = bounds[1] - bounds[0]
-            y_length = bounds[3] - bounds[2]
-            z_length = bounds[5] - bounds[4]
-            cell_density = np.ndarray([float(x_length / dims[0]), float(y_length / dims[1]), float(z_length / dims[2])])
+            x_r = (bounds[1] - bounds[0]) / dims[0]
+            y_r = (bounds[3] - bounds[2]) / dims[1]
+            z_r = (bounds[5] - bounds[4]) / dims[2]
+            cell_density = np.array([x_r, y_r, z_r])
         sample_grid = pv.voxelize(convex_surface, density=cell_density)
         return sample_grid, grid_outline
 
     def set_vtk_grid(self, grid_vtk):
-        self.dims = grid_vtk.GetDimensions()
+        if isinstance(grid_vtk, (pv.RectilinearGrid, vtkImageData)):
+            self.dims = grid_vtk.GetDimensions()
+        else:
+            self.dims = None
         self.bounds = np.array(grid_vtk.bounds)
         self.grid_points = grid_vtk.cell_centers().points
         self.grid_points_series = grid_vtk.active_scalars
@@ -268,9 +217,16 @@ class Grid(object):
         self.scalar_grad = None
         self.scalar_grad_norm = None
 
-    def resample_grid(self, dim: np.ndarray, is_replace=True):
+    def detach_vtk_component_with_label(self):
+        classes = self.get_classes()
+        vtk_dict = {}
+        for item in classes:
+            vtk_dict[item] = self.vtk_data.threshold(value=[item-0.001, item+0.001])
+        return vtk_dict
+
+    def resample_regular_grid(self, dim: np.ndarray, is_replace=True):
         if self.vtk_data is None:
-            raise ValueError('')
+            raise ValueError('The original grid is empty.')
         else:
             new_vtk_grid = self.create_vtk_grid_by_rect_bounds(dim=dim, bounds=self.bounds)
             new_vtk_grid_points = new_vtk_grid.cell_centers().points
@@ -296,7 +252,7 @@ class Grid(object):
                 self.bounds = np.array(new_vtk_grid.bounds)
                 return self.__add_properties_to_vtk_object_if_present(grid=self)
             else:
-                new_grid = Grid(model_name=self.model_name, grid_vtk=new_vtk_grid)
+                new_grid = Grid(name=self.name, grid_vtk=new_vtk_grid)
                 if self.grid_points_series is not None:
                     new_grid.grid_points_series = self.grid_points_series[pid]
                 if self.scalar_series is not None and isinstance(self.scalar_series, dict):
@@ -431,14 +387,15 @@ class Grid(object):
 
     def save(self, dir_path: str):
         if self.vtk_data is not None and isinstance(self.vtk_data, pv.RectilinearGrid):
-            self.save_path = os.path.join(dir_path, self.tmp_dump_str + '.vtk')
-            self.vtk_data.save(filename=self.save_path)
+            save_path = os.path.join(dir_path, self.tmp_dump_str + '.vtk')
+            self.vtk_data.save(filename=save_path)
             self.vtk_data = 'dumped'
 
-    def load(self):
-        if self.vtk_data is not None:
-            if self.save_path is not None and os.path.exists(self.save_path):
-                self.vtk_data = pv.read(filename=self.save_path)
+    def load(self, dir_path):
+        if self.vtk_data == 'dumped':
+            save_path = os.path.join(dir_path, self.tmp_dump_str + '.vtk')
+            if os.path.exists(save_path):
+                self.vtk_data = pv.read(filename=save_path)
             else:
                 raise ValueError('vtk data file does not exist')
 
