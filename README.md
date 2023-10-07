@@ -1,6 +1,6 @@
 # geomodel_workshop
 ## 依赖环境
-* pytorch 1.12.1
+* pytorch >= 1.12.1
 * dgl
 * pyvista
 * vtk
