@@ -34,7 +34,7 @@ if __name__ == '__main__':
     print('Loading data')
     path_1 = os.path.abspath('..')
     root_path = os.path.join(path_1, 'geomodel_workshop')
-    noddyData = NoddyModelData(root=r'F:\NoddyDataset', max_model_num=10, update_grid=False)
+    noddyData = NoddyModelData(root=r'F:\NoddyDataset', max_model_num=10, update_grid=True)
     noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0])  # 1 6
     grid_list = []
     for noddy_grid in noddy_grid_list:

@@ -307,7 +307,7 @@ class BoreholeSet(Dataset):
                                                 lines=np.array(layer_lines, dtype=int))
             one_borehole_vtk_data.cell_data['Scalar Field'] = np.array(layer_labels)
             if is_tube:
-                one_borehole_vtk_data.tube(radius=borehole_radius)
+                one_borehole_vtk_data = one_borehole_vtk_data.tube(radius=borehole_radius)
             borehole_list.append(one_borehole_vtk_data)
         self.vtk_data = borehole_list
         return borehole_list
@@ -317,8 +317,7 @@ class BoreholeSet(Dataset):
         return borehole_list
 
     def show(self, is_tube=True, borehole_radius=1.0):
-        if self.vtk_data is None:
-            self.generate_vtk_data_as_tube(is_tube=is_tube, borehole_radius=borehole_radius)
+        self.generate_vtk_data_as_tube(is_tube=is_tube, borehole_radius=borehole_radius)
         if isinstance(self.vtk_data, pv.MultiBlock):
             self.vtk_data.plot()
 

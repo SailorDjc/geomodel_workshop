@@ -12,16 +12,24 @@ class ReadExportFile(object):
         pass
 
     # 获取钻孔集 BoreholeSet
-    def read_boreholes_data_from_text_file(self, dat_file_path: str = None, **kwargs):
+    @staticmethod
+    def read_boreholes_data_from_text_file(dat_file_path: str = None, **kwargs):
         if not os.path.exists(dat_file_path):
             raise ValueError('The file path does not exist.')
         comment = "#"
         encoding = 'utf-8'
         header = None
         sep = ' '
-        globals().update(kwargs)
+        if 'comment' in kwargs.keys():
+            comment = kwargs['comment']
+        if 'encoding' in kwargs.keys():
+            encoding = kwargs['encoding']
+        if 'header' in kwargs.keys():
+            header = kwargs['header']
+        if 'sep' in kwargs.keys():
+            sep = kwargs['sep']
         df = pd.read_table(dat_file_path, header=header, comment=comment, sep=sep, encoding=encoding)
-        columns_num = df.columns.size()
+        columns_num = df.columns.size
         names = ['borehole_id', 'x', 'y', 'z', 'label']
         if columns_num == 5:
             df.columns = names
@@ -30,14 +38,15 @@ class ReadExportFile(object):
         # 清理空值
         df.dropna()
         points_data = np.array(df.loc[:, ['x', 'y', 'z', 'label']])
-        borehole_ids = df.loc[:, ['borehole_id']]
+        borehole_ids = list(df.loc[:, 'borehole_id'])
         borehole_map = {}
         for id, borehole_id in enumerate(borehole_ids):
             if borehole_id not in borehole_map.keys():
                 borehole_map[borehole_id] = []
             borehole_map[borehole_id].append(points_data[id])
         borehole_list = BoreholeSet()
-        for k, v in borehole_map.keys():
+        for k in borehole_map.keys():
+            borehole_map[k] = np.row_stack(borehole_map[k])
             borehole_points = np.array(borehole_map[k])[:, 0:3]
             borehole_series = np.array(borehole_map[k])[:, 3]
             one_borehole = Borehole(points=borehole_points, series=borehole_series, borehole_id=k)
@@ -46,7 +55,8 @@ class ReadExportFile(object):
 
     # node [x, y, z, label]
     # 获取点集 PointSet
-    def read_points_data_from_text_file(self, dat_file_path: str = None, **kwargs):
+    @staticmethod
+    def read_points_data_from_text_file(dat_file_path: str = None, **kwargs):
         if not os.path.exists(dat_file_path):
             raise ValueError('The file path does not exist.')
         comment = "#"
@@ -65,7 +75,7 @@ class ReadExportFile(object):
         if 'use_cols' in kwargs.keys():
             use_cols = kwargs['use_cols']
         df_points = pd.read_table(dat_file_path, header=header, comment=comment, sep=sep, encoding=encoding)
-        columns_num = df_points.columns.size()
+        columns_num = df_points.columns.size
         if columns_num >= max(use_cols):
             if len(use_cols) == 3:
                 df_points = df_points.iloc[:, use_cols]
@@ -87,7 +97,8 @@ class ReadExportFile(object):
 
     # 获取 边集 数据
     # edge [src, dst]
-    def read_graph_data_from_edge_files(self, edge_file_path, is_edge_node_begin_from_zero=False, **kwargs):
+    @staticmethod
+    def read_graph_data_from_edge_files(edge_file_path, is_edge_node_begin_from_zero=False, **kwargs):
         if edge_file_path is None:
             raise ValueError('Edge file is necessary.')
         if not os.path.exists(edge_file_path):

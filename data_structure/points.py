@@ -199,16 +199,32 @@ class PointSet(object):
                 self.scalars_grad_norm[k] = self.scalars_grad_norm[k][unique_indexes]
 
     def generate_vtk_data_for_points_as_sphere(self):
-        points_data = pv.PolyData(self.points)
-        self.vtk_point_data = points_data
+        if self.points is None:
+            return None
+        points_poly = pv.PolyData(self.points)
+        if self.labels is not None and len(self.labels) == self.points.shape[0]:
+            points_poly["stratum"] = self.labels
+        self.vtk_point_data = points_poly
         return self.vtk_point_data
 
     def generate_vtk_data_for_vector_as_arrow(self):
+        if self.vectors is None:
+            return None
         vector_data = pv.vector_poly_data(self.points, self.vectors)
         # 'mag' 是矢量的大小， 'vectors' 表示矢量向量
         vector_plot = vector_data.glyph(orient='vectors', scale='mag')
         self.vtk_vector_data = vector_plot
         return self.vtk_vector_data
+
+    def show(self, is_sphere=True, point_size=5, is_arrow=False):
+        plotter = pv.Plotter()
+        if is_sphere is True and self.points is not None:
+            points_poly = self.generate_vtk_data_for_points_as_sphere()
+            plotter.add_mesh(points_poly, render_points_as_spheres=True, point_size=point_size)
+        if is_arrow is True and self.vectors is not None:
+            vector_poly = self.generate_vtk_data_for_vector_as_arrow()
+            plotter.add_mesh(vector_poly)
+        plotter.show()
 
     def transform_points(self, scale):
         assert self.points is not None, "there are no points"
