@@ -316,6 +316,12 @@ class BoreholeSet(Dataset):
         borehole_list = self.generate_vtk_data_as_tube(is_tube=False)
         return borehole_list
 
+    def show(self, is_tube=True, borehole_radius=1.0):
+        if self.vtk_data is None:
+            self.generate_vtk_data_as_tube(is_tube=is_tube, borehole_radius=borehole_radius)
+        if isinstance(self.vtk_data, pv.MultiBlock):
+            self.vtk_data.plot()
+
     def get_sample_vtk_data(self, block_id=None):
         if block_id is None:
             return self.vtk_data

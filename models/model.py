@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torchmetrics.functional as MF
 import dgl
 import dgl.nn as dglnn
-from layers import MultiHeadSpatialLayer, SpacialConv, GraphTransformerLayer, MLPReadout
+from models.layers import MultiHeadSpatialLayer, SpacialConv, GraphTransformerLayer, MLPReadout
 from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
 from tqdm import tqdm
 

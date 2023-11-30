@@ -448,6 +448,7 @@ class GeoGridInterpolator(object):
             self.method = self.method.lower()
         self.support_methods = ['rbf', 'idw']
 
+
 # 支持向量机
 
 #     graph_num = len(self.graph) + len(self.predict_graph)

@@ -165,7 +165,8 @@ def convert_continuous_probabilities_to_class_integer(prop_arr):
 def add_vtk_data_array_to_vtk_object(vtk_object, vtk_array):
     if type(vtk_object) == vtkStructuredGrid or \
             type(vtk_object) == vtkUnstructuredGrid or \
-            type(vtk_object) == vtkPolyData:
+            type(vtk_object) == vtkPolyData or \
+            type(vtk_object) == pv.PolyData:
         assert vtk_object.GetNumberOfPoints() == vtk_array.GetNumberOfTuples(), \
             "Num of Tuples is different than number of points on vtk object"
         vtk_object.GetPointData().AddArray(vtk_array)

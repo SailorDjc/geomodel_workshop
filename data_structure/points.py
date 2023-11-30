@@ -101,7 +101,7 @@ class PointSet(object):
     # 使用append方法，合并Pointset，会导致scalars和vectors丢失
     def append(self, item):
         if isinstance(item, PointSet):
-            if item.is_empty() and self.is_empty():
+            if not item.is_empty():
                 new_item = self.points_data_merge([self, item])
                 self.points_num += new_item.points_num
                 self.bounds = get_bounds_from_coords(new_item.points)
@@ -122,12 +122,13 @@ class PointSet(object):
         scalras_merge = []
         scalars_grad_merge = []
         for data in points_data_list:
-            if not isinstance(data, PointSet) and data.points_num == 0:
+            if not isinstance(data, PointSet):  # and data.points_num == 0:
                 raise ValueError('Input data should be PointSet type.')
             else:
-                if data.is_empty():
+                if not data.is_empty():
                     points_merge.append(data.points)
-                    labels_merge.append(data.labels)
+                    if data.labels is not None:
+                        labels_merge.append(data.labels)
                     if data.vectors is not None:
                         vectors_merge.append(data.vectors)
                     if data.scalars is not None:
@@ -137,13 +138,19 @@ class PointSet(object):
         if len(points_data_list) == 0:
             raise ValueError('Input list is empty.')
         else:
+            if len(points_merge) == 0:
+                raise ValueError('Input list is empty.')
+            merge_num = len(points_merge)
             points_merge = np.vstack(points_merge)
-            labels_merge = np.vstack(labels_merge)
+            if len(labels_merge) == merge_num:
+                labels_merge = np.hstack(labels_merge)
+            else:
+                labels_merge = None
             points_data_merge = PointSet(points=points_merge, point_labels=labels_merge)
-            if len(vectors_merge) == len(points_data_list):
+            if len(vectors_merge) == merge_num:
                 vectors_merge = np.vstack(vectors_merge)
                 points_data_merge.set_vectors(vectors=vectors_merge)
-            if len(scalras_merge) == len(points_data_list):
+            if len(scalras_merge) == merge_num:
                 keys_map = scalras_merge[0].keys()
                 scalars_common_merge = {}
                 for key in keys_map:
@@ -157,7 +164,7 @@ class PointSet(object):
                 for key in scalars_common_merge.keys():
                     scalars_value = np.vstack(scalars_common_merge[key])
                     points_data_merge.set_scalars(scalars=scalars_value, scalar_name=key)
-            if len(scalars_grad_merge) == len(points_data_list):
+            if len(scalars_grad_merge) == merge_num:
                 keys_map = scalars_grad_merge[0].keys()
                 scalars_grad_common_merge = {}
                 for key in keys_map:
@@ -226,8 +233,9 @@ class PointSet(object):
     def set_labels(self, labels: np.ndarray):
         if self.points is None:
             raise ValueError('Need to set points first.')
-        if self.points.shape[0] != len(labels):
-            raise ValueError('labels array size not match to points.')
+        if labels is not None:
+            if self.points.shape[0] != len(labels):
+                raise ValueError('labels array size not match to points.')
         self.labels = labels
 
     def set_scalars(self, scalars: np.ndarray, scalar_name: str):

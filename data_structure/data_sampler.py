@@ -268,16 +268,16 @@ class GeoGridDataSampler(object):
         cells_series = np.full((len(self.grid.grid_points),), fill_value=-1)
         z_buffer = 2
         if self.bounds is not None and self.grid.dims is not None:
-            z_buffer = (self.bounds[5] - self.bounds[4]) / self.grid.dims[2]
+            z_buffer = (self.bounds[5] - self.bounds[4]) / self.grid.dims[2] / 2
         points_data = pv.PolyData(self.grid.grid_points)
         # 将钻孔控制区域的采样数据转换为PointSet类型
         new_point_data_list = []
         for one_borehole in boreholes:
             # 搜索范围上下缓冲一下，防止漏选
-            hole_top_pos = one_borehole.top_pos
+            hole_top_pos = copy.deepcopy(one_borehole.top_pos)
             hole_top_pos[2] += z_buffer
-            hole_bottom_pos = one_borehole.bottom_pos
-            hole_bottom_pos -= z_buffer
+            hole_bottom_pos = copy.deepcopy(one_borehole.bottom_pos)
+            hole_bottom_pos[2] -= z_buffer
             line_center = np.divide(np.add(hole_top_pos, hole_bottom_pos), 2)
             line_direction = np.subtract(hole_top_pos, hole_bottom_pos)
             if np.linalg.norm(line_direction) == 0:
@@ -442,11 +442,12 @@ class GeoGridDataSampler(object):
         section_list = SectionSet(name=name)
         for s_i in np.arange(section_num):
             section = Section()
-            section.prob_volume(grid=self._grid, surf=section.create_surface_along_axis(along_axis=sample_axis
+            surface = section.prob_volume(grid=self._grid, surf=section.create_surface_along_axis(along_axis=sample_axis
                                                                                        , scroll_scale=scroll_size[s_i]
                                                                                        , resolution_xy=resolution_xy
                                                                                        , resolution_z=resolution_z
                                                                                        , grid_bounds=self.bounds))
+            section.set_surface(surf=surface)
             section_list.append(section)
         self.sample_data_list.append(section_list)
         self.sample_num += 1

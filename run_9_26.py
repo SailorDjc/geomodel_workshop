@@ -34,7 +34,7 @@ if __name__ == '__main__':
     print('Loading data')
     path_1 = os.path.abspath('..')
     root_path = os.path.join(path_1, 'geomodel_workshop')
-    noddyData = NoddyModelData(root=r'F:\NoddyDataset', max_model_num=10)
+    noddyData = NoddyModelData(root=r'F:\NoddyDataset', max_model_num=10, update_grid=False)
     noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0])  # 1 6
     grid_list = []
     for noddy_grid in noddy_grid_list:
@@ -48,6 +48,7 @@ if __name__ == '__main__':
     geodata_drills.execute()
     # 钻孔数据
     boreholes_data = geodata_drills.sample_data_list[0]
+    boreholes_data.show()
     # 将钻孔数据映射到空网格上
     geodata_sample = GeoGridDataSampler()
     geodata_sample.set_base_grid_by_boreholes(boreholes=boreholes_data, dims=np.array([150, 150, 120]))

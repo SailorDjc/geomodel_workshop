@@ -9,11 +9,30 @@ import copy
 from vtkmodules.all import vtkPolyDataMapper
 from sklearn import metrics
 import matplotlib.pyplot as pl
-
+import torch
+from geograph_parse import GeoMeshGraphParse
 
 matplotlib.use("TkAgg")
 
 from matplotlib import pyplot as plt
+
+
+# 生成基于规则网格的模型，规则网格已经在geodata中指定
+def visual_predicted_values_model(geodata: GeoMeshGraphParse, cell_values, is_show=True, save_path=None):
+    if isinstance(cell_values, torch.Tensor):
+        cell_values = cell_values.cpu().numpy()
+    if cell_values.ndim > 1:
+        scalars = np.argmax(cell_values, axis=1)
+    else:
+        scalars = np.float32(cell_values)
+    gen_mesh = copy.deepcopy(geodata.data)
+    gen_mesh.vtk_data.cell_data['stratum'] = scalars
+    if is_show:
+        visual_multiple_model([geodata.data, gen_mesh])
+    if save_path is not None:
+        gen_mesh.vtk_data.save(filename=save_path)
+    return gen_mesh
+
 
 
 def build_plot_from_horizon_metrics(scalar_means: np.ndarray, residual_means: np.ndarray,

@@ -14,48 +14,71 @@ import time
 import os
 
 
+# 1. 外部输入vtk剖面数据
+#   vtk_data:         外部输入vtk剖面数据
+#   vtk_data_path:    外部vtk剖面文件路径，与vtk_data等价，两者只输入一个，若两者都有值，那么以vtk_data作为输入
+# 2. 外部输入点云数据
+#   points:           外部输入剖面网格点
+#   series:           外部输入剖面网格点标签，与points对应，若存在外部输入vtk数据，则忽略
+# 3. 通过剖切外部输入的采样网格，得到剖面
+#   sample_spacing:   重建的剖面网格的网格间隔
+#   sample_grid:      外部输入的采样三维网格模型，通过采样该网格为剖面附加地质类别属性，这里的网格是三维空间网格，1中的是二维剖面网格
+#   name:             剖面名称，若存在外部输入vtk文件，且name未指定，则以vtk文件名作为name
 class Section(object):
     def __init__(self, vtk_data=None, vtk_data_path=None, points: np.ndarray = None, series: np.ndarray = None
                  , sample_spacing=None, sample_grid=None, name=None):
         self.name = name
-        if points is not None and series is not None:
-            self.points = points
+        # if points is not None and series is not None:
+        self.points = points
+        if self.points is not None:
+            self.points_num = points.shape[0]
+        self.series = series
+        # 标量
+        self.scalars = None  # {}
+        self.scalar_grad = None  # 梯度
+        self.scalar_grad_norm = None
 
-            self.series = series
-            # 标量
-            self.scalars = None  # {}
-            self.scalar_grad = None  # 梯度
-            self.scalar_grad_norm = None
+        self.trajectory_line = None  # 轨迹线 numpy.ndarray  3D points
+        self.dims = None
+        self.resolution = None
+        self.vtk_data = None
 
-            self.trajectory_line = None  # 轨迹线 numpy.ndarray  3D points
-            self.dims = None
-            self.resolution = None
-            self.vtk_data = None
+        self.classes = None
+        self.classes_num = 0
+        self.label_dict = None
 
-            self.classes = None
-            self.classes_num = 0
-            self.label_dict = None
-
-            self.tmp_dump_str = 'tmp' + str(int(time.time()))
-            if vtk_data is not None or (vtk_data_path is not None and os.path.exists(vtk_data_path)):
-                self.vtk_data = vtk_data
-                if self.vtk_data is None:
-                    self.vtk_data = pv.read(filename=vtk_data_path)
-                if isinstance(vtk_data, pv.RectilinearGrid):
-                    self.dims = vtk_data.GetDimensions()
-                    self.points = vtk_data.cell_centers().points
-                    self.standardize_labels_from_vtk_data()
-                if isinstance(vtk_data, (pv.PolyData, pv.UnstructuredGrid)):
-                    self.dims = None
-                    self.points = vtk_data.cell_centers().points
-                    self.standardize_labels_from_vtk_data()
-            if sample_spacing is not None and self.points is not None and sample_grid is not None and vtk_data is None \
-                    and vtk_data_path is None:
-                self.points_num = points.shape[0]
-                self.bounds = self.get_points_data().bounds
-                new_surf = self.create_implict_surface_reconstruct(sample_spacing=sample_spacing)
-                self.vtk_data = new_surf
-                self.prob_volume(grid=sample_grid, surf=new_surf)
+        self.tmp_dump_str = 'tmp' + str(int(time.time()))
+        # 如果存在外部输入的vtk剖面数据
+        if vtk_data is not None or (vtk_data_path is not None and os.path.exists(vtk_data_path)):
+            self.vtk_data = vtk_data
+            if self.vtk_data is None:
+                self.vtk_data = pv.read(filename=vtk_data_path)
+                file_name = os.path.basename(vtk_data_path)
+                self.name = file_name.split('.')[0]
+            self.points = None
+            self.series = None
+            # 以vtk数据更新points和labels
+            if isinstance(vtk_data, pv.RectilinearGrid):
+                self.dims = vtk_data.GetDimensions()
+                self.points = vtk_data.cell_centers().points
+                self.points_num = self.points.shape[0]
+                # 从vtk数据中获取标签
+                self.standardize_labels_from_vtk_data()
+            if isinstance(vtk_data, (pv.PolyData, pv.UnstructuredGrid)):
+                self.dims = None
+                self.points = vtk_data.cell_centers().points
+                self.points_num = self.points.shape[0]
+                self.standardize_labels_from_vtk_data()
+        # 当只有一片散点，可以创建隐式曲面，通过曲面来剖切采样网格获取地质类别属性
+        if sample_spacing is not None and self.points is not None and sample_grid is not None and vtk_data is None \
+                and vtk_data_path is None:
+            self.points_num = points.shape[0]
+            self.bounds = self.get_points_data().bounds
+            new_surf = self.create_implict_surface_reconstruct(sample_spacing=sample_spacing)
+            self.vtk_data = new_surf
+            self.prob_volume(grid=sample_grid, surf=new_surf)
+            # 从vtk数据中获取标签
+            self.standardize_labels_from_vtk_data()
 
     def get_points_data(self):
         points_data = PointSet(points=self.points, point_labels=self.series)
@@ -74,7 +97,9 @@ class Section(object):
         return self.classes
 
     # 将labels映射为连续自然数，从0开始，或按照传入的字典进行标签转换 , default_value 默认未知标签为-1
+    # label_dict:  dict  标签映射字典，可以手动设置，例如{1:0, 2:1, 3:2, 4:3}
     def standardize_labels_from_vtk_data(self, label_dict: dict = None, default_value=-1):
+        # 从vtk数据中获取属性数据，如果属性数据为空，则报错
         series_labels = self.vtk_data.active_scalars
         if series_labels is None:
             raise ValueError('The input data has not scalar values.')
@@ -126,8 +151,10 @@ class Section(object):
         self.vtk_data = surf
         self.points = grid_points
         self.points_num = grid_points.shape[0]
+        # 从vtk数据中获取标签
+        self.standardize_labels_from_vtk_data()
 
-    def set_surface_series(self, series: np.ndarray):
+    def set_series(self, series: np.ndarray):
         if self.points == 0:
             raise ValueError('Need to set points data first.')
         if series.shape[0] != self.points_num:
