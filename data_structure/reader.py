@@ -120,7 +120,7 @@ class ReadExportFile(object):
             use_cols_edge = kwargs['use_cols_edge']
         globals().update(kwargs)
         df_edge = pd.read_table(edge_file_path, header=header, comment=comment, sep=sep, encoding=encoding)
-        cols_edge_num = df_edge.columns.size()
+        cols_edge_num = df_edge.columns.size
         if cols_edge_num >= max(use_cols_edge):
             df_edge = df_edge.iloc[:, use_cols_edge]
             if len(use_cols_edge) == 2:

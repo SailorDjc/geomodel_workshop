@@ -26,7 +26,7 @@ class NoddyModelData(object):
     # dataset_list = ['FOLD_FOLD_FOLD']
     def __init__(self, root=None, save_dir_name='model_data', dataset_list: list = None, max_model_num=30
                  , delete_cache=True, update_grid=True):
-        cur_dir = os.path.abspath('.')
+        cur_dir = os.path.dirname(os.path.abspath(__file__))  # os.path.abspath('.')
         env_file_path = os.path.join(cur_dir, 'env.txt')
         if update_grid:
             self.root = root  # 数据集根目录

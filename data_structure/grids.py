@@ -391,7 +391,7 @@ class Grid(object):
             self.vtk_data.save(filename=save_path)
             self.vtk_data = 'dumped'
 
-    def load(self, dir_path):
+    def load(self, dir_path: str):
         if self.vtk_data == 'dumped':
             save_path = os.path.join(dir_path, self.tmp_dump_str + '.vtk')
             if os.path.exists(save_path):

@@ -88,7 +88,7 @@ def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None,
 class GmeModelGraphList(object):
     def __init__(self, name, root, grid_data: list = None,
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
-                 dgl_graph_param=None, **kwargs):
+                 dgl_graph_param=None, update_graph=False, **kwargs):
         # 注：.dat文件格式与Voxler软件一致
         if dgl_graph_param is None:
             dgl_graph_param = [['position'], None]  # [[node_feat], [edge_feat]]
@@ -100,7 +100,7 @@ class GmeModelGraphList(object):
         self.add_inverse_edge = add_inverse_edge  # 无向图
         self.root = root  # 代码工作空间根目录， 会默认将处理后数据存放在 root/processed目录下
         self.name = name  # 数据集名称
-
+        self.update_graph = update_graph
         # 数据存储参数
         self.geodata = []
         self.result_model = {}
@@ -109,7 +109,10 @@ class GmeModelGraphList(object):
 
         # 文件存储路径，在processed文件夹下共存储3个数据文件，两个模型训练checkpoint存储文件
         processed_dir = os.path.join(self.root, 'processed')  # 存储
+
         self.processed_dir = processed_dir
+        if not os.path.exists(self.processed_dir):
+            os.makedirs(self.processed_dir)
         self.processed_file_path = os.path.join(processed_dir, 'gme_data_processed')  # 存储与训练的dgl_graph图数据
         self.processed_geodata_path = os.path.join(processed_dir, 'geodata.pkl')  # 存储geodata模型数据
         # 待删除
@@ -124,12 +127,14 @@ class GmeModelGraphList(object):
     # 访问模型数据
     def access_model_data(self):
         # 如果存在处理后数据，则直接从文件加载
+        # 加载图日志数据
         if os.path.exists(self.graph_log_data_path):
             self.graph_log = self.load_graph_log()
         # 加载dgl_graph和geodata, 其中dgl_graph是图神经网络训练的数据源, geodata主要存储地质数据源用来可视化分析
         if os.path.exists(self.processed_geodata_path):  # geodata
             self.load_geodata()
             print('Loading {} GeoModel Data ...'.format(len(self.geodata)))
+        # 加载图数据
         if os.path.exists(self.processed_file_path):
             self.graph, self.num_classes = load_graphs(self.processed_file_path)  # dgl_graph
             print('Loading {} Saved Graphs Files Data ...'.format(len(self.graph)))
@@ -138,8 +143,8 @@ class GmeModelGraphList(object):
             self.graph = []
         if self.num_classes is None:
             self.num_classes = {'labels': []}
-
-        self.process_grid_data_to_graph_data()
+        if len(self.graph) == 0 or self.update_graph:
+            self.process_grid_data_to_graph_data()
 
     # 将网格数据处理为图结构数据
     def process_grid_data_to_graph_data(self):
@@ -163,7 +168,7 @@ class GmeModelGraphList(object):
                 print('is_connected:', is_connected)
                 self.geodata.append(geodata)
                 dgl_graph_list.append(dgl_graph)
-                self.update_graph_log(model_name=mesh.model_name,
+                self.update_graph_log(model_name=mesh.name,
                                       save_idx=model_index + pre_save_graph_num,
                                       node_feat=self.dgl_graph_param[0], edge_feat=self.dgl_graph_param[1],
                                       edge_num=dgl_graph.num_edges(), node_num=dgl_graph.num_nodes())
@@ -191,15 +196,15 @@ class GmeModelGraphList(object):
             node_num = self.graph[idx].num_nodes()
             x = np.arange(node_num)
             # 已经预先划分了训练数据，即已知标签数据
-            if self.geodata[idx].train_idx is None:
+            if self.geodata[idx].train_data_indexes is None:
                 # random_state 确保每次切分是确定的
                 train, val_test = train_test_split(x, test_size=0.4, random_state=2)
                 valid, test = train_test_split(val_test, test_size=0.5, random_state=2)
             else:
                 print('get split Dataset')
-                train_val = np.array(self.geodata[idx].train_idx)
+                train_val = np.array(self.geodata[idx].train_data_indexes)
                 train, valid = train_test_split(train_val, test_size=0.1)  # , random_state=2
-                test = np.array(list(set(x) - set(self.geodata[idx].train_idx)))
+                test = np.array(list(set(x) - set(self.geodata[idx].train_data_indexes)))
             # train = train_val
             # val_test = np.array(list(set(x) - set(self.geodata[idx].train_idx)))
             # valid, test = train_test_split(val_test, test_size=0.1, random_state=2)
@@ -237,7 +242,7 @@ class GmeModelGraphList(object):
         with open(self.processed_geodata_path, 'rb') as file:
             self.geodata = pickle.loads(file.read())
             for g_id in np.arange(len(self.geodata)):
-                self.geodata[g_id].load()
+                self.geodata[g_id].load(dir_path=self.processed_dir)
             return self.geodata
 
     def save_graph_log(self):
@@ -254,16 +259,11 @@ class GmeModelGraphList(object):
     def __getitem__(self, idx):
         if idx < len(self.graph):
             return self.graph[idx]
-        else:
-            idx = idx - len(self.graph)
-            return self.predict_graph[idx]
 
     def __len__(self):
         if self.graph is None:
             self.graph = []
-        if self.predict_graph is None:
-            self.predict_graph = []
-        return len(self.graph) + len(self.predict_graph)
+        return len(self.graph)
 
     def __repr__(self):  # pragma: no cover
         return '{}({})'.format(self.__class__.__name__, len(self))

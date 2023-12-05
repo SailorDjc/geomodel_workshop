@@ -491,6 +491,6 @@ class GeoGridDataSampler(object):
         for s_id in np.arange(len(self.sample_data_list)):
             self.sample_data_list[s_id].save(dir_path=dir_path)
 
-    def load(self):
+    def load(self, dir_path: str):
         for s_id in np.arange(len(self.sample_data_list)):
-            self.sample_data_list[s_id].load()
+            self.sample_data_list[s_id].load(dir_path=dir_path)

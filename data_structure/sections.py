@@ -360,7 +360,7 @@ class Section(object):
 
 
 class SectionSet(object):
-    def __init__(self, name):
+    def __init__(self, name=None):
         self.sections = []
         self.sections_num = 0
         self.name = name

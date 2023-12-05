@@ -25,8 +25,8 @@ class GraphTransConfig:
 
     # config.vocab_size, config.n_embd  config.embd_pdrop  n_layer out_size resid_pdrop n_head attn_pdrop
     # , vocab_size
-    def __init__(self, in_size, embd_pdrop=0.1, resid_pdrop=0.1, attn_pdrop=0.1, n_layer=12,
-                 gnn_layer_num=4, coors=3, n_head=2, gnn_n_head=2, n_embd=512, out_size=4):
+    def __init__(self, in_size, out_size, embd_pdrop=0.1, resid_pdrop=0.1, attn_pdrop=0.1, n_layer=12,
+                 gnn_layer_num=4, coors=3, n_head=2, gnn_n_head=2, n_embd=512):
         self.in_size = in_size  # 输入特征维度
         # self.vocab_size = vocab_size  # 句子长度
         self.coors = coors
@@ -117,13 +117,13 @@ class GmeTrainer:
 
         train_dataloader = DataLoader(g, train_idx, sampler, device=self.device,
                                       batch_size=self.config.batch_size, shuffle=True,
-                                      drop_last=False, num_workers=0,
-                                      use_uva=False)
+                                      drop_last=False,
+                                      use_uva=False)  # num_workers=0,
 
         val_dataloader = DataLoader(g, val_idx, sampler, device=self.device,
                                     batch_size=self.config.batch_size, shuffle=True,
-                                    drop_last=False, num_workers=0,
-                                    use_uva=False)
+                                    drop_last=False,
+                                    use_uva=False)  # num_workers=0,
 
         return train_dataloader, val_dataloader
 
@@ -185,6 +185,7 @@ class GmeTrainer:
         raw_model = self.load_checkpoint()
         lr = config.learning_rate
         optimizer = torch.optim.Adam(raw_model.parameters(), lr=lr, weight_decay=config.weight_decay)
+
         # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.8)
         #
         # torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=10, verbose=True,
@@ -225,7 +226,8 @@ class GmeTrainer:
                     optimizer.step()
                     # lr = optimizer.state_dict()['param_groups'][0]['lr']  # 学习率
                     lr = optimizer.param_groups[0]['lr']
-                    acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys))
+                    acc = MF.accuracy(preds=torch.cat(y_hats), target=torch.cat(ys), task="multilabel"
+                                      , num_labels=self.model.config.out_size)
                     # report progress
                     pbar.set_description(
                         f"epoch {epoch + 1} iter {it}: train loss {loss.item():.5f}. "
@@ -303,7 +305,8 @@ class GmeTrainer:
         visual_acc_picture(train_acc=train_acc_list, test_acc=var_acc_list, save_path=self.config.output_dir)
         print('Testing...')
 
-        acc = self.inference(self.gme_dataset, idx=data_split_idx, has_test_label=has_test_label, save_path=vtk_file_path)
+        acc = self.inference(self.gme_dataset, idx=data_split_idx, has_test_label=has_test_label,
+                             save_path=vtk_file_path)
         message = '================Test Accuracy {:.4f}================' \
             .format(acc)
         print(message)

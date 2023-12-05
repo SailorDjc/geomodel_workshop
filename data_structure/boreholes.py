@@ -106,7 +106,7 @@ class Borehole(object):
         self.series = np.array(extract_labels)
         self.points_num = self.points.shape[0]
 
-    def get_points_data(self, only_interface=True):
+    def get_points_data(self, only_interface=False):
         if only_interface:
             points = []
             labels = []
@@ -354,7 +354,7 @@ class BoreholeSet(Dataset):
         top_points = np.array(top_points)
         return top_points
 
-    def get_points_data(self, only_interface=True):
+    def get_points_data(self, only_interface=False):
         points = []
         labels = []
         for one_hole in self.boreholes_list:
@@ -476,7 +476,7 @@ class BoreholeSet(Dataset):
         return convex_surface, grid_outline
 
     # 获取钻孔数据字典 {borehole_id: np.array(x, y, z, label)}
-    def get_boreholes_id_points_labels_map(self, only_interface=True):
+    def get_boreholes_id_points_labels_map(self, only_interface=False):
         borehole_id_points_labels_map = {}
         for one_borehole in self.boreholes_list:
             if one_borehole.borehole_id is None:
