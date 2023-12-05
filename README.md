@@ -18,7 +18,7 @@
 * 引入pytetgen <br />
 由于scipy.spatial提供的Delaunay三角网生成算法在面对大规模点云网格生成时出现计算性能瓶颈的问题，所以考虑引入pytetgen库的三角网算法，直接安装:pip install pytetgen可能会出现问题，<br />
 因为这个库需要Cython编译，而编译过程中会遇到python2与python3冲突的问题，python2允许将doulbe类型值赋值给int类型的变量，而python中不允许，所以安装方法如下：<br />
-'''
+```
 pip install Cython==0.29.35  # 该版本支持python2的规则
 pip install pytetgen
-'''
+```
