@@ -176,7 +176,8 @@ class GmeTrainer:
                 test_idx = data.test_idx[idx]
                 pred_test = pred[test_idx]
                 label_test = graph.ndata['label'][test_idx].to(pred_test.device)
-                accuracy = MF.accuracy(pred_test, label_test)
+                accuracy = MF.accuracy(pred_test, label_test, task='multiclass'
+                                       , num_classes=int(self.model.config.out_size))
                 return accuracy.item()
             return 0
 
@@ -226,14 +227,16 @@ class GmeTrainer:
                     optimizer.step()
                     # lr = optimizer.state_dict()['param_groups'][0]['lr']  # 学习率
                     lr = optimizer.param_groups[0]['lr']
-                    acc = MF.accuracy(preds=torch.cat(y_hats), target=torch.cat(ys), task="multilabel"
-                                      , num_labels=self.model.config.out_size)
+                    acc = MF.accuracy(preds=torch.cat(y_hats), target=torch.cat(ys), task='multiclass'
+                                      , num_classes=int(self.model.config.out_size))
+                    #
                     # report progress
                     pbar.set_description(
                         f"epoch {epoch + 1} iter {it}: train loss {loss.item():.5f}. "
                         f"lr {lr:e}. acc {acc:.5f}")
 
-            train_acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys))
+            train_acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys), task='multiclass'
+                                    , num_classes=int(self.model.config.out_size))
             preds = torch.cat(y_hats).cpu().detach().numpy()
             preds = np.argmax(preds, axis=1)
             targets = torch.cat(ys).cpu().detach().numpy()

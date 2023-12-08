@@ -247,10 +247,14 @@ class GraphTransfomer(nn.Module):
         # self.head = nn.Linear(config.n_embd, config.vocab_size, bias=True)
 
         self.blocks = nn.Sequential()
-        self.blocks.append(SelfAttention(config.n_embd * config.gnn_n_layer, int(config.n_embd * config.gnn_n_layer / 2),
-                                         config.n_head, use_bias=True))
-        self.blocks.append(SelfAttention(int(config.n_embd * config.gnn_n_layer / 2), config.n_embd, config.n_head, use_bias=True))
-        self.blocks.append(SelfAttention(config.n_embd, config.n_embd, config.n_head, use_bias=True))
+        self.blocks.add_module('at_1', SelfAttention(config.n_embd * config.gnn_n_layer
+                                                 , int(config.n_embd * config.gnn_n_layer / 2)
+                                                 , config.n_head, use_bias=True))
+        self.blocks.add_module('at_2', SelfAttention(int(config.n_embd * config.gnn_n_layer / 2)
+                                                 , config.n_embd, config.n_head
+                                                 , use_bias=True))
+        self.blocks.add_module('at_3', SelfAttention(config.n_embd, config.n_embd
+                                                 , config.n_head, use_bias=True))
 
         self.p_layer = nn.Linear(config.n_embd, config.out_size)
         self.apply(self._init_weights)
