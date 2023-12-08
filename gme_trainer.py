@@ -149,7 +149,7 @@ class GmeTrainer:
 
     # data
     def inference(self, data, idx, has_test_label=True, is_show=True, save_path=None):
-        model = self.model.module
+        model = self.model.module if hasattr(self.model, "module") else self.model
 
         graph = data[idx].to(self.device)
         geodata = data.dataset.geodata[idx]
@@ -304,8 +304,8 @@ class GmeTrainer:
         if 'out_put_grid_file_name' in self.config.kwargs.keys():
             vtk_file = self.config.kwargs['out_put_grid_file_name']
             vtk_file_path = os.path.join(self.config.output_dir, vtk_file)
-        visual_loss_picture(train_loss=train_loss_list, test_loss=val_loss_list, save_path=self.config.output_dir)
-        visual_acc_picture(train_acc=train_acc_list, test_acc=var_acc_list, save_path=self.config.output_dir)
+        # visual_loss_picture(train_loss=train_loss_list, test_loss=val_loss_list, save_path=self.config.output_dir)
+        # visual_acc_picture(train_acc=train_acc_list, test_acc=var_acc_list, save_path=self.config.output_dir)
         print('Testing...')
 
         acc = self.inference(self.gme_dataset, idx=data_split_idx, has_test_label=has_test_label,

@@ -25,14 +25,13 @@ def visual_predicted_values_model(geodata: GeoMeshGraphParse, cell_values, is_sh
         scalars = np.argmax(cell_values, axis=1)
     else:
         scalars = np.float32(cell_values)
-    gen_mesh = copy.deepcopy(geodata.data)
+    gen_mesh = copy.deepcopy(geodata.data.vtk_data)
     gen_mesh.vtk_data.cell_data['stratum'] = scalars
     if is_show:
         visual_multiple_model([geodata.data, gen_mesh])
     if save_path is not None:
         gen_mesh.vtk_data.save(filename=save_path)
     return gen_mesh
-
 
 
 def build_plot_from_horizon_metrics(scalar_means: np.ndarray, residual_means: np.ndarray,
@@ -211,11 +210,11 @@ def control_clip_with_spline(grid: Grid, lookup_table=None, spline_points: np.nd
         raise ValueError('Input data is not supported')
     if spline_points is None:
         bounds = mesh.bounds
-        spline_points = np.array([[bounds[0]*0.1, bounds[1]*0.1, bounds[2]*0.1],
-                                  [bounds[0]*0.3, bounds[1]*0.3, bounds[2]*0.3],
-                                  [bounds[0]*0.5, bounds[1]*0.5, bounds[2]*0.5],
-                                  [bounds[0]*0.7, bounds[1]*0.7, bounds[2]*0.7],
-                                  [bounds[0]*0.9, bounds[1]*0.9, bounds[2]*0.9]])
+        spline_points = np.array([[bounds[0] * 0.1, bounds[1] * 0.1, bounds[2] * 0.1],
+                                  [bounds[0] * 0.3, bounds[1] * 0.3, bounds[2] * 0.3],
+                                  [bounds[0] * 0.5, bounds[1] * 0.5, bounds[2] * 0.5],
+                                  [bounds[0] * 0.7, bounds[1] * 0.7, bounds[2] * 0.7],
+                                  [bounds[0] * 0.9, bounds[1] * 0.9, bounds[2] * 0.9]])
     plotter.add_mesh(mesh.outline(), color='black')
     actor = plotter.add_mesh_slice_spline(mesh, initial_points=spline_points, n_handles=len(spline_points))
     if save_path is not None:

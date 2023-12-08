@@ -57,7 +57,7 @@ if __name__ == '__main__':
 
     # initialize a trainer instance and kick off training
     # 模型训练相关参数    初始训练参数的设置
-    trainer_config = GmeTrainerConfig(max_epochs=5000, batch_size=512, num_workers=4, learning_rate=1e-4,
+    trainer_config = GmeTrainerConfig(max_epochs=850, batch_size=512, num_workers=4, learning_rate=1e-4,
                                       ckpt_path=os.path.join(root_path, 'processed', 'latest_tran.pth'),
                                       output_dir=os.path.join(root_path, 'output'),
                                       out_put_grid_file_name=os.path.join(gme_models.processed_dir, 'vtk_model.vtk'),

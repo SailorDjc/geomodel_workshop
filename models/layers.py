@@ -79,11 +79,10 @@ class SpacialConv(nn.Module):
     def edges_wight_process(self, edges):
         relative_pos = edges.dst['position'] - edges.src['position']
         spatial_scale = torch.norm(relative_pos, dim=1) + self.eps
-        # spatial_scale = spatial_scale.reshape(-1, 1)
-        # spatial_att = torch.add(relative_pos, 1)
-        # spatial_coeff = torch.div(spatial_att, spatial_scale)
-        # return {'e': spatial_coeff}
-        return {'e': spatial_scale}
+        spatial_scale = spatial_scale.reshape(-1, 1)
+        spatial_att = torch.add(relative_pos, 1)
+        spatial_coeff = torch.div(spatial_att, spatial_scale)
+        return {'e': spatial_coeff}
 
     # def message_func(self, edges):
     #     edge_weight_neigh = edges.data['e_sp_wight']
@@ -97,6 +96,7 @@ class SpacialConv(nn.Module):
     #     return {'neigh_h': neigh_h}
 
     def forward(self, graph, feat, edge_weight=None):
+
         # self._compatibility_check()
         with graph.local_scope():
             feat_src = feat_dst = self.feat_drop(feat)
