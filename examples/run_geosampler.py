@@ -3,7 +3,7 @@ from data_structure.grids import Grid
 import numpy as np
 from data_structure.data_sampler import GeoGridDataSampler
 from data_structure.boreholes import BoreholeSet, Borehole
-from utils.plot_utils import contorl_visibility_with_layer_label, control_threshold_with_scalars \
+from utils.plot_utils import control_visibility_with_layer_label, control_threshold_with_scalars \
     , control_clip_with_plane, control_clip_with_spline
 
 if __name__ == '__main__':

@@ -31,6 +31,14 @@ if __name__ == '__main__':
     path_1 = os.path.abspath('../..')
     root_path = os.path.join(path_1, 'geomodel_workshop-main')
 
+    root_path = os.path.abspath('..')
+    file_path = os.path.join(root_path, 'data', 'origin_borehole_data.dat')
+    # 从外部数据文本中加载钻孔数据
+    reader = ReadExportFile()
+    boreholes = reader.read_boreholes_data_from_text_file(dat_file_path=file_path)
+    boreholes.show(borehole_radius=10, is_tube=True)
+
+
     noddyData = NoddyModelData(root=r'F:\NoddyDataset', dataset_list=['FOLD_FOLD_FOLD'], max_model_num=10,
                                update_grid=False)
     noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0])  # 1 6

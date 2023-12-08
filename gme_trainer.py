@@ -170,7 +170,7 @@ class GmeTrainer:
                 y = model(blocks, x)
                 pred[output_nodes] = y.to(graph.device)
             scalars = np.argmax(pred.cpu().numpy(), axis=1)
-            gen_mesh = mvk.visual_predicted_values_model(geodata, pred, is_show=is_show, save_path=save_path)
+            mvk.visual_predicted_values_model(geodata, pred, is_show=is_show, save_path=save_path)
 
             if has_test_label:
                 test_idx = data.test_idx[idx]

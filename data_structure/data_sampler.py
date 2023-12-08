@@ -136,6 +136,7 @@ class GeoGridDataSampler(object):
             y_r = (bounds[3] - bounds[2]) / dims[1]
             z_r = (bounds[5] - bounds[4]) / dims[2]
             cell_density = np.array([x_r, y_r, z_r])
+        # 设置钻孔控制缓冲半径
         boreholes.set_boreholes_control_buffer_dist_xy(radius=1.5 * (cell_density[0] + cell_density[1]))
         grid = Grid(name='gme_base_grid', grid_vtk=external_grid)
         if external_grid is None:
@@ -227,7 +228,7 @@ class GeoGridDataSampler(object):
             self.sample_operator = ['None']
         else:
             self.sample_operator.append('None')
-        self.set_map_points_data_labels_to_base_grid(points_data=pointsdata)
+        self.set_map_points_data_labels_to_base_grid(points_data=points_data)
 
     # 将散点采样标签映射到空白网格上
     def set_map_points_data_labels_to_base_grid(self, points_data: PointSet):
@@ -238,6 +239,7 @@ class GeoGridDataSampler(object):
         grid_points = pv.PolyData(self.grid.grid_points)
         new_point_data_list = []
         for p_it, one_point in enumerate(sample_points):
+            # 设置一个带有缓冲半径的球体
             sphere_surface = pv.Sphere(radius=buffer_dist, center=one_point)
             cell_indices = grid_points.select_enclosed_points(sphere_surface)
             cell_indices = cell_indices.point_data['SelectedPoints']
@@ -285,6 +287,7 @@ class GeoGridDataSampler(object):
             line_direction_norm = line_direction / np.linalg.norm(line_direction)
             height = np.linalg.norm(hole_top_pos - hole_bottom_pos)
             radius = one_borehole.buffer_dist_xy
+            # 设置一个带有一定缓冲半径的椭圆柱
             cylinder_surface = pv.Cylinder(center=line_center, direction=line_direction_norm
                                            , height=height, radius=radius, capping=True)
             cylinder_surface = cylinder_surface.extract_surface()
@@ -443,10 +446,14 @@ class GeoGridDataSampler(object):
         for s_i in np.arange(section_num):
             section = Section()
             surface = section.prob_volume(grid=self._grid, surf=section.create_surface_along_axis(along_axis=sample_axis
-                                                                                       , scroll_scale=scroll_size[s_i]
-                                                                                       , resolution_xy=resolution_xy
-                                                                                       , resolution_z=resolution_z
-                                                                                       , grid_bounds=self.bounds))
+                                                                                                  , scroll_scale=
+                                                                                                  scroll_size[s_i]
+                                                                                                  ,
+                                                                                                  resolution_xy=resolution_xy
+                                                                                                  ,
+                                                                                                  resolution_z=resolution_z
+                                                                                                  ,
+                                                                                                  grid_bounds=self.bounds))
             section.set_surface(surf=surface)
             section_list.append(section)
         self.sample_data_list.append(section_list)

@@ -86,7 +86,7 @@ def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None,
 
 
 class GmeModelGraphList(object):
-    def __init__(self, name, root, grid_data: list = None,
+    def __init__(self, name, root, grid_data: list = None, sample_data: list = None,
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
                  dgl_graph_param=None, update_graph=False, **kwargs):
         # 注：.dat文件格式与Voxler软件一致
@@ -94,6 +94,7 @@ class GmeModelGraphList(object):
             dgl_graph_param = [['position'], None]  # [[node_feat], [edge_feat]]
         # 外部传入参数
         self.grid_data = grid_data  # Grid
+        self.sample_data = sample_data
         self.dgl_graph_param = dgl_graph_param  # 图节点特征、边特征类型参数
         self.sample_operator = sample_operator  # ['rand_drills', 'axis_sections'] 设置已知数据采样方式
         self.self_loop = self_loop  # 添加自环
@@ -178,6 +179,31 @@ class GmeModelGraphList(object):
                 self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
             self.num_classes['labels'].extend(labels_num_list)
             self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
+        elif self.sample_data is not None:
+            for data_index in np.arange(len(self.sample_data)):
+                if isinstance(self.sample_data[data_index], BoreholeSet):
+                    geodata = GeoMeshGraphParse(sample_data=self.sample_data[data_index], name='boreholes')
+                    dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
+                                                feat_normalize=True, **self.kwargs)
+                    # 对标签进行处理
+                    label_num = geodata.classes_num
+                    labels_num_list.append(label_num)
+                    # 已存储数据集
+                    pre_save_graph_num = len(self.graph)
+                    is_connected = geodata.is_connected_graph()
+                    print('is_connected:', is_connected)
+                    self.geodata.append(geodata)
+                    dgl_graph_list.append(dgl_graph)
+                    self.update_graph_log(model_name='boreholes',
+                                          save_idx=data_index + pre_save_graph_num,
+                                          node_feat=self.dgl_graph_param[0], edge_feat=self.dgl_graph_param[1],
+                                          edge_num=dgl_graph.num_edges(), node_num=dgl_graph.num_nodes())
+                    save_flag = True
+                self.graph.extend(dgl_graph_list)
+                if torch.is_tensor(self.num_classes['labels']):
+                    self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
+                self.num_classes['labels'].extend(labels_num_list)
+                self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
         # 数据存储
         if save_flag is True:
             print('Saving...')

@@ -17,6 +17,19 @@ def compute_nearest_neighbor_dist_from_pts(coords: np.ndarray):
     return neigh_dist
 
 
+def merge_bounds(bounds_a: np.ndarray, bounds_b: np.ndarray):
+    assert len(bounds_a) == 6, "bounds size should be 6"
+    assert len(bounds_b) == 6, "bounds size should be 6"
+    min_x = min(bounds_a[0], bounds_b[0])
+    min_y = min(bounds_a[2], bounds_b[2])
+    min_z = min(bounds_a[4], bounds_b[4])
+    max_x = max(bounds_a[1], bounds_b[1])
+    max_y = max(bounds_a[3], bounds_b[3])
+    max_z = max(bounds_a[5], bounds_b[5])
+    bounds = np.array([min_x, max_x, min_y, max_y, min_z, max_z])
+    return bounds
+
+
 # 获取点云数据集的包围盒
 # Parameters: coords 输入是np.array 的二维数组，且坐标是3D坐标
 # xy_buffer z_buffer 为大于0的浮点数，是包围盒的缓冲距离
@@ -89,8 +102,9 @@ class PointSet(object):
         self.scalar_color_map = {}  # 根据scalar的值范围确定颜色  self.set_color_with_label=False
         self.color_mode = 1  # set_color_with_label
         self.epsilon = 0.00001  # 足够小，作为距离阈值
-
+        # vtk数据唯一性编码
         self.tmp_dump_str = 'tmp' + str(int(time.time()))
+        self.buffer_dist = 5  # 点控制缓冲半径
 
     def is_empty(self):
         if self.points is not None and self.labels is not None:
@@ -233,6 +247,11 @@ class PointSet(object):
     def transform_vectors(self, scale):
         assert self.vectors is not None, "there are no vectors"
         self.vectors = scale.transform(self.vectors)
+
+    # 缓冲半径
+    def set_points_control_buffer_dist(self, radius: float):
+        if radius > 0:
+            self.buffer_dist = radius
 
     def set_points(self, points: np.ndarray):
         self.points = points

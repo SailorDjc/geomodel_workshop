@@ -29,27 +29,24 @@ import tetgen
 
 
 class GeoMeshGraphParse(object):
-    def __init__(self, mesh: Grid = None, name=None, is_regular_grid=True):  # , pre_train=True
-        self.data = mesh
+    def __init__(self, mesh: Grid = None, sample_data=None, name=None, is_normalize=False):  # , pre_train=True
         self.name = name
-        self.is_normalize = False  # 坐标是否归一化
-        #
-        self.center = mesh.center  # 输入mesh的中心点坐标
-        # ori 即输入的原始地质格网数据, 原始模型数据均不做更改，坐标、标签变换在 sample数据中进行
-        self.grid_points = mesh.grid_points
-        self.grid_points_series = mesh.grid_points_series
-
-        self.classes_num = mesh.classes_num  # np.array
-
-        #
+        self.is_normalize = is_normalize  # 坐标是否归一化
+        self.data = mesh
+        if mesh is not None:
+            self.center = mesh.center  # 输入mesh的中心点坐标
+            # ori 即输入的原始地质格网数据, 原始模型数据均不做更改，坐标、标签变换在 sample数据中进行
+            self.grid_points = mesh.grid_points
+            self.grid_points_series = mesh.grid_points_series
+            self.classes_num = mesh.classes_num  # np.array
+        # 图参数
         self.is_create_graph = False  # 为False是外部传入图数据，内部无需构建，为True则是内部构建图
         self.edge_list = None  # list 边集（采样数据，包括训练数据与测试数据）
-
         # 训练数据样本构建，随机散点、钻孔、剖面，作为带标签数据输入模型进行训练
         self.train_data_indexes = None  # list 训练数据的idx索引, 对应self.grid_points
         self.train_data_proportion = 0  # 已知标签数据比例
-        self.sample_data = None  # 采样数据(类型为散点、钻孔、剖面)
-
+        # 可以外部输入，或从网格中进行采样
+        self.sample_data = sample_data  # 采样数据(类型为散点、钻孔、剖面)
         # 图特征  下面两个变量用来装数据
         self.node_feat = None  # 图节点特征    np.float32
         self.edge_feat = None  # 图边特征      np.float32
@@ -64,7 +61,10 @@ class GeoMeshGraphParse(object):
         # 对标签标准化处理
         # self.map_grid_vertex_labels()
         # 选择测试模型的样本形式
-        self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, **kwargs)
+        if self.data is not None:
+            self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, **kwargs)
+        elif self.sample_data is not None:
+            self.set_geo_sample_data(sample_data=self.sample_data)
         # 生成三角网剖分
         self.get_triangulate_edges()
         # 生成边权重，以距离作为边权
@@ -79,10 +79,26 @@ class GeoMeshGraphParse(object):
 
     # 设置虚拟地质采样切分以获取训练集
     def set_virtual_geo_sample(self, grid: Grid, sample_operator=None, **kwargs):
+        if sample_operator is None:
+            sample_operator = ['None']
         geo_grid_sampler = GeoGridDataSampler(grid=grid, sample_operator=sample_operator, **kwargs)
         geo_grid_sampler.execute(**kwargs)
         self.sample_data = geo_grid_sampler
         self.train_data_indexes = geo_grid_sampler.get_sample_points_indexex_for_grid_points()
+        if self.train_data_indexes is not None and len(self.train_data_indexes) > 0:
+            self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
+            print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
+
+    def set_geo_sample_data(self, sample_data: BoreholeSet, **kwargs):
+        # 将钻孔数据映射到空网格上
+        geo_borehole_sample = GeoGridDataSampler(**kwargs)
+        geo_borehole_sample.set_base_grid_by_boreholes(boreholes=sample_data, dims=np.array([80, 80, 50]))
+        geo_borehole_sample.execute()
+        self.data = geo_borehole_sample.grid
+        self.grid_points = self.data.grid_points
+        self.grid_points_series = self.data.grid_points_series
+        self.classes_num = self.data.classes_num  # np.array
+        self.train_data_indexes = geo_borehole_sample.get_sample_points_indexex_for_grid_points()
         if self.train_data_indexes is not None and len(self.train_data_indexes) > 0:
             self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
@@ -102,7 +118,6 @@ class GeoMeshGraphParse(object):
             node_label = torch.from_numpy(node_label).to(torch.float32)
         else:
             node_label = torch.from_numpy(node_label).to(torch.long)
-
         print('Processing graphs...')
         graph = dict()
         # handling edge
@@ -111,22 +126,17 @@ class GeoMeshGraphParse(object):
             duplicated_edge = np.repeat(edge_list[:, 0:num_edge], 2, axis=1)
             duplicated_edge[0, 1::2] = duplicated_edge[1, 0::2]
             duplicated_edge[1, 1::2] = duplicated_edge[0, 0::2]
-
             graph['edge_index'] = duplicated_edge
-
             if edge_feat is not None:
                 graph['edge_feat'] = np.repeat(edge_feat[0:num_edge], 2, axis=0)
             else:
                 graph['edge_feat'] = None
-
         else:
             graph['edge_index'] = edge_list[:, 0:num_edge]
-
             if edge_feat is not None:
                 graph['edge_feat'] = edge_feat[0:num_edge]
             else:
                 graph['edge_feat'] = None
-
         # handling node
         if node_feat is not None:
             graph['node_feat'] = node_feat[0:num_node]
@@ -138,14 +148,10 @@ class GeoMeshGraphParse(object):
         else:
             sample_points = np.float32(self.grid_points)
         graph['position'] = sample_points[0:num_node]
-
         graph['num_nodes'] = num_node
-
         g = dgl.graph((graph['edge_index'][0], graph['edge_index'][1]), num_nodes=graph['num_nodes'])
-
         if graph['edge_feat'] is not None:
             g.edata['feat'] = torch.from_numpy(graph['edge_feat'])
-
         if graph['node_feat'] is not None:
             g.ndata['feat'] = torch.from_numpy(graph['node_feat'])
         if graph['position'] is not None:

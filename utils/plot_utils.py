@@ -77,7 +77,7 @@ colors_default = ["ff0000", "28e5da", "0000ff", "ffff00", "c8bebe", "f79292", "f
 # 控制每个地层的可见性， 可以展示钻孔与地质格网模型：
 # geo_object_list:  list
 # 输入参数为列表，[BoreholeSet, Grid]， 目前支持BoreholeSet和Grid两种类型的数据
-def contorl_visibility_with_layer_label(geo_object_list, lookup_table=None, grid_smooth=False, show_edge=False):
+def control_visibility_with_layer_label(geo_object_list, lookup_table=None, grid_smooth=False, show_edge=False):
     plotter = pv.Plotter()
     startpos_y = 12.0
     startpos_x = 5.0
