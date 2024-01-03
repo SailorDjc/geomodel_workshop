@@ -12,6 +12,7 @@ from data_structure.boreholes import BoreholeSet, Borehole
 from utils.vtk_utils import add_np_property_to_vtk_object
 import time
 import os
+import pickle
 
 
 # 1. 外部输入vtk剖面数据
@@ -26,7 +27,7 @@ import os
 #   name:             剖面名称，若存在外部输入vtk文件，且name未指定，则以vtk文件名作为name
 class Section(object):
     def __init__(self, vtk_data=None, vtk_data_path=None, points: np.ndarray = None, series: np.ndarray = None
-                 , sample_spacing=None, sample_grid=None, name=None):
+                 , sample_spacing=None, sample_grid=None, name=None, dir_path=None):
         self.name = name
         # if points is not None and series is not None:
         self.points = points
@@ -47,7 +48,7 @@ class Section(object):
         self.classes_num = 0
         self.label_dict = None
 
-        self.tmp_dump_str = 'tmp' + str(int(time.time()))
+        self.tmp_dump_str = 'tmp_sec' + str(int(time.time()))
         # 如果存在外部输入的vtk剖面数据
         if vtk_data is not None or (vtk_data_path is not None and os.path.exists(vtk_data_path)):
             self.vtk_data = vtk_data
@@ -79,6 +80,23 @@ class Section(object):
             self.prob_volume(grid=sample_grid, surf=new_surf)
             # 从vtk数据中获取标签
             self.standardize_labels_from_vtk_data()
+
+        self.dir_path = dir_path
+
+    def save_object(self, dir_path=None):
+        file_path = os.path.join(dir_path, self.tmp_dump_str)
+        out_put = open(file_path, 'wb')
+        self.save(dir_path=dir_path)
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
+
+    # pnt_file: png图片路径
+    # corner_coordinates: 角点坐标,用来配准
+    # pixel_label_dict: 像素值-标签字典
+    def set_input_pngdata(self, png_file, corner_coordinates, pixel_label_dict):
+        pass
 
     def get_points_data(self):
         points_data = PointSet(points=self.points, point_labels=self.series)
@@ -345,6 +363,7 @@ class Section(object):
         return line_points
 
     def save(self, dir_path: str):
+        self.dir_path = dir_path
         if self.vtk_data is not None and isinstance(self.vtk_data, pv.PolyData):
             save_path = os.path.join(dir_path, self.tmp_dump_str)
             self.vtk_data.save(filename=save_path + '.vtk')
@@ -352,6 +371,7 @@ class Section(object):
 
     def load(self, dir_path: str):
         save_path = os.path.join(dir_path, self.tmp_dump_str)
+        self.dir_path = dir_path
         if self.vtk_data == 'dumped':
             if os.path.exists(save_path + '.vtk'):
                 self.vtk_data = pv.read(filename=save_path + '.vtk')
@@ -360,10 +380,21 @@ class Section(object):
 
 
 class SectionSet(object):
-    def __init__(self, name=None):
+    def __init__(self, name=None, dir_path=None):
         self.sections = []
         self.sections_num = 0
         self.name = name
+        self.dir_path = dir_path
+        self.tmp_dump_str = 'tmp_secs' + str(int(time.time()))
+
+    def save_object(self, dir_path=None):
+        file_path = os.path.join(dir_path, self.tmp_dump_str)
+        out_put = open(file_path, 'wb')
+        self.save(dir_path=dir_path)
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
     def append(self, section: Section):
         self.sections.append(section)
@@ -382,17 +413,22 @@ class SectionSet(object):
             raise ValueError('The input index is out of range.')
         return self.sections[idx]
 
+    def __len__(self):
+        return len(self.sections)
+
     def __getitem__(self, idx):
-        return self.sections[idx]
+        return self.get_section(idx)
 
     def save(self, dir_path: str):
+        self.dir_path = dir_path
         for s_id in np.arange(len(self.sections)):
             self.sections[s_id].save(dir_path=dir_path)
             self.sections[s_id] = 'dumped'
 
-    def load(self):
+    def load(self, dir_path: str):
+        self.dir_path = dir_path
         for s_id in np.arange(len(self.sections)):
-            self.sections[s_id].load()
+            self.sections[s_id].load(dir_path=dir_path)
 
 
 if __name__ == "__main__":

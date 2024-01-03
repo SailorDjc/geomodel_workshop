@@ -1,6 +1,4 @@
-import torch
 import numpy as np
-from torch.utils.data import Dataset
 import pyvista as pv
 import copy
 import scipy.spatial as spt
@@ -8,6 +6,7 @@ from data_structure.points import get_bounds_from_coords, PointSet
 import pandas as pd
 import time
 import os
+import pickle
 
 
 # 检查list中元素类型是否一致
@@ -24,7 +23,7 @@ def check_list_item_instance(x: list) -> bool:
 # 钻孔结构
 class Borehole(object):
     def __init__(self, points: np.ndarray = None, series: np.ndarray = None, is_vertical=True, is_virtual=False
-                 , radius=None, buffer_dist_xy=None, default_base=None, borehole_id=None):
+                 , radius=None, buffer_dist_xy=5, default_base=None, borehole_id=None):
         self.points = points
         self.points_num = 0
         self.series = series  # 地层标签
@@ -59,6 +58,7 @@ class Borehole(object):
             self.azimuth = azimuth  # 测斜数据(垂直孔不需要)
             self.dip = dip  # 倾角
             self.layer_label = layer_label  # 地层编号(编码)
+            self.layer_label_old = layer_label  # 作为老标签的备份，在标签标准化后，值不变
             self.is_virtual = is_virtual  # 是否是虚拟地层
             self.buffer_dist_xy = buffer_dist_xy  # 钻孔控制范围
 
@@ -148,31 +148,41 @@ class Borehole(object):
         if self.points is not None:
             return copy.deepcopy(self.points[0])
 
-    # 判断一个点属于钻孔的哪一个分层
-    def get_layer_label_with_point_z(self, point: np.ndarray):
-        if point.ndim == 2 and point.shape[1] == 3:
-            for l_id, layer in enumerate(self.holelayer_list):
-                # 判断输入点xy坐标是否在钻孔中心点一定范围内
-
-                if layer.bottom_pos < point[2] <= layer.top_pos:
-                    label = layer.layer_label
-                    is_virtual = layer.is_virtual
-                    return label, is_virtual
-                elif point[2] == layer.bottom_pos and l_id == len(self.holelayer_list) - 1:
-                    label = layer.layer_label
-                    is_virtual = layer.is_virtual
-                    return label, is_virtual
+    # 判断一个点属于钻孔的哪一个分层，若返回-1则在钻孔控制深度之下，若为-2则在地表之上
+    def get_layer_label_with_point_z(self, point_value):
+        pnt_z = None
+        if isinstance(point_value, np.ndarray):
+            if point_value.ndim == 2 and point_value.shape[1] == 3:
+                pnt_z = point_value[2]
+        elif isinstance(point_value, int):
+            pnt_z = point_value
         else:
-            raise ValueError('Input data must be a 3D point.')
+            raise ValueError('Input data must be a 3D point or Integer z value.')
+        if pnt_z is None:
+            raise ValueError('Input data is not supported.')
+        layer_label = -2
+        for l_id, layer in enumerate(self.holelayer_list):
+            # 判断输入点xy坐标是否在钻孔中心点一定范围内
+            if layer.bottom_pos[2] < pnt_z <= layer.top_pos[2]:
+                layer_label = layer.layer_label
+            elif pnt_z <= layer.bottom_pos[2] and l_id == len(self.holelayer_list) - 1:
+                layer_label = -1
+        return layer_label
 
     # 钻孔加密，有两种方式，一种是设定采样间隔，按等距离加密，一种是指定每层加密点数
-    def boreholes_points_densify(self, dist=None, add_pnt_num_per_layer=None):
-        # 根据间距采样
-        if dist is not None and add_pnt_num_per_layer is None:
-            pass
-        # 根据每层采样点数目采样
-        if add_pnt_num_per_layer is not None and dist is None:
-            pass
+    def boreholes_points_densify(self, dist: float = None, pnt_num_per_layer: int = None):
+        new_points = []
+        new_labels = []
+        for l_id, layer in enumerate(self.holelayer_list):
+            top = self.holelayer_list[l_id].top_pos
+            bottom = self.holelayer_list[l_id].bottom_pos
+            label = self.holelayer_list[l_id].layer_label
+            # 根据间距采样
+            if dist is not None:
+                pass
+            # 根据每层采样点数目采样
+            elif pnt_num_per_layer is not None:
+                pass
 
     # 判断一个点是否在钻孔的控制范围内
     def check_point_belong_borehole(self, point: np.ndarray):
@@ -198,9 +208,9 @@ class Borehole(object):
 
 
 # 钻孔集
-class BoreholeSet(Dataset):
+class BoreholeSet(object):
     def __init__(self, points: np.ndarray = None, series: np.ndarray = None, borehole_idx: np.ndarray = None
-                 , radius: float = 10, name=None):
+                 , radius: float = 10, name=None, dir_path=None):
         self.name = name
         self.points = points  # 二维
         self.points_num = 0
@@ -216,7 +226,7 @@ class BoreholeSet(Dataset):
 
         self.vtk_data = None
 
-        self.tmp_dump_str = 'tmp' + str(int(time.time()))
+        self.tmp_dump_str = 'tmp_hole' + str(int(time.time()))
 
         # 通过坐标数组和标签数组，初始化钻孔
         if self.points is not None and self.series is not None and self.boreholes_index is not None:
@@ -236,6 +246,18 @@ class BoreholeSet(Dataset):
                     self.boreholes_list.append(one_borehole)
                     self.borehole_num += 1
                     start_iter += cur_borehole_pn  # 更新索引
+
+            # 对象拷贝
+        self.dir_path = dir_path
+
+    def save_object(self, dir_path=None):
+        file_path = os.path.join(dir_path, self.tmp_dump_str)
+        out_put = open(file_path, 'wb')
+        self.save(dir_path=dir_path)
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
     def get_classes(self):
         if self.classes is None:
@@ -509,6 +531,7 @@ class BoreholeSet(Dataset):
         return self.boreholes_list[idx]
 
     def save(self, dir_path: str):
+        self.dir_path = dir_path
         if self.vtk_data is not None and isinstance(self.vtk_data, pv.MultiBlock):
             num = self.vtk_data.n_blocks
             if num > 0:
@@ -519,6 +542,7 @@ class BoreholeSet(Dataset):
     def load(self, dir_path: str):
         if self.vtk_data == 'dumped':
             save_path = os.path.join(dir_path, self.tmp_dump_str)
+            self.dir_path = dir_path
             if os.path.exists(save_path + '.vtm'):
                 self.vtk_data = pv.read(filename=save_path + '.vtm')
             else:

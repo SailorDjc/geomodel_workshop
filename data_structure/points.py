@@ -6,7 +6,7 @@ import copy
 from sklearn.cluster import DBSCAN
 import time
 import os
-
+import pickle
 from typing import List
 
 
@@ -17,7 +17,7 @@ def compute_nearest_neighbor_dist_from_pts(coords: np.ndarray):
     return neigh_dist
 
 
-def merge_bounds(bounds_a: np.ndarray, bounds_b: np.ndarray):
+def merge_bounds(bounds_a, bounds_b):  # : np.ndarray
     assert len(bounds_a) == 6, "bounds size should be 6"
     assert len(bounds_b) == 6, "bounds size should be 6"
     min_x = min(bounds_a[0], bounds_b[0])
@@ -79,7 +79,7 @@ def concat_coords_from_datasets(*datasets):
 
 class PointSet(object):
     def __init__(self, points: np.ndarray = None, point_labels: np.ndarray = None, vectors: np.ndarray = None
-                 , name=None):
+                 , name=None, dir_path=None):  # dir_path 数据默认保存文件夹
         self.name = name
         self.points = points
         self.labels = point_labels
@@ -103,8 +103,19 @@ class PointSet(object):
         self.color_mode = 1  # set_color_with_label
         self.epsilon = 0.00001  # 足够小，作为距离阈值
         # vtk数据唯一性编码
-        self.tmp_dump_str = 'tmp' + str(int(time.time()))
+        self.tmp_dump_str = 'tmp_pnt' + str(int(time.time()))
         self.buffer_dist = 5  # 点控制缓冲半径
+        # 对象拷贝
+        self.dir_path = dir_path
+
+    def save_object(self, dir_path=None):
+        file_path = os.path.join(dir_path, self.tmp_dump_str)
+        out_put = open(file_path, 'wb')
+        self.save(dir_path=dir_path)
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
     def is_empty(self):
         if self.points is not None and self.labels is not None:
@@ -341,6 +352,7 @@ class PointSet(object):
         return self.points[idx]
 
     def save(self, dir_path: str):
+        self.dir_path = dir_path
         save_path = os.path.join(dir_path, self.tmp_dump_str)
         if self.vtk_point_data is not None and isinstance(self.vtk_point_data, pv.PolyData):
             self.vtk_point_data.save(filename=save_path + '_p.vtk')
@@ -351,6 +363,7 @@ class PointSet(object):
 
     def load(self, dir_path: str):
         save_path = os.path.join(dir_path, self.tmp_dump_str)
+        self.dir_path = dir_path
         if self.vtk_point_data == 'dumped':
             if os.path.exists(save_path + '_p.vtk'):
                 self.vtk_point_data = pv.read(filename=save_path + '_p.vtk')

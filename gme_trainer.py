@@ -7,7 +7,7 @@ import dgl
 import pyvista
 from tqdm import tqdm
 import numpy as np
-from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
+from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler, DistNodeDataLoader
 import torch
 import torch.nn.functional as F
 import torchmetrics.functional as MF
@@ -86,7 +86,7 @@ class GmeTrainer:
     # model
     # config: GmeTrainerConfig
 
-    def __init__(self, model, gme_dataset, config):
+    def __init__(self, model, gme_dataset, config: GmeTrainerConfig):
         self.model = model
         self.gme_dataset = gme_dataset
         self.train_dataset = None
@@ -148,16 +148,16 @@ class GmeTrainer:
         torch.save(raw_model.state_dict(), self.config.ckpt_path)
 
     # data
-    def inference(self, data, idx, has_test_label=True, is_show=True, save_path=None):
+    def inference(self, data, idx, has_test_label=True, is_show=False, save_path=None):
         model = self.model.module if hasattr(self.model, "module") else self.model
 
         graph = data[idx].to(self.device)
-        geodata = data.dataset.geodata[idx]
+        geograph = data.dataset.geograph[idx]
         nodes = torch.arange(graph.number_of_nodes())
         sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.config.gnn_n_layer,
                                                                 prefetch_node_feats=['feat'],
                                                                 prefetch_labels=['label'])
-        test_dataloader = dgl.dataloading.NodeDataLoader(
+        test_dataloader = dgl.dataloading.DataLoader(
             graph, nodes.to(graph.device), sampler, device=self.device,
             batch_size=self.config.batch_size, shuffle=True,
             drop_last=False
@@ -170,14 +170,14 @@ class GmeTrainer:
                 y = model(blocks, x)
                 pred[output_nodes] = y.to(graph.device)
             scalars = np.argmax(pred.cpu().numpy(), axis=1)
-            mvk.visual_predicted_values_model(geodata, pred, is_show=is_show, save_path=save_path)
+            mvk.visual_predicted_values_model(geograph, pred, is_show=is_show, save_path=save_path)
 
             if has_test_label:
                 test_idx = data.test_idx[idx]
                 pred_test = pred[test_idx]
                 label_test = graph.ndata['label'][test_idx].to(pred_test.device)
                 accuracy = MF.accuracy(pred_test, label_test, task='multiclass'
-                                       , num_classes=int(self.model.config.out_size))
+                                       , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
                 return accuracy.item()
             return 0
 
@@ -193,11 +193,11 @@ class GmeTrainer:
         #                                            threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1e-8,
         #                                            eps=1e-08)
 
-        def run_epoch(split, idx):
+        def run_epoch(split, data_idx):
             # 判断dataset是train()传入，还是self.dataset，self.datatset用于作预训练，tran()传入作为实际应用。
             is_train = split == 'train'
             # if self.train_dataset is None or self.val_dataset is None:
-            self.train_dataset, self.val_dataset = self.preprocess_input(self.gme_dataset, idx)
+            self.train_dataset, self.val_dataset = self.preprocess_input(self.gme_dataset, data_idx)
             model.train(is_train)  # train(false) 等价于 eval()
             loader = self.train_dataset if is_train else self.val_dataset
 
@@ -228,15 +228,15 @@ class GmeTrainer:
                     # lr = optimizer.state_dict()['param_groups'][0]['lr']  # 学习率
                     lr = optimizer.param_groups[0]['lr']
                     acc = MF.accuracy(preds=torch.cat(y_hats), target=torch.cat(ys), task='multiclass'
-                                      , num_classes=int(self.model.config.out_size))
-                    #
+                                      , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
+                    #.num_classes['labels'][model_idx]
                     # report progress
                     pbar.set_description(
                         f"epoch {epoch + 1} iter {it}: train loss {loss.item():.5f}. "
                         f"lr {lr:e}. acc {acc:.5f}")
 
             train_acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys), task='multiclass'
-                                    , num_classes=int(self.model.config.out_size))
+                                    , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
             preds = torch.cat(y_hats).cpu().detach().numpy()
             preds = np.argmax(preds, axis=1)
             targets = torch.cat(ys).cpu().detach().numpy()

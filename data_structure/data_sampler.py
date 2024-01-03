@@ -2,6 +2,7 @@ from data_structure.grids import Grid
 from data_structure.sections import SectionSet, Section
 from data_structure.boreholes import BoreholeSet, Borehole
 from data_structure.points import PointSet, get_bounds_from_coords
+from data_structure.geodata import GeodataSet
 import numpy as np
 import random
 import copy
@@ -42,7 +43,9 @@ class GeoGridDataSampler(object):
             self.bounds = grid.bounds
         self.sample_num = 0  # 采样次数
         self.sample_data_list = []  # 采样数据
+        self.map_flag = False
         self.kwargs = kwargs
+        self.default_value = -1
 
     @property
     def grid(self):
@@ -124,20 +127,56 @@ class GeoGridDataSampler(object):
             raise ValueError('The input index is out of range.')
         return self.sample_data_list[idx]
 
+    # 混合数据集, 目前支持钻孔和散点
+    def set_base_grid_by_geodataset(self, geodataset: GeodataSet, dims: np.ndarray, bounds: np.ndarray = None
+                                    , cell_resolution: np.ndarray = None, is_regular=True, external_grid=None):
+        if bounds is None:
+            bounds = geodataset.bounds
+        grid = Grid(name='gme_base_grid', grid_vtk=external_grid)
+        if cell_resolution is not None:
+            if not np.all(cell_resolution):
+                raise ValueError("Cell resolution array can't exist 0.")
+            if cell_resolution.shape[0] < 3:
+                raise ValueError("Cell resolution array should be triple element data.")
+            dims = np.divide(np.array([bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4]]),
+                             cell_resolution)
+        if external_grid is None:
+            if dims is None:
+                raise ValueError('Need to specify the size of the grid.')
+            if is_regular:
+                sample_grid = grid.create_vtk_grid_by_rect_bounds(dim=dims, bounds=bounds)
+            else:
+                convexhull_2d = geodataset.get_points_data().get_convexhull_2d()
+                sample_grid = grid.create_vtk_grid_by_unregular_bounds(dims=dims, bounds=bounds
+                                                                       , convexhull_2d=convexhull_2d
+                                                                       , cell_density=cell_resolution)
+            grid.set_vtk_grid(grid_vtk=sample_grid)
+            self.grid = grid
+            if self.sample_operator is None:
+                self.sample_operator = ['None']
+            else:
+                self.sample_operator.append('None')
+            for sample_data in geodataset.geodata_list:
+                if sample_data.__class__.__name__ == 'PointSet':
+                    self.set_map_points_data_labels_to_base_grid(points_data=sample_data)
+                if sample_data.__class__.__name__ == 'BoreholeSet':
+                    self.set_map_boreholes_labels_to_base_grid(boreholes=sample_data)
+            #
+
     # 已知部分钻孔，根据给定范围创建规则网格，钻孔控制范围内的网格点赋予标签，范围外的网格点无标签。
     def set_base_grid_by_boreholes(self, boreholes: BoreholeSet, dims: np.ndarray, bounds: np.ndarray = None
-                                   , cell_density: np.ndarray = None, is_regular=True, external_grid=None):
+                                   , cell_resolution: np.ndarray = None, is_regular=True, external_grid=None):
         if bounds is None:
             bounds = boreholes.bounds
         if dims.shape[0] != 3:
             raise ValueError('This method can only set three dimensions grid.')
-        if cell_density is None:
+        if cell_resolution is None:
             x_r = (bounds[1] - bounds[0]) / dims[0]
             y_r = (bounds[3] - bounds[2]) / dims[1]
             z_r = (bounds[5] - bounds[4]) / dims[2]
             cell_density = np.array([x_r, y_r, z_r])
         # 设置钻孔控制缓冲半径
-        boreholes.set_boreholes_control_buffer_dist_xy(radius=1.5 * (cell_density[0] + cell_density[1]))
+        boreholes.set_boreholes_control_buffer_dist_xy(radius=float(1.5 * (cell_resolution[0] + cell_resolution[1])))
         grid = Grid(name='gme_base_grid', grid_vtk=external_grid)
         if external_grid is None:
             if is_regular:
@@ -146,7 +185,7 @@ class GeoGridDataSampler(object):
                 convexhull_2d = boreholes.get_points_data().get_convexhull_2d()
                 sample_grid, grid_outline = grid.create_vtk_grid_by_unregular_bounds(dims=dims, bounds=bounds
                                                                                      , convexhull_2d=convexhull_2d
-                                                                                     , cell_density=cell_density)
+                                                                                     , cell_density=cell_resolution)
             # 将钻孔点标签映射到格网上，未知标签的格网点值默认为-1
             grid.set_vtk_grid(grid_vtk=sample_grid)
         self.grid = grid
@@ -232,7 +271,10 @@ class GeoGridDataSampler(object):
 
     # 将散点采样标签映射到空白网格上
     def set_map_points_data_labels_to_base_grid(self, points_data: PointSet):
-        cells_series = np.full((len(self.grid.grid_points),), fill_value=-1)
+        if self.map_flag:
+            cells_series = self._grid.grid_points_series
+        else:
+            cells_series = np.full((len(self.grid.grid_points),), fill_value=self.default_value)
         sample_points = points_data.points
         sample_labels = points_data.labels
         buffer_dist = points_data.buffer_dist
@@ -256,6 +298,7 @@ class GeoGridDataSampler(object):
         new_point_data = PointSet()
         for data in new_point_data_list:
             new_point_data.append(data)
+        self.map_flag = True
         self.sample_data_list.append(new_point_data)
         self.sample_num += 1
         self._grid.grid_points_series = cells_series
@@ -264,10 +307,14 @@ class GeoGridDataSampler(object):
         self._grid.classes_num = len(self.grid.classes)
 
     # 将钻孔采样标签映射到空白网格上
+    # 会将钻孔存入 sample_data_list
     def set_map_boreholes_labels_to_base_grid(self, boreholes: BoreholeSet):
         # 遍历钻孔每一个分段，寻找与base_grid的交集
         # 默认 -1 为未知值
-        cells_series = np.full((len(self.grid.grid_points),), fill_value=-1)
+        if self.map_flag:
+            cells_series = self._grid.grid_points_series
+        else:
+            cells_series = np.full((len(self.grid.grid_points),), fill_value=self.default_value)
         z_buffer = 2
         if self.bounds is not None and self.grid.dims is not None:
             z_buffer = (self.bounds[5] - self.bounds[4]) / self.grid.dims[2] / 2
@@ -298,7 +345,7 @@ class GeoGridDataSampler(object):
             line_indices = self._grid.vtk_data.find_cells_along_line(pointa=hole_top_pos, pointb=hole_bottom_pos)
             cell_indices = np.array(np.unique(np.hstack((cell_indices, line_indices))), dtype=int)
             boreholes_points = self.grid_points[cell_indices]
-            boreholes_points_labels = np.full((len(boreholes_points),), fill_value=-1)
+            boreholes_points_labels = np.full((len(boreholes_points),), fill_value=self.default_value)
             for one_layer in one_borehole.holelayer_list:
                 top_pos_z = one_layer.top_pos[2]
                 bottom_pos_z = one_layer.bottom_pos[2]
@@ -311,13 +358,23 @@ class GeoGridDataSampler(object):
                 # 取基于grid_points的索引
                 indices = cell_indices[layer_indices]
                 cells_series[indices] = cells_labels
+            unlapped_indices = np.argwhere(boreholes_points_labels == self.default_value)
+            unlapped_indices = unlapped_indices.flatten()
+            # 删除未影响的点与标签, 受到控制的点标签不能为-1
+            if len(unlapped_indices) > 0:
+                boreholes_points = np.delete(boreholes_points, unlapped_indices, axis=0)
+                boreholes_points_labels = np.delete(boreholes_points_labels, unlapped_indices, axis=0)
             new_point_data = PointSet(points=boreholes_points, point_labels=boreholes_points_labels)
             new_point_data_list.append(new_point_data)
         if len(new_point_data_list) > 0:
+            self.map_flag = True
             self._grid.grid_points_series = cells_series
             self._grid.vtk_data.cell_data['Scalar Field'] = cells_series
-            self._grid.classes = np.unique(cells_series)
+            uniq_labels = np.unique(cells_series)
+            self._grid.classes = uniq_labels
             self._grid.classes_num = len(self.grid.classes)
+            if self.default_value in uniq_labels:
+                self._grid.classes_num -= 1
             point_dataset = PointSet()
             for data in new_point_data_list:
                 point_dataset.append(data)
@@ -447,12 +504,9 @@ class GeoGridDataSampler(object):
             section = Section()
             surface = section.prob_volume(grid=self._grid, surf=section.create_surface_along_axis(along_axis=sample_axis
                                                                                                   , scroll_scale=
-                                                                                                  scroll_size[s_i]
-                                                                                                  ,
-                                                                                                  resolution_xy=resolution_xy
-                                                                                                  ,
-                                                                                                  resolution_z=resolution_z
-                                                                                                  ,
+                                                                                                  scroll_size[s_i],
+                                                                                                  resolution_xy=resolution_xy,
+                                                                                                  resolution_z=resolution_z,
                                                                                                   grid_bounds=self.bounds))
             section.set_surface(surf=surface)
             section_list.append(section)

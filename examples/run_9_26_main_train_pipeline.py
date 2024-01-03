@@ -15,8 +15,8 @@ from geomodel_analysis import GmeModelGraphList
 # import argparse
 # from pyvistaqt import MultiPlotter
 from gme_trainer import GmeTrainer, GmeTrainerConfig, GraphTransConfig
-from models.model import GraphTransfomer, GraphModel, SAGEModel, SAGETransfomer, GraphTransfomerNet
-from retrieve_noddy_files import NoddyModelData
+from models.model import GraphTransfomer
+from data.retrieve_noddy_files import NoddyModelData
 from data_structure.grids import Grid
 # from geograph_parse import GeoMeshGraphParse
 # from data_structure.data_sampler import GeoGridDataSampler
@@ -31,7 +31,7 @@ if __name__ == '__main__':
     path_1 = os.path.abspath('../..')
     root_path = os.path.join(path_1, 'geomodel_workshop-main')
 
-    noddyData = NoddyModelData(root=r'F:\NoddyDataset', dataset_list=['FOLD_FOLD_FOLD'], max_model_num=10,
+    noddyData = NoddyModelData(root=r'E:\NoddyDataset', dataset_list=['FOLD_FOLD_FOLD'], max_model_num=10,
                                update_grid=False)
     noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0])  # 1 6
     grid_list = []
@@ -46,18 +46,15 @@ if __name__ == '__main__':
     gme_models = GmeModelGraphList('gme_model', root=root_path,
                                    grid_data=grid_list,
                                    sample_operator=['rand_drills'],
-                                   # ['axis_sections'],'axis_sections'
-                                   sample_axis='x', section_num=1, scroll_pos=[0.5], resolution_xy=10, resolution_z=10,
                                    add_inverse_edge=True,
                                    drill_num=25)
     #
-    plot_data = gme_models.geodata[model_idx].sample_data.sample_data_list[0].get_sample_vtk_data()
 
     dataset = DglGeoDataset(gme_models)
 
     # initialize a trainer instance and kick off training
     # 模型训练相关参数    初始训练参数的设置
-    trainer_config = GmeTrainerConfig(max_epochs=850, batch_size=512, num_workers=4, learning_rate=1e-4,
+    trainer_config = GmeTrainerConfig(max_epochs=200, batch_size=512, num_workers=4, learning_rate=1e-4,
                                       ckpt_path=os.path.join(root_path, 'processed', 'latest_tran.pth'),
                                       output_dir=os.path.join(root_path, 'output'),
                                       out_put_grid_file_name=os.path.join(gme_models.processed_dir, 'vtk_model.vtk'),
@@ -87,6 +84,14 @@ if __name__ == '__main__':
     print('Training...')
     # 开始训练
     trainer.train(data_split_idx=model_idx, has_test_label=True)
+
+    from utils.plot_utils import control_visibility_with_layer_label
+    grid_model = Grid(grid_vtk_path=os.path.join(gme_models.processed_dir, 'vtk_model.vtk'))
+    boreholes_data = gme_models.sample_data[0]  # boreholes_data,
+    plotter_2 = control_visibility_with_layer_label(geo_object_list=[grid_model, boreholes_data], grid_smooth=False
+                                                    , show_edge=False)
+    plotter_2.show()
+
 
     #####
     # gme_models.set_dat_file_regular_grid(

@@ -8,6 +8,7 @@ from dgl.data import DGLDataset, utils
 import dgl.backend as F
 
 
+# DGL 图数据集封装，将图处理为dgl数据集
 class DglGeoDataset(DGLDataset):
 
     def __init__(self, dataset, split_ratio=None, target_ntype=None, **kwargs):
@@ -16,15 +17,11 @@ class DglGeoDataset(DGLDataset):
         self.split_ratio = split_ratio
         self.target_ntype = target_ntype
         self.num_classes = getattr(self.dataset, 'num_classes', None)
-        self.predict_num_classes = getattr(self.dataset, 'predict_num_classes', None)
-        if self.predict_num_classes is not None and self.num_classes is not None:
+        # self.predict_num_classes = getattr(self.dataset, 'predict_num_classes', None)
+        if self.num_classes is not None:
             if torch.is_tensor(self.num_classes['labels']):
                 self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
-            if torch.is_tensor(self.predict_num_classes['labels']):
-                self.predict_num_classes['labels'] = self.predict_num_classes['labels'].numpy().tolist()
-            self.num_classes['labels'].extend(self.predict_num_classes['labels'])
             self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
-            self.predict_num_classes = {'labels': torch.tensor(self.predict_num_classes['labels']).to(torch.long)}
         self.train_idx = []
         self.val_idx = []
         self.test_idx = []

@@ -1,13 +1,11 @@
-from retrieve_noddy_files import NoddyModelData
+from data.retrieve_noddy_files import NoddyModelData
 from data_structure.grids import Grid
 import numpy as np
 from data_structure.data_sampler import GeoGridDataSampler
-from data_structure.boreholes import BoreholeSet, Borehole
-from utils.plot_utils import control_visibility_with_layer_label, control_threshold_with_scalars \
-    , control_clip_with_plane, control_clip_with_spline
+from utils.plot_utils import control_visibility_with_layer_label
 
 if __name__ == '__main__':
-    noddyData = NoddyModelData(root=r'F:\NoddyDataset', dataset_list=['FOLD_FOLD_FOLD'], max_model_num=10,
+    noddyData = NoddyModelData(root=r'E:\NoddyDataset', dataset_list=['FOLD_FOLD_FOLD'], max_model_num=10,
                                update_grid=False)
     noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0])  # 1 6
     grid_list = []
@@ -32,6 +30,6 @@ if __name__ == '__main__':
     new_grid = geodata_sample.grid
     # plotter_1 = control_clip_with_plane(grid=grid_list[0], only_section=True)
     # plotter_1.show()
-    plotter_2 = contorl_visibility_with_layer_label(geo_object_list=[boreholes_data, new_grid], grid_smooth=False
+    plotter_2 = control_visibility_with_layer_label(geo_object_list=[boreholes_data, new_grid], grid_smooth=False
                                                     , show_edge=False)
     plotter_2.show()

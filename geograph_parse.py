@@ -21,6 +21,7 @@ from data_structure.grids import Grid
 from data_structure.boreholes import Borehole, BoreholeSet
 from data_structure.points import PointSet
 from data_structure.sections import Section, SectionSet
+from data_structure.geodata import load_object, GeodataSet
 from vtkmodules.all import vtkProbeFilter
 from data_structure.data_sampler import GeoGridDataSampler
 import time
@@ -29,7 +30,8 @@ import tetgen
 
 
 class GeoMeshGraphParse(object):
-    def __init__(self, mesh: Grid = None, sample_data=None, name=None, is_normalize=False):  # , pre_train=True
+    def __init__(self, mesh: Grid = None, input_sample_data=None, name=None, is_normalize=False
+                 , dir_path=None):  # , pre_train=True
         self.name = name
         self.is_normalize = is_normalize  # 坐标是否归一化
         self.data = mesh
@@ -46,10 +48,14 @@ class GeoMeshGraphParse(object):
         self.train_data_indexes = None  # list 训练数据的idx索引, 对应self.grid_points
         self.train_data_proportion = 0  # 已知标签数据比例
         # 可以外部输入，或从网格中进行采样
-        self.sample_data = sample_data  # 采样数据(类型为散点、钻孔、剖面)
+        self.input_sample_data = input_sample_data  # 采样数据(类型为散点、钻孔、剖面)
+        self.sample_data = []
         # 图特征  下面两个变量用来装数据
         self.node_feat = None  # 图节点特征    np.float32
         self.edge_feat = None  # 图边特征      np.float32
+
+        self.dir_path = dir_path
+        self.tmp_dump_str = 'tmp' + str(int(time.time()))
 
     def execute(self, sample_operator=None, edge_feat=None, node_feat=None, feat_normalize=False,
                 is_create_graph=True, **kwargs):
@@ -63,8 +69,8 @@ class GeoMeshGraphParse(object):
         # 选择测试模型的样本形式
         if self.data is not None:
             self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, **kwargs)
-        elif self.sample_data is not None:
-            self.set_geo_sample_data(sample_data=self.sample_data)
+        elif self.input_sample_data is not None and len(self.input_sample_data) > 0:
+            self.set_geo_sample_data(input_sample_data=self.input_sample_data)
         # 生成三角网剖分
         self.get_triangulate_edges()
         # 生成边权重，以距离作为边权
@@ -83,17 +89,18 @@ class GeoMeshGraphParse(object):
             sample_operator = ['None']
         geo_grid_sampler = GeoGridDataSampler(grid=grid, sample_operator=sample_operator, **kwargs)
         geo_grid_sampler.execute(**kwargs)
-        self.sample_data = geo_grid_sampler
+        self.sample_data = geo_grid_sampler.sample_data_list
         self.train_data_indexes = geo_grid_sampler.get_sample_points_indexex_for_grid_points()
         if self.train_data_indexes is not None and len(self.train_data_indexes) > 0:
             self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
 
-    def set_geo_sample_data(self, sample_data: BoreholeSet, **kwargs):
+    def set_geo_sample_data(self, input_sample_data: GeodataSet, **kwargs):
         # 将钻孔数据映射到空网格上
         geo_borehole_sample = GeoGridDataSampler(**kwargs)
-        geo_borehole_sample.set_base_grid_by_boreholes(boreholes=sample_data, dims=np.array([80, 80, 50]))
+        geo_borehole_sample.set_base_grid_by_geodataset(geodataset=input_sample_data, dims=np.array([80, 80, 50]))
         geo_borehole_sample.execute()
+        self.sample_data = self.input_sample_data.geodata_list
         self.data = geo_borehole_sample.grid
         self.grid_points = self.data.grid_points
         self.grid_points_series = self.data.grid_points_series
@@ -172,16 +179,16 @@ class GeoMeshGraphParse(object):
 
     # 如果normalize为False， 临时输出归一化坐标，但是对self.grid_matrix_point不做更新
     def grid_points_normalize(self, normalize=False):
-            if self.grid_points is None:
-                raise ValueError
-            # 判断如果已经对网格坐标点进行了normalize操作，则直接返回网格坐标点
-            if self.is_normalize is True:
-                return self.grid_points
-            minmax_pnt = preprocessing.MinMaxScaler().fit_transform(self.grid_points)
-            if normalize:
-                self.grid_points = minmax_pnt
-                self.is_normalize = normalize
-            return minmax_pnt
+        if self.grid_points is None:
+            raise ValueError
+        # 判断如果已经对网格坐标点进行了normalize操作，则直接返回网格坐标点
+        if self.is_normalize is True:
+            return self.grid_points
+        minmax_pnt = preprocessing.MinMaxScaler().fit_transform(self.grid_points)
+        if normalize:
+            self.grid_points = minmax_pnt
+            self.is_normalize = normalize
+        return minmax_pnt
 
     # 构建图结构边集合，采用delaunay三角剖分
     def get_triangulate_edges(self, tetgen_mode=True):
@@ -284,15 +291,25 @@ class GeoMeshGraphParse(object):
         # save self.sample_data
         # save self.data
         if self.data is not None and isinstance(self.data, Grid):
-            self.data.save(dir_path=dir_path)
+            self.data = self.data.save_object(dir_path=dir_path)
         if self.sample_data is not None:
-            self.sample_data.save(dir_path=dir_path)
+            for s_i in np.arange(len(self.sample_data)):
+                if isinstance(self.sample_data[s_i], (Grid, BoreholeSet, SectionSet, Section, PointSet)):
+                    self.sample_data[s_i] = self.sample_data[s_i].save_object(dir_path=dir_path)
+                else:
+                    raise ValueError("The data type is not supported.")
 
-    def load(self, dir_path):
+    def load(self, dir_path=None):
+        self.dir_path = dir_path
         if self.data is not None:
-            self.data.load(dir_path=dir_path)
+            self.data = load_object(gtype=self.data[0], file_path=self.data[1])
         if self.sample_data is not None:
-            self.sample_data.load(dir_path=dir_path)
+            for s_i in np.arange(len(self.sample_data)):
+                self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=self.sample_data[s_i][1])
+
+    # 钻孔数据增强
+    def drill_data_augmentation(self):
+        pass
 
     # # 待转移
     # # match_type: None 最邻近搜索， svm 支持向量机
@@ -326,115 +343,3 @@ class GeoMeshGraphParse(object):
     #                 sample_grid.cell_data['stratum'] = predict_test_y
     #         return sample_grid, grid_outline
     #
-    # def get_unregular_grid_points_convexhull_surface(self, points_data=None):
-    #     if points_data is not None:
-    #         pass
-    #     elif self.unregular_grid_points is not None:
-    #         points_data = self.unregular_grid_points
-    #     else:
-    #         raise ValueError('Points data is empty.')
-    #     grid_points_2d = points_data[:, 0:2]
-    #     hull = spt.ConvexHull(grid_points_2d)
-    #     simplex_idx = []
-    #     for simplex in hull.simplices:
-    #         simplex_idx.extend(list(simplex))
-    #     unique_idx = list(np.unique(np.int64(simplex_idx)))
-    #     top_surface_points = copy.deepcopy(points_data[unique_idx])
-    #     top_surface_points[:, 2] = self.bound[5]  # z_max
-    #     bottom_surface_points = copy.deepcopy(points_data[unique_idx])
-    #     bottom_surface_points[:, 2] = self.bound[4]  # z_min
-    #     # 面三角化
-    #     surface_points = np.concatenate((top_surface_points, bottom_surface_points), axis=0)
-    #     # 顶面
-    #     pro_point_2d = top_surface_points[:, 0:2]
-    #     points_num = len(top_surface_points)
-    #     tri = spt.Delaunay(pro_point_2d)
-    #     tet_list = tri.simplices
-    #     faces_top = []
-    #     for it, tet in enumerate(tet_list):
-    #         face = np.int64([3, tet[0], tet[1], tet[2]])
-    #         faces_top.append(face)
-    #     faces_top = np.int64(faces_top)
-    #     # 底面的组织与顶面相同，face中的点号加一个points_num
-    #     faces_bottom = []
-    #     for it, face in enumerate(faces_top):
-    #         face_new = copy.deepcopy(face)
-    #         face_new[1:4] = np.add(face[1:4], points_num)
-    #         faces_bottom.append(face_new)
-    #     faces_bottom = np.int64(faces_bottom)
-    #     faces_total = np.concatenate((faces_top, faces_bottom), axis=0)
-    #     # 侧面
-    #     # 需要先将三维度点投影到二维，上下面构成一个矩形，三角化
-    #     # 先对凸包线排序，随机指定一个点作为起始点
-    #     convex_hull_dict = {}
-    #     for simplex in hull.simplices:
-    #         item_0, item_1 = simplex[0], simplex[1]
-    #         if item_0 not in convex_hull_dict.keys():
-    #             convex_hull_dict[item_0] = []
-    #         if item_1 not in convex_hull_dict.keys():
-    #             convex_hull_dict[item_1] = []
-    #         convex_hull_dict[item_0].append(item_1)
-    #         convex_hull_dict[item_1].append(item_0)
-    #     # 随机选一个点作为起点
-    #     line_pnt_idx_front = unique_idx[0]
-    #     line_pnt_idx = [line_pnt_idx_front]
-    #     surf_line_pnt_id = [0]
-    #     for lit in np.arange(points_num):
-    #         strip_0 = convex_hull_dict[line_pnt_idx[lit]]
-    #         if lit == points_num - 1:
-    #             line_pnt_idx.append(line_pnt_idx_front)
-    #             surf_line_pnt_id.append(0)
-    #             break
-    #         if strip_0[0] not in line_pnt_idx:
-    #             line_pnt_idx.append(strip_0[0])
-    #             surf_line_pnt_id.append(unique_idx.index(strip_0[0]))
-    #         else:
-    #             line_pnt_idx.append(strip_0[1])
-    #             surf_line_pnt_id.append(unique_idx.index(strip_0[1]))
-    #     surf_line_pnt_id_0 = copy.deepcopy(surf_line_pnt_id)  #
-    #     surf_line_pnt_id_0 = np.add(surf_line_pnt_id_0, points_num)
-    #     surf_line_pnt_id_total = np.concatenate((surf_line_pnt_id, surf_line_pnt_id_0), axis=0)
-    #
-    #     top_line = []
-    #     bottom_line = []
-    #     for lit in np.arange(points_num + 1):
-    #         xy_top = np.array([lit, self.bound[5]])
-    #         xy_bottom = np.array([lit, self.bound[4]])
-    #         top_line.append(xy_top)
-    #         bottom_line.append(xy_bottom)
-    #     top_line = np.array(top_line)
-    #     bottom_line = np.array(bottom_line)
-    #     line_pnt_total = np.concatenate((top_line, bottom_line), axis=0)
-    #     # 矩形三角化
-    #     tri = spt.Delaunay(line_pnt_total)
-    #     tet_list = tri.simplices
-    #     faces_side = []
-    #     for it, tet in enumerate(tet_list):
-    #         item_0 = tet[0]
-    #         item_1 = tet[1]
-    #         item_2 = tet[2]
-    #         face = np.int64(
-    #             [3, surf_line_pnt_id_total[item_0], surf_line_pnt_id_total[item_1], surf_line_pnt_id_total[item_2]])
-    #         faces_side.append(face)
-    #     faces_side = np.int64(faces_side)
-    #     faces_total = np.concatenate((faces_total, faces_side), axis=0)
-    #     convex_surface = pv.PolyData(surface_points, faces=faces_total)
-    #     line_boundary = []
-    #     line_top = [len(surf_line_pnt_id)]
-    #     line_bottom = [len(surf_line_pnt_id)]
-    #     for lid in np.arange(len(surf_line_pnt_id)):
-    #         line_top.append(surf_line_pnt_id[lid])
-    #         line_bottom.append(surf_line_pnt_id_0[lid])
-    #         line_of_side = [2, surf_line_pnt_id[lid], surf_line_pnt_id_0[lid]]
-    #         line_boundary.append(np.int64(line_of_side))
-    #     line_top = np.int64(line_top)
-    #     line_bottom = np.int64(line_bottom)
-    #     line_boundary.append(line_top)
-    #     line_boundary.append(line_bottom)
-    #     line_boundary = np.concatenate(line_boundary, axis=0)
-    #     grid_outline = pv.PolyData(surface_points, lines=line_boundary)
-    #     return convex_surface, grid_outline
-
-    # 钻孔数据增强
-    def drill_data_augmentation(self):
-        pass

@@ -6,15 +6,16 @@ from data_structure.grids import Grid
 import sklearn
 import os
 import copy
+import time
 from vtkmodules.all import vtkPolyDataMapper
 from sklearn import metrics
 import matplotlib.pyplot as pl
 import torch
 from geograph_parse import GeoMeshGraphParse
+from matplotlib import pyplot as plt
+import imageio as iio
 
 matplotlib.use("TkAgg")
-
-from matplotlib import pyplot as plt
 
 
 # 生成基于规则网格的模型，规则网格已经在geodata中指定
@@ -26,11 +27,13 @@ def visual_predicted_values_model(geodata: GeoMeshGraphParse, cell_values, is_sh
     else:
         scalars = np.float32(cell_values)
     gen_mesh = copy.deepcopy(geodata.data.vtk_data)
-    gen_mesh.vtk_data.cell_data['stratum'] = scalars
+    gen_mesh.cell_data['stratum'] = scalars
+    gen_mesh.set_active_scalars(name='stratum')
     if is_show:
-        visual_multiple_model([geodata.data, gen_mesh])
+        visual_multiple_model([geodata.data.vtk_data, gen_mesh])
     if save_path is not None:
-        gen_mesh.vtk_data.save(filename=save_path)
+        gen_mesh.save(filename=save_path)
+        print('Geodata has been saved to {}.'.format(save_path))
     return gen_mesh
 
 
@@ -73,13 +76,50 @@ colors_default = ["ff0000", "28e5da", "0000ff", "ffff00", "c8bebe", "f79292", "f
                   "d785ec", "9d5b13", "e4e0b1", "894509", "af45f5", "fff000", ]
 
 
+class SaveGraphicCallBack:
+    def __init__(self, plotter, dir_path=None):
+        self.plotter = plotter
+        self.output = dir_path
+        if self.output is None:
+            self.output = os.path.dirname(os.path.abspath(__file__))
+            self.output = os.path.join(self.output, '../output')
+            if not os.path.exists(self.output):
+                os.makedirs(self.output)
+
+    def __call__(self, *args, **kwargs):
+        file_name = 'pic_' + str(int(time.time())) + '.png'
+        self.plotter.screenshot(filename=os.path.join(self.output, file_name))
+        print('Picture {} has been saved to {}.'.format(file_name, self.output))
+
+
+class SaveVideoCallBack:
+    def __init__(self, plotter, dir_path=None, vtime=10):
+        self.plotter = plotter
+        self.output = dir_path
+        self.vtime = vtime
+        if self.output is None:
+            self.output = os.path.dirname(os.path.abspath(__file__))
+            dir_name = str(int(time.time()))
+            self.output = os.path.join(self.output, '../output', dir_name)
+            if not os.path.exists(self.output):
+                os.makedirs(self.output)
+
+    def __call__(self, state, *args, **kwargs):
+        file_name = 'pic_' + str(int(time.time())) + '.png'
+        self.plotter.screenshot(filename=os.path.join(self.output, file_name))
+        print('Picture {} has been saved to {}.'.format(file_name, self.output))
+
+
 # 控制每个地层的可见性， 可以展示钻孔与地质格网模型：
 # geo_object_list:  list
 # 输入参数为列表，[BoreholeSet, Grid]， 目前支持BoreholeSet和Grid两种类型的数据
 def control_visibility_with_layer_label(geo_object_list, lookup_table=None, grid_smooth=False, show_edge=False):
     plotter = pv.Plotter()
-    startpos_y = 12.0
-    startpos_x = 5.0
+
+    plotter.track_click_position()
+
+    start_pos_y = 12.0
+    start_pos_x = 5.0
     size = 20
     classes_list = [list(item.get_classes()) for item in geo_object_list]
     classes_list = sum(classes_list, [])
@@ -129,18 +169,32 @@ def control_visibility_with_layer_label(geo_object_list, lookup_table=None, grid
                     _actor_list.append(actor)
                 # 按钮点击事件-可见性
                 callback = SetVisibilityCallback(actor)
-                plotter.add_checkbox_button_widget(callback, value=True, position=(startpos_x, startpos_y), size=size,
+                plotter.add_checkbox_button_widget(callback, value=True, position=(start_pos_x, start_pos_y), size=size,
                                                    border_size=1, color_on=lookup_table.map_value(label)
                                                    , color_off='grey', background_color='grey')
-                plotter.add_text(text=str(label), position=(startpos_x + size + 1, startpos_y), font_size=12)
-                startpos_y = startpos_y + size + (size // 10)
-            if geo_object.name is not None:
-                plotter.add_text(text=geo_object.name, position=(startpos_x, startpos_y), font_size=12)
-                startpos_y = startpos_y + size + (size // 10) + 2
+
+                plotter.add_text(text=str(label), position=(start_pos_x + size + 1, start_pos_y), font_size=12)
+                start_pos_y = start_pos_y + size + (size // 10)
+            if geo_object.name is None:
+                geo_name = geo_object.__class__.__name__
+            else:
+                geo_name = geo_object.__class__.__name__ + '_' + geo_object.name
+            plotter.add_text(text=geo_name
+                             , position=(start_pos_x, start_pos_y), font_size=12)
+            start_pos_y = start_pos_y + size + (size // 10) + 2
     if len(_actor_list) > 0:
         callbace_opacity = SetOpacityCallback(actor_list=_actor_list)
         plotter.add_slider_widget(callbace_opacity, value=1, rng=(0, 1), title='Opacity Of Grid'
                                   , pointa=(0.8, 0.1), pointb=(0.95, 0.1))
+    callback = SaveGraphicCallBack(plotter=plotter)
+    w_size = plotter.window_size
+    b_x = w_size[0] * 0.9
+    b_y = w_size[1] * 0.9
+    plotter.add_checkbox_button_widget(callback, value=True, position=(b_x, b_y)
+                                       , size=50, border_size=1,
+                                       color_on='blue', color_off='blue', background_color='blue')
+    plotter.add_text(text='save picture'
+                     , position=(b_x - 50, b_y - 25), font_size=12)
     return plotter
 
 
@@ -359,6 +413,24 @@ def visual_edge_list(edge_list, edge_points, is_show=True, e_color='gray', add_p
         plotter.add_axes()
         plotter.show()
     return edges
+
+
+def create_gif(image_list, gif_path, duration=1):
+    """
+    生成gif文件，原始图片仅支持png格式
+    gif_name： 字符串
+    duration:  gif图像时间间隔
+    """
+    if len(image_list) > 0:
+        if isinstance(image_list[0], np.ndarray):
+            frames = image_list
+        elif isinstance(image_list[0], str):
+            frames = []
+            for image_name in image_list:
+                frames.append(iio.imread(image_name))
+        else:
+            return
+        iio.mimsave(gif_path, frames, format='GIF', duration=duration)
 
 # yy = np.linspace(-1, 1, 50)
 # rr = np.random.uniform(0.039, 2.938, 50)

@@ -12,6 +12,7 @@ from data_structure.sections import Section, SectionSet
 import time
 import copy
 import os
+import pickle
 
 
 def generate_vtk_structure_grid_and_grid_points(bounds, xy_resolution, z_resolution):
@@ -90,7 +91,8 @@ class Grid(object):
      Dataset includes:
      points: a matrix containing all 3D grid points [x, y, z]"""
 
-    def __init__(self, name=None, grid_vtk=None, grid_vtk_path=None, grid_points: np.ndarray = None, series=None):
+    def __init__(self, name=None, grid_vtk=None, grid_vtk_path=None, grid_points: np.ndarray = None, series=None
+                 , dir_path=None, label_map=True):
         self.bounds = None
         self._center = None
         self.name = name
@@ -107,7 +109,7 @@ class Grid(object):
         self.classes_num = 0  #
         self.classes = None  # 类别
 
-        self.tmp_dump_str = 'tmp' + str(int(time.time()))
+        self.tmp_dump_str = 'tmp_grid' + str(int(time.time()))
 
         # 外部输入的vtk规则网格
         self.vtk_data = grid_vtk
@@ -118,6 +120,8 @@ class Grid(object):
             # 传入的grid_vtk优先级更高，传入路径次之
             if self.vtk_data is None and grid_vtk_path is not None and os.path.exists(grid_vtk_path):
                 self.vtk_data = pv.read(grid_vtk_path)
+                if name is None:
+                    self.name = os.path.basename(grid_vtk_path).split('.')[0]
             if isinstance(self.vtk_data, (pv.RectilinearGrid, pv.StructuredGrid, pv.UnstructuredGrid)):
                 if isinstance(self.vtk_data, pv.UnstructuredGrid):
                     self.dims = None
@@ -125,8 +129,19 @@ class Grid(object):
                     self.dims = self.vtk_data.GetDimensions()
                 self.bounds = np.array(self.vtk_data.bounds)
                 self.grid_points = self.vtk_data.cell_centers().points
-                self.standardize_labels_from_vtk_data()  # 处理标签
+                self.standardize_labels_from_vtk_data(label_map=label_map)  # 处理标签
                 self.grid_points_num = self.grid_points.shape[0]
+        # 对象拷贝
+        self.dir_path = dir_path
+
+    def save_object(self, dir_path=None):
+        file_path = os.path.join(dir_path, self.tmp_dump_str)
+        out_put = open(file_path, 'wb')
+        self.save(dir_path=dir_path)
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
     def get_classes(self):
         if self.classes is None:
@@ -135,36 +150,51 @@ class Grid(object):
             else:
                 self.classes = sorted(np.unique(self.grid_points_series))
                 self.classes_num = len(self.classes)
+                if -1 in self.classes:
+                    self.classes_num -= 1
         return self.classes
 
     # 将labels映射为连续自然数，从0开始，或按照传入的字典进行标签转换 , default_value 默认未知标签为-1
-    def standardize_labels_from_vtk_data(self, label_dict: dict = None, default_value=-1):
+    def standardize_labels_from_vtk_data(self, label_dict: dict = None, default_value=-1, label_map=True):
+        if default_value >= 0:
+            raise ValueError('Default value should be less than 0.')
         series_labels = self.vtk_data.active_scalars
         if series_labels is None:
             raise ValueError('The input data has not scalar values.')
         old_label = np.trunc(series_labels)
         unique_label = np.unique(old_label)
         sorted_label = sorted(unique_label)
-        if label_dict is not None:
-            # 判断label_dict 是否符合要求
-            for idx, item in enumerate(sorted_label):
-                if item not in label_dict.keys():
+        if label_map:
+            if label_dict is not None:
+                # 判断label_dict 是否符合要求
+                # 默认值不映射
+                if default_value in label_dict.keys():
                     raise ValueError('The input label_dict is invalid.')
-                if idx + 1 < len(sorted_label) and item + 1 != label_dict[idx + 1]:
-                    raise ValueError('The input label_dict is invalid.')
-            new_label = np.vectorize(label_dict.get)(np.array(old_label))
+                for idx, item in enumerate(sorted_label):
+                    if item == default_value:
+                        continue
+                    if item not in label_dict.keys():
+                        raise ValueError('The input label_dict is invalid.')
+                    # 连续性
+                    if idx + 1 < len(sorted_label) and item + 1 != label_dict[idx + 1]:
+                        raise ValueError('The input label_dict is invalid.')
+                new_label = np.vectorize(label_dict.get)(np.array(old_label))
+            else:
+                label_dict = {}
+                for idx, item in enumerate(sorted_label):
+                    if item == default_value:  # 对于默认未知值则不改变
+                        continue
+                    label_dict[item] = idx
+                # 标签默认值不添加到映射字典中
+                new_label = np.vectorize(label_dict.get)(np.array(old_label))
+            self.label_dict = label_dict
+            self.classes_num = len(label_dict.values())
+            self.classes = np.array(list(label_dict.values()))
+            self.grid_points_series = new_label
         else:
-            label_dict = {}
-            for idx, item in enumerate(sorted_label):
-                if item == default_value:  # 对于默认未知值则不改变
-                    label_dict[item] = item
-                    continue
-                label_dict[item] = idx
-            new_label = np.vectorize(label_dict.get)(np.array(old_label))
-        self.label_dict = label_dict
-        self.classes_num = len(label_dict.values())
-        self.classes = np.array(list(label_dict.values()))
-        self.grid_points_series = new_label
+            self.classes = sorted_label
+            self.classes_num = len(sorted_label)
+            self.grid_points_series = old_label
         self.__add_properties_to_vtk_object_if_present(grid=self)
 
     # 可以自由创建 1维、2维、3维网格，如果是规则沿轴向，则只需要dim和bounds参数，也可以通过分割间断点序列xx,yy,zz来自定义网格
@@ -221,7 +251,7 @@ class Grid(object):
         classes = self.get_classes()
         vtk_dict = {}
         for item in classes:
-            vtk_dict[item] = self.vtk_data.threshold(value=[item-0.001, item+0.001])
+            vtk_dict[item] = self.vtk_data.threshold(value=[item - 0.001, item + 0.001])
         return vtk_dict
 
     def resample_regular_grid(self, dim: np.ndarray, is_replace=True):
@@ -386,7 +416,8 @@ class Grid(object):
             raise ValueError('Please input an object of Grid class.')
 
     def save(self, dir_path: str):
-        if self.vtk_data is not None and isinstance(self.vtk_data, pv.RectilinearGrid):
+        self.dir_path = dir_path
+        if self.vtk_data is not None and isinstance(self.vtk_data, (pv.RectilinearGrid, pv.UnstructuredGrid)):
             save_path = os.path.join(dir_path, self.tmp_dump_str + '.vtk')
             self.vtk_data.save(filename=save_path)
             self.vtk_data = 'dumped'
@@ -394,6 +425,7 @@ class Grid(object):
     def load(self, dir_path: str):
         if self.vtk_data == 'dumped':
             save_path = os.path.join(dir_path, self.tmp_dump_str + '.vtk')
+            self.dir_path = dir_path
             if os.path.exists(save_path):
                 self.vtk_data = pv.read(filename=save_path)
             else:

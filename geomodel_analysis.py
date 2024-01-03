@@ -1,10 +1,6 @@
-import copy
 import pickle
-
-import pandas as pd
-from sklearn import preprocessing
 import numpy as np
-import pyvista as pv
+
 import os
 import dgl
 import dgl.backend as F
@@ -16,21 +12,28 @@ import time
 from sklearn import svm
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import classification_report
-# import model_visual_kit as mvk
-# import torchmetrics.functional as MF
+
 from xgboost import XGBClassifier
-# from scipy.interpolate import griddata
+
 from data_structure.grids import Grid
 from data_structure.boreholes import BoreholeSet, Borehole
 from data_structure.sections import Section, SectionSet
 from data_structure.points import PointSet
-from data_structure.data_sampler import GeoGridDataSampler
-from scipy.interpolate import RBFInterpolator, NearestNDInterpolator, LinearNDInterpolator
-from scipy.stats.qmc import Halton
-from sklearn.preprocessing import StandardScaler  # 标准化
-from sklearn.preprocessing import MinMaxScaler  # 归一化
 
+
+# from data_structure.data_sampler import GeoGridDataSampler
+# from scipy.interpolate import RBFInterpolator, NearestNDInterpolator, LinearNDInterpolator
+# from scipy.stats.qmc import Halton
+# from sklearn.preprocessing import StandardScaler  # 标准化
+# from sklearn.preprocessing import MinMaxScaler  # 归一化
+# from sklearn.metrics import classification_report
+# import model_visual_kit as mvk
+# import torchmetrics.functional as MF
+# import pyvista as pv
+# import pandas as pd
+# from sklearn import preprocessing
+# import copy
+# from scipy.interpolate import griddata
 
 def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None, add_inverse_edge=False):
     num_node = len(node_feat)
@@ -86,7 +89,7 @@ def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None,
 
 
 class GmeModelGraphList(object):
-    def __init__(self, name, root, grid_data: list = None, sample_data: list = None,
+    def __init__(self, name, root, grid_data: list = None, input_sample_data=None,
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
                  dgl_graph_param=None, update_graph=False, **kwargs):
         # 注：.dat文件格式与Voxler软件一致
@@ -94,7 +97,8 @@ class GmeModelGraphList(object):
             dgl_graph_param = [['position'], None]  # [[node_feat], [edge_feat]]
         # 外部传入参数
         self.grid_data = grid_data  # Grid
-        self.sample_data = sample_data
+        self.input_sample_data = input_sample_data
+        self.sample_data = []
         self.dgl_graph_param = dgl_graph_param  # 图节点特征、边特征类型参数
         self.sample_operator = sample_operator  # ['rand_drills', 'axis_sections'] 设置已知数据采样方式
         self.self_loop = self_loop  # 添加自环
@@ -103,7 +107,7 @@ class GmeModelGraphList(object):
         self.name = name  # 数据集名称
         self.update_graph = update_graph
         # 数据存储参数
-        self.geodata = []
+        self.geograph = []
         self.result_model = {}
         self.graph_log = {}  # 待删除
         self.num_classes = None  # 数据集分类数目
@@ -115,7 +119,7 @@ class GmeModelGraphList(object):
         if not os.path.exists(self.processed_dir):
             os.makedirs(self.processed_dir)
         self.processed_file_path = os.path.join(processed_dir, 'gme_data_processed')  # 存储与训练的dgl_graph图数据
-        self.processed_geodata_path = os.path.join(processed_dir, 'geodata.pkl')  # 存储geodata模型数据
+        self.processed_geodata_path = os.path.join(processed_dir, 'geograph.pkl')  # 存储geodata模型数据
         # 待删除
         # 记录 dgl_graph, 以及图生成参数，包括node_feat类型, edge_feat类型,类别数, 节点数, 边数.
         self.graph_log_data_path = os.path.join(processed_dir, 'graph_log.pkl')  # 存储dgl_graph的日志信息
@@ -133,8 +137,8 @@ class GmeModelGraphList(object):
             self.graph_log = self.load_graph_log()
         # 加载dgl_graph和geodata, 其中dgl_graph是图神经网络训练的数据源, geodata主要存储地质数据源用来可视化分析
         if os.path.exists(self.processed_geodata_path):  # geodata
-            self.load_geodata()
-            print('Loading {} GeoModel Data ...'.format(len(self.geodata)))
+            self.load_geograph()
+            print('Loading {} GeoModel Data ...'.format(len(self.geograph)))
         # 加载图数据
         if os.path.exists(self.processed_file_path):
             self.graph, self.num_classes = load_graphs(self.processed_file_path)  # dgl_graph
@@ -167,7 +171,7 @@ class GmeModelGraphList(object):
                 pre_save_graph_num = len(self.graph)
                 is_connected = geodata.is_connected_graph()
                 print('is_connected:', is_connected)
-                self.geodata.append(geodata)
+                self.geograph.append(geodata)
                 dgl_graph_list.append(dgl_graph)
                 self.update_graph_log(model_name=mesh.name,
                                       save_idx=model_index + pre_save_graph_num,
@@ -179,37 +183,38 @@ class GmeModelGraphList(object):
                 self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
             self.num_classes['labels'].extend(labels_num_list)
             self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
-        elif self.sample_data is not None:
-            for data_index in np.arange(len(self.sample_data)):
-                if isinstance(self.sample_data[data_index], BoreholeSet):
-                    geodata = GeoMeshGraphParse(sample_data=self.sample_data[data_index], name='boreholes')
-                    dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
-                                                feat_normalize=True, **self.kwargs)
-                    # 对标签进行处理
-                    label_num = geodata.classes_num
-                    labels_num_list.append(label_num)
-                    # 已存储数据集
-                    pre_save_graph_num = len(self.graph)
-                    is_connected = geodata.is_connected_graph()
-                    print('is_connected:', is_connected)
-                    self.geodata.append(geodata)
-                    dgl_graph_list.append(dgl_graph)
-                    self.update_graph_log(model_name='boreholes',
-                                          save_idx=data_index + pre_save_graph_num,
-                                          node_feat=self.dgl_graph_param[0], edge_feat=self.dgl_graph_param[1],
-                                          edge_num=dgl_graph.num_edges(), node_num=dgl_graph.num_nodes())
-                    save_flag = True
-                self.graph.extend(dgl_graph_list)
-                if torch.is_tensor(self.num_classes['labels']):
-                    self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
-                self.num_classes['labels'].extend(labels_num_list)
-                self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
+        # 采样数据只有采样数据，没有网格数据的情况下，进行建模
+        elif self.input_sample_data is not None and len(self.input_sample_data) > 0:
+            # 只支持单图构建
+            geodata = GeoMeshGraphParse(input_sample_data=self.input_sample_data, name='boreholes_model')
+            dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
+                                        feat_normalize=True, **self.kwargs)
+            # 对标签进行处理
+            label_num = geodata.classes_num
+            labels_num_list.append(label_num)
+            # 已存储数据集
+            pre_save_graph_num = len(self.graph)
+            is_connected = geodata.is_connected_graph()
+            print('is_connected:', is_connected)
+            self.geograph.append(geodata)
+            dgl_graph_list.append(dgl_graph)
+            self.update_graph_log(model_name='boreholes',
+                                  save_idx=pre_save_graph_num,
+                                  node_feat=self.dgl_graph_param[0], edge_feat=self.dgl_graph_param[1],
+                                  edge_num=dgl_graph.num_edges(), node_num=dgl_graph.num_nodes())
+            save_flag = True
+
+            self.graph.extend(dgl_graph_list)
+            if torch.is_tensor(self.num_classes['labels']):
+                self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
+            self.num_classes['labels'].extend(labels_num_list)
+            self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
         # 数据存储
         if save_flag is True:
             print('Saving...')
             self.save_graph_log()
-            self.save_geodata()
-            self.load_geodata()
+            self.save_geograph()
+            self.load_geograph()
             self.graph_log = self.load_graph_log()
             print('Saving...')
             save_graphs(self.processed_file_path, self.graph, self.num_classes)
@@ -222,17 +227,17 @@ class GmeModelGraphList(object):
             node_num = self.graph[idx].num_nodes()
             x = np.arange(node_num)
             # 已经预先划分了训练数据，即已知标签数据
-            if self.geodata[idx].train_data_indexes is None:
+            if self.geograph[idx].train_data_indexes is None:
                 # random_state 确保每次切分是确定的
                 train, val_test = train_test_split(x, test_size=0.4, random_state=2)
                 valid, test = train_test_split(val_test, test_size=0.5, random_state=2)
             else:
                 print('get split Dataset')
-                train_val = np.array(self.geodata[idx].train_data_indexes)
+                train_val = np.array(self.geograph[idx].train_data_indexes)
                 train, valid = train_test_split(train_val, test_size=0.1)  # , random_state=2
-                test = np.array(list(set(x) - set(self.geodata[idx].train_data_indexes)))
+                test = np.array(list(set(x) - set(self.geograph[idx].train_data_indexes)))
             # train = train_val
-            # val_test = np.array(list(set(x) - set(self.geodata[idx].train_idx)))
+            # val_test = np.array(list(set(x) - set(self.geograph[idx].train_idx)))
             # valid, test = train_test_split(val_test, test_size=0.1, random_state=2)
             train_idx = torch.from_numpy(train)
             valid_idx = torch.from_numpy(valid)
@@ -256,20 +261,23 @@ class GmeModelGraphList(object):
         # 'edge_num' 'node_num'
 
     # 存储和加载函数
-    def save_geodata(self):
+    def save_geograph(self):
         out_put = open(self.processed_geodata_path, 'wb')
-        for g_id in np.arange(len(self.geodata)):
-            self.geodata[g_id].save(dir_path=self.processed_dir)
-        out_str = pickle.dumps(self.geodata)
+        for g_id in np.arange(len(self.geograph)):
+            self.geograph[g_id].save(dir_path=self.processed_dir)
+        out_str = pickle.dumps(self.geograph)
         out_put.write(out_str)
         out_put.close()
 
-    def load_geodata(self):
+    def load_geograph(self):
         with open(self.processed_geodata_path, 'rb') as file:
-            self.geodata = pickle.loads(file.read())
-            for g_id in np.arange(len(self.geodata)):
-                self.geodata[g_id].load(dir_path=self.processed_dir)
-            return self.geodata
+            self.geograph = pickle.loads(file.read())
+            for g_id in np.arange(len(self.geograph)):
+                self.geograph[g_id].load(dir_path=self.processed_dir)
+            self.sample_data = []
+            for geo_idx in np.arange(len(self.geograph)):
+                self.sample_data.append(self.geograph[geo_idx].sample_data)
+            return self.geograph
 
     def save_graph_log(self):
         out_put = open(self.graph_log_data_path, 'wb')
@@ -372,11 +380,11 @@ class GeoDataMLClassifier(object):
             elif method_to_index[self.method] == 1:
                 self.estimator = RandomForestClassifier()
                 self.params = [{'n_estimators': [50, 120, 160, 200, 250, 280, 300, 350, 400]
-                               , 'max_depth': [2, 4, 6, 8, 10, 12, 14]}]
+                                   , 'max_depth': [2, 4, 6, 8, 10, 12, 14]}]
             elif method_to_index[self.method] == 2:
                 self.estimator = XGBClassifier()
                 self.params = [{'n_estimators': [50, 120, 160, 200, 250], 'max_depth': [2, 4, 6, 8, 10]
-                               , 'learning_rate': [0.001, 0.01, 0.03]}]
+                                   , 'learning_rate': [0.001, 0.01, 0.03]}]
             else:
                 raise ValueError('The method type is not supported.')
         if self.grid_search:
@@ -421,8 +429,6 @@ class GeoDataMLClassifier(object):
         #         prediction = predict_test_y
         #         print(classification_report(test_y, predict_test_y))
         #         # accuracy = MF.accuracy(torch.tensor(predict_test_y[test_idx]), torch.tensor(test_y[test_idx]))
-
-
 
     # 添加待求解数据
     def append_unknown_data(self, unknown_data):
@@ -473,7 +479,6 @@ class GeoGridInterpolator(object):
         if self.method is not None:
             self.method = self.method.lower()
         self.support_methods = ['rbf', 'idw']
-
 
 # 支持向量机
 
