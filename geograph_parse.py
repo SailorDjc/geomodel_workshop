@@ -30,8 +30,8 @@ import tetgen
 
 
 class GeoMeshGraphParse(object):
-    def __init__(self, mesh: Grid = None, input_sample_data=None, name=None, is_normalize=False
-                 , dir_path=None):  # , pre_train=True
+    def __init__(self, mesh: Grid = None, input_sample_data=None, grid_dims=None, name=None
+                 , is_normalize=False, dir_path=None):  # , pre_train=True
         self.name = name
         self.is_normalize = is_normalize  # 坐标是否归一化
         self.data = mesh
@@ -49,6 +49,7 @@ class GeoMeshGraphParse(object):
         self.train_data_proportion = 0  # 已知标签数据比例
         # 可以外部输入，或从网格中进行采样
         self.input_sample_data = input_sample_data  # 采样数据(类型为散点、钻孔、剖面)
+        self.grid_dims = grid_dims
         self.sample_data = []
         # 图特征  下面两个变量用来装数据
         self.node_feat = None  # 图节点特征    np.float32
@@ -70,7 +71,7 @@ class GeoMeshGraphParse(object):
         if self.data is not None:
             self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, **kwargs)
         elif self.input_sample_data is not None and len(self.input_sample_data) > 0:
-            self.set_geo_sample_data(input_sample_data=self.input_sample_data)
+            self.set_geo_sample_data(input_sample_data=self.input_sample_data, grid_dims=self.grid_dims)
         # 生成三角网剖分
         self.get_triangulate_edges()
         # 生成边权重，以距离作为边权
@@ -95,10 +96,10 @@ class GeoMeshGraphParse(object):
             self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
 
-    def set_geo_sample_data(self, input_sample_data: GeodataSet, **kwargs):
+    def set_geo_sample_data(self, input_sample_data: GeodataSet, grid_dims=None, **kwargs):
         # 将钻孔数据映射到空网格上
         geo_borehole_sample = GeoGridDataSampler(**kwargs)
-        geo_borehole_sample.set_base_grid_by_geodataset(geodataset=input_sample_data, dims=np.array([80, 80, 50]))
+        geo_borehole_sample.set_base_grid_by_geodataset(geodataset=input_sample_data, dims=grid_dims)
         geo_borehole_sample.execute()
         self.sample_data = self.input_sample_data.geodata_list
         self.data = geo_borehole_sample.grid

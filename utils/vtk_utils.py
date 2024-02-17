@@ -4,14 +4,50 @@ from vtkmodules.all import vtkImageData, vtkStructuredGrid, vtkUnstructuredGrid,
     vtkTransformFilter, vtkBoundingBox, vtkDataSet, VTK_DOUBLE, VTK_INT, vtkLookupTable, vtkColorTransferFunction, \
     vtkImagePermute, vtkProbeFilter, vtkImageMapToColors, vtkPNGWriter, vtkCellArray, vtkPoints, vtkRectilinearGrid, \
     vtkImageDataGeometryFilter, vtkImageToPolyDataFilter, vtkPolyDataMapper, vtkImageStencil, vtkIdList, vtkPointData \
-    , vtkDataSetSurfaceFilter
+    , vtkDataSetSurfaceFilter, vtkClipDataSet, vtkPlane
 from vtkmodules.util import numpy_support
 import os
 import vtkmodules.all as vtk
+from vtkmodules.all import vtkSurfaceReconstructionFilter
 import pyvista as pv
 import copy
 import scipy.spatial as spt
-from data_structure.points import get_bounds_from_coords
+
+
+# # vtk对象剖切
+# def clip_grid_for_section(ugrid, surface: vtk.vtkPlane):
+#     clipper = vtk.vtkClipDataSet()
+#     clipper.SetClipFunction(surface)
+#     clipper.SetInputData(ugrid)
+#     clipper.GenerateClippedOutputOn()
+#     clipper.Update()
+# 隐式表面重建，根据一堆网格点来隐式地构建表面， 待修改
+def create_implict_surface_reconstruct(points, sample_spacing,
+                                       neighbour_size=20) -> pv.PolyData:
+    surface = vtkSurfaceReconstructionFilter()
+    poly_data = vtkPolyData()
+    v_points = vtkPoints()
+    v_points.SetData(numpy_support.numpy_to_vtk(points))
+    poly_data.SetPoints(v_points)
+    surface.SetInputData(poly_data)
+    surface.SetNeighborhoodSize(neighbour_size)
+    surface.SetSampleSpacing(sample_spacing)
+    surface.Update()
+    surface = pv.wrap(surface)
+    return surface
+
+
+def add_terrain_to_base_grid(terrain, base_grid):
+    grid_bounds = base_grid.bounds
+    terrain.extend_mesh_from_surface_by_bounds(bounds=grid_bounds)
+    vol = vtk_unstructured_grid_to_vtk_polydata(terrain.vtk_data)
+    vol = vol.triangulate()
+    base_grid = vtk_unstructured_grid_to_vtk_polydata(base_grid)
+    base_grid = base_grid.triangulate()
+    intersect = base_grid.boolean_intersection(vol)
+    intersect.plot()
+    other = base_grid.boolean_difference(intersect)
+    other.plot()
 
 
 def create_closed_surface_by_convexhull_2d(bounds: np.ndarray, convexhull_2d: np.ndarray):
@@ -87,6 +123,7 @@ def create_closed_surface_by_convexhull_2d(bounds: np.ndarray, convexhull_2d: np
     return convex_surface, grid_outline
 
 
+# 创建一个封闭的圆柱面
 def create_closed_cylinder_surface(top_point: np.ndarray, bottom_point: np.ndarray, radius: float, segment_num=10):
     line_direction = np.subtract(top_point, bottom_point)
     line_direction_norm = line_direction / np.linalg.norm(line_direction)
@@ -139,6 +176,78 @@ def vtk_unstructured_grid_to_vtk_polydata(u_grid):
 
 def vtk_polydata_to_vtk_imagedata(poly_data: pv.PolyData):
     pass
+
+
+# 可以自由创建 1维、2维、3维网格，如果是规则沿轴向，则只需要dim和bounds参数，也可以通过分割间断点序列xx,yy,zz来自定义网格
+def create_vtk_grid_by_rect_bounds(dim: np.ndarray = None, bounds: np.ndarray = None,
+                                   grid_buffer_xy=0) -> pv.RectilinearGrid:
+    if dim is None or bounds is None:
+        raise ValueError('Bounds array can not be None')
+    else:
+        nx = dim[0]
+        ny = dim[1]
+        nz = dim[2]
+        min_x = bounds[0] - grid_buffer_xy
+        max_x = bounds[1] + grid_buffer_xy
+        min_y = bounds[2] - grid_buffer_xy
+        max_y = bounds[3] + grid_buffer_xy
+        min_z = bounds[4]
+        max_z = bounds[5]
+        xrng = np.linspace(start=min_x, stop=max_x, num=nx)
+        yrng = np.linspace(start=min_y, stop=max_y, num=ny)
+        zrng = np.linspace(start=min_z, stop=max_z, num=nz)
+        vtk_grid = pv.RectilinearGrid(xrng, yrng, zrng)
+        return vtk_grid
+
+
+# 在规则格网的基础上，通过一个2d凸包范围切割格网
+def create_vtk_grid_by_unregular_bounds(dims: np.ndarray, bounds: np.ndarray
+                                        , convexhull_2d: np.ndarray, cell_density: np.ndarray = None):
+    convex_surface, grid_outline = create_closed_surface_by_convexhull_2d(bounds=bounds
+                                                                          , convexhull_2d=convexhull_2d)
+    if cell_density is None:
+        if dims is None:
+            raise ValueError('Need to input dims parameters.')
+        x_r = (bounds[1] - bounds[0]) / dims[0]
+        y_r = (bounds[3] - bounds[2]) / dims[1]
+        z_r = (bounds[5] - bounds[4]) / dims[2]
+        cell_density = np.array([x_r, y_r, z_r])
+    sample_grid = pv.voxelize(convex_surface, density=cell_density)
+    return sample_grid, grid_outline
+
+
+# 获取点云数据集的包围盒
+# Parameters: coords 输入是np.array 的二维数组，且坐标是3D坐标
+# xy_buffer z_buffer 为大于0的浮点数，是包围盒的缓冲距离
+def get_bounds_from_coords(coords: np.ndarray, xy_buffer=0, z_buffer=0):
+    assert coords.ndim == 2, "input coords array is not 2D array"
+    assert coords.shape[1] == 3, "input coords are not 3D"
+
+    coord_min = coords.min(axis=0)
+    coord_max = coords.max(axis=0)
+
+    x_min = coord_min[0]
+    x_max = coord_max[0]
+    y_min = coord_min[1]
+    y_max = coord_max[1]
+    z_min = coord_min[2]
+    z_max = coord_max[2]
+    bounds = np.array([x_min, x_max, y_min, y_max, z_min, z_max])
+    if xy_buffer != 0 or z_buffer != 0:
+        if xy_buffer == 0:
+            xy_buffer = z_buffer
+        if z_buffer == 0:
+            z_buffer = xy_buffer
+        dx = bounds[1] - bounds[0]
+        dy = bounds[3] - bounds[2]
+        dz = bounds[5] - bounds[4]
+        bounds[0] = bounds[0] - xy_buffer * dx
+        bounds[1] = bounds[1] + xy_buffer * dx
+        bounds[2] = bounds[2] - xy_buffer * dy
+        bounds[3] = bounds[3] + xy_buffer * dy
+        bounds[4] = bounds[4] - z_buffer * dz
+        bounds[5] = bounds[5] + z_buffer * dz
+    return bounds
 
 
 def create_continuous_property_vtk_array(name: str, arr: np.ndarray):

@@ -5,6 +5,9 @@ from data_structure.grids import Grid
 from data_structure.boreholes import Borehole, BoreholeSet
 from data_structure.points import PointSet
 from data_structure.sections import Section, SectionSet
+from data_structure.geodata import GeodataSet, load_object
+from data_structure.terrain import TerrainData
+import pickle
 
 
 class ReadExportFile(object):
@@ -19,7 +22,7 @@ class ReadExportFile(object):
         comment = "#"
         encoding = 'utf-8'
         header = None
-        sep = ' '
+        sep = '\s+'
         if 'comment' in kwargs.keys():
             comment = kwargs['comment']
         if 'encoding' in kwargs.keys():
@@ -140,5 +143,10 @@ class ReadExportFile(object):
                 edge[1] -= 1
             new_edge_list[e_i] = np.array(edge)
         return np.array(new_edge_list)
+
+    @staticmethod
+    def read_geodata(file_path: str):
+        geo_object = load_object(file_path=file_path)
+        return geo_object
 
 

@@ -91,13 +91,16 @@ def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None,
 class GmeModelGraphList(object):
     def __init__(self, name, root, grid_data: list = None, input_sample_data=None,
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
-                 dgl_graph_param=None, update_graph=False, **kwargs):
+                 dgl_graph_param=None, update_graph=False, grid_dims=None, **kwargs):
         # 注：.dat文件格式与Voxler软件一致
         if dgl_graph_param is None:
             dgl_graph_param = [['position'], None]  # [[node_feat], [edge_feat]]
         # 外部传入参数
-        self.grid_data = grid_data  # Grid
+        self.grid_data = grid_data  # list[Grid]
         self.input_sample_data = input_sample_data
+        self.grid_dims = grid_dims
+        if grid_dims is None:
+            self.grid_dims = np.array([80, 80, 50])
         self.sample_data = []
         self.dgl_graph_param = dgl_graph_param  # 图节点特征、边特征类型参数
         self.sample_operator = sample_operator  # ['rand_drills', 'axis_sections'] 设置已知数据采样方式
@@ -123,7 +126,7 @@ class GmeModelGraphList(object):
         # 待删除
         # 记录 dgl_graph, 以及图生成参数，包括node_feat类型, edge_feat类型,类别数, 节点数, 边数.
         self.graph_log_data_path = os.path.join(processed_dir, 'graph_log.pkl')  # 存储dgl_graph的日志信息
-
+        ##
         self.graph = None  # 图数据
         super(GmeModelGraphList, self).__init__()
         self.kwargs = kwargs
@@ -186,7 +189,8 @@ class GmeModelGraphList(object):
         # 采样数据只有采样数据，没有网格数据的情况下，进行建模
         elif self.input_sample_data is not None and len(self.input_sample_data) > 0:
             # 只支持单图构建
-            geodata = GeoMeshGraphParse(input_sample_data=self.input_sample_data, name='boreholes_model')
+            geodata = GeoMeshGraphParse(input_sample_data=self.input_sample_data, name='boreholes_model'
+                                        , grid_dims=self.grid_dims)
             dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
                                         feat_normalize=True, **self.kwargs)
             # 对标签进行处理
@@ -273,7 +277,7 @@ class GmeModelGraphList(object):
         with open(self.processed_geodata_path, 'rb') as file:
             self.geograph = pickle.loads(file.read())
             for g_id in np.arange(len(self.geograph)):
-                self.geograph[g_id].load(dir_path=self.processed_dir)
+                self.geograph[g_id].load()
             self.sample_data = []
             for geo_idx in np.arange(len(self.geograph)):
                 self.sample_data.append(self.geograph[geo_idx].sample_data)

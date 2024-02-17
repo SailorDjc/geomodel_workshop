@@ -1,18 +1,19 @@
 import pyvista as pv
 import numpy as np
-from vtkmodules.all import vtkCellArray, vtkPoints, vtkCellData, vtkPolyData, vtkSurfaceReconstructionFilter \
+from vtkmodules.all import vtkCellArray, vtkPoints, vtkCellData, vtkPolyData \
     , vtkProbeFilter
 from vtkmodules.util import numpy_support
-from scipy.interpolate import interp1d, interp2d
 import copy
 import math
-import scipy.spatial as spt
 from data_structure.points import PointSet
 from data_structure.boreholes import BoreholeSet, Borehole
 from utils.vtk_utils import add_np_property_to_vtk_object
 import time
 import os
 import pickle
+from vtkmodules.all import vtkStructuredGrid, vtkImageData, vtkPoints, vtkCellCenters
+from utils.math_libs import densify_line_xy_points_with_interp
+from utils.vtk_utils import create_implict_surface_reconstruct
 
 
 # 1. 外部输入vtk剖面数据
@@ -75,7 +76,7 @@ class Section(object):
                 and vtk_data_path is None:
             self.points_num = points.shape[0]
             self.bounds = self.get_points_data().bounds
-            new_surf = self.create_implict_surface_reconstruct(sample_spacing=sample_spacing)
+            new_surf = create_implict_surface_reconstruct(self.points, sample_spacing=sample_spacing)
             self.vtk_data = new_surf
             self.prob_volume(grid=sample_grid, surf=new_surf)
             # 从vtk数据中获取标签
@@ -83,20 +84,25 @@ class Section(object):
 
         self.dir_path = dir_path
 
-    def save_object(self, dir_path=None):
-        file_path = os.path.join(dir_path, self.tmp_dump_str)
-        out_put = open(file_path, 'wb')
-        self.save(dir_path=dir_path)
-        out_str = pickle.dumps(self)
-        out_put.write(out_str)
-        out_put.close()
-        return self.__class__.__name__, file_path
-
     # pnt_file: png图片路径
     # corner_coordinates: 角点坐标,用来配准
     # pixel_label_dict: 像素值-标签字典
     def set_input_pngdata(self, png_file, corner_coordinates, pixel_label_dict):
         pass
+
+    def set_vtk_grid(self, grid_vtk):
+        if isinstance(grid_vtk, (pv.RectilinearGrid, vtkImageData)):
+            self.dims = grid_vtk.GetDimensions()
+        else:
+            self.dims = None
+        self.bounds = np.array(grid_vtk.bounds)
+        self.points = grid_vtk.cell_centers().points
+        self.series = grid_vtk.active_scalars
+        self.points_num = self.points.shape[0]
+        self.vtk_data = grid_vtk
+        self.scalars = None
+        self.scalar_grad = None
+        self.scalar_grad_norm = None
 
     def get_points_data(self):
         points_data = PointSet(points=self.points, point_labels=self.series)
@@ -247,14 +253,15 @@ class Section(object):
             if depth is None:
                 depth = grid_bounds[5] - grid_bounds[4]
             if trajectory_line_xy.shape[1] != 2 and trajectory_line_xy.shape[1] != 3:
-                raise ValueError('Trajector line ponts must be 2D or 3D')
+                raise ValueError('trajectory line points must be 2D or 3D')
             # 用包围盒裁剪或延展线段
-            self.trajectory_line = self.clip_line_with_bounds(line_points=trajectory_line_xy, grid_bounds=grid_bounds)
+            # self.trajectory_line = self.clip_line_with_bounds(line_points=trajectory_line_xy, grid_bounds=grid_bounds)
+            self.trajectory_line = trajectory_line_xy
             sample_points = vtkPoints()
             polys = vtkCellArray()
             surface = vtkPolyData()
             # 线性插值
-            surface_line = self.densify_line_xy_points_with_interp(self.trajectory_line, resolution_xy=resolution_xy)
+            surface_line = densify_line_xy_points_with_interp(self.trajectory_line, resolution_xy=resolution_xy)
             cols = math.ceil(depth / resolution_z)
             # 扫线，获取平面每个格网点坐标
             s_id = 0
@@ -282,59 +289,6 @@ class Section(object):
         else:
             raise ValueError('Trajectory line input is not supported.')
 
-    # 隐式表面重建，根据一堆网格点来隐式地构建表面， 待修改
-    def create_implict_surface_reconstruct(self, sample_spacing,
-                                           neighbour_size=20) -> pv.PolyData:
-        surface = vtkSurfaceReconstructionFilter()
-        poly_data = vtkPolyData
-        v_points = vtkPoints()
-        v_points.SetData(numpy_support.numpy_to_vtk(self.points))
-        poly_data.SetPoints(v_points)
-        surface.SetInputData(poly_data)
-        surface.SetNeighborhoodSize(neighbour_size)
-        surface.SetSampleSpacing(sample_spacing)
-        self.resolution = np.array([sample_spacing, sample_spacing, sample_spacing])
-        surface.Update()
-        surface = pv.wrap(surface)
-        return surface
-
-    # 用于对线上的点进行加密，输入的 line_points 的 x坐标必须是单调增的
-    def densify_line_xy_points_with_interp(self, line_points: np.ndarray, resolution_xy, is_smooth=False
-                                           , grid_bounds: np.ndarray = None, is_extent=False):
-        control_line_xy = line_points[:, 0:2]
-        x = control_line_xy[:, 0].ravel()
-        y = control_line_xy[:, 1].ravel()
-        if not is_smooth:
-            interp_1d = interp1d(x, y, kind='linear', fill_value="extrapolate")
-        else:
-            interp_1d = interp1d(x, y, kind='cubic', fill_value="extrapolate")
-        x_new = []
-        for x_i in np.arange(x.shape[0]):
-            item = x[x_i]
-            x_new.append(item)
-            if x_i != len(x) - 1:
-                dist = spt.distance.euclidean(control_line_xy[x_i], control_line_xy[x_i + 1], w=None)
-                p_num = math.floor(dist / resolution_xy) - 1
-                while p_num > 0 and (x[x_i + 1] - item) > 0:
-                    item = item + (x[x_i + 1] - item) / (p_num + 1)
-                    x_new.append(item)
-                    p_num -= 1
-        if is_extent and grid_bounds is not None:
-            if x[0] > grid_bounds[0]:  # x_min
-                x_new.insert(0, grid_bounds[0])
-            if x[len(x) - 1] < grid_bounds[1]:  # x_max
-                x_new.append(grid_bounds[1])
-        x_new = np.array(x_new)
-        y_new = interp_1d(x_new)
-        line_points_new = None
-        if line_points.shape[1] == 2:
-            line_points_new = np.array(list(zip(x_new, y_new)))
-        elif line_points.shape[1] == 3:
-            z = line_points[0, 2]
-            z_new = np.full_like(x_new, z)
-            line_points_new = np.array(list(zip(x_new, y_new, z_new)))
-        return line_points_new
-
     # 地质探针，待修改
     def prob_volume(self, grid, surf: pv.PolyData):
         probe_volume = vtkProbeFilter()
@@ -360,23 +314,34 @@ class Section(object):
 
     # 直线段的窗口裁剪 待修改
     def clip_line_with_bounds(self, line_points: np.ndarray, grid_bounds: np.ndarray):
-        return line_points
+        pass
 
-    def save(self, dir_path: str):
+    def save(self, dir_path: str, out_name: str = None):
         self.dir_path = dir_path
+        if not os.path.exists(self.dir_path):
+            os.makedirs(self.dir_path)
         if self.vtk_data is not None and isinstance(self.vtk_data, pv.PolyData):
             save_path = os.path.join(dir_path, self.tmp_dump_str)
             self.vtk_data.save(filename=save_path + '.vtk')
             self.vtk_data = 'dumped'
+        file_name = self.tmp_dump_str
+        if out_name is not None:
+            file_name = out_name
+        file_path = os.path.join(dir_path, file_name)
+        out_put = open(file_path, 'wb')
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
-    def load(self, dir_path: str):
-        save_path = os.path.join(dir_path, self.tmp_dump_str)
-        self.dir_path = dir_path
-        if self.vtk_data == 'dumped':
-            if os.path.exists(save_path + '.vtk'):
-                self.vtk_data = pv.read(filename=save_path + '.vtk')
-            else:
-                raise ValueError('vtk data file does not exist')
+    def load(self):
+        if self.dir_path is not None:
+            save_path = os.path.join(self.dir_path, self.tmp_dump_str)
+            if self.vtk_data == 'dumped':
+                if os.path.exists(save_path + '.vtk'):
+                    self.vtk_data = pv.read(filename=save_path + '.vtk')
+                else:
+                    raise ValueError('vtk data file does not exist')
 
 
 class SectionSet(object):
@@ -386,6 +351,7 @@ class SectionSet(object):
         self.name = name
         self.dir_path = dir_path
         self.tmp_dump_str = 'tmp_secs' + str(int(time.time()))
+        self.vtk_data = None
 
     def save_object(self, dir_path=None):
         file_path = os.path.join(dir_path, self.tmp_dump_str)
@@ -407,6 +373,19 @@ class SectionSet(object):
         if len(points_data_list) > 0:
             points_data_list = PointSet.points_data_merge(points_data_list=points_data_list)
         return points_data_list
+
+    def show(self):
+        if len(self.sections) > 0:
+            sec_list = []
+            for sec in self.sections:
+                if isinstance(sec, Section):
+                    if sec.vtk_data is not None:
+                        sec_list.append(sec)
+            if len(sec_list) > 0:
+                secs = pv.MultiBlock()
+                for sec in sec_list:
+                    secs.append(sec.vtk_data)
+                secs.plot()
 
     def get_section(self, idx):
         if idx < 0 or idx >= len(self.sections):

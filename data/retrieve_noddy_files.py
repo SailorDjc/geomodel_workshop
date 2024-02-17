@@ -30,7 +30,7 @@ class NoddyModelData(object):
         env_file_path = os.path.join(cur_dir, '../env.txt')
         if update_grid:
             self.root = root  # 数据集根目录
-            self.output_dir = os.path.join(root, '', save_dir_name)
+            self.output_dir = os.path.join(root, 'data', save_dir_name)
             env_args = dict()
             env_args['root'] = root
             env_args['output_dir'] = self.output_dir
@@ -42,20 +42,20 @@ class NoddyModelData(object):
                 self.output_dir = env_args['output_dir']
             else:
                 raise ValueError('There is not previous data log. Need to set update_grid value to true.')
-        self.raw_dir_path = os.path.join(root, '', 'raw_data')  # raw_data: 存放tar格式数据集
-        self.his_dir_path = os.path.join(root, '', 'his_dir')  # 按模型分文件夹存放，.his .grv .g00 .g12 .mag 等文件
+        self.raw_dir_path = os.path.join(root, 'data', 'raw_data')  # raw_data: 存放tar格式数据集
+        self.his_dir_path = os.path.join(root, 'data', 'his_dir')  # 按模型分文件夹存放，.his .grv .g00 .g12 .mag 等文件
         # 模型格网文件 .vtr 格式，可以直接读取，文件夹中建立模型列表txt文件
 
         # 数据日志记录文件
         # dataset - model_files  记录有哪些数据集  {dataset:[data_name]}
-        self.dataset_list_path = os.path.join(root, '', 'dataset_list_log.pkl')  # 记录有哪些模型文件数据集
+        self.dataset_list_path = os.path.join(root, 'data', 'dataset_list_log.pkl')  # 记录有哪些模型文件数据集
         # model_files-file_path  记录每个模型对应的his文件地址  {model_name:his_file_path}
-        self.model_his_list_path = os.path.join(root, '', 'model_his_list_log.pkl')  # 记录每一个模型his文件的地址列表
+        self.model_his_list_path = os.path.join(root, 'data', 'model_his_list_log.pkl')  # 记录每一个模型his文件的地址列表
         # vtr_model_list  记录每个dataset存储了哪些vtk_model  {dataset:[vtk_model_name]} 形式上与dataset_list_log一致
-        self.grid_model_list_path = os.path.join(root, '', 'grid_model_list_log.pkl')  # 记录已生成的格网模型列表
+        self.grid_model_list_path = os.path.join(root, 'data', 'grid_model_list_log.pkl')  # 记录已生成的格网模型列表
         # noddy model grid param   记录了模型的基本参数 {model_name:[nx, ny, nz, cell_x, cell_y, cell_z, extent_x,
         #                                                                  extent_y, extent_z]}
-        self.model_param_list_path = os.path.join(root, '', 'model_param_list_log.pkl')  # noddy格网模型参数
+        self.model_param_list_path = os.path.join(root, 'data', 'model_param_list_log.pkl')  # noddy格网模型参数
         # 加载数据集元数据
         self.dataset_list_log, self.model_his_list_log, self.grid_model_list_log, self.model_param_list_log = \
             self.load_log_files()
@@ -214,7 +214,7 @@ class NoddyModelData(object):
         return path_list
 
     # return dict {model_name: model_path}
-    def get_noddy_model_list_path_by_names(self, model_name_list):
+    def get_noddy_model_list_path_by_names(self, model_name_list: list):
         model_list_path = {}
         for model_name in model_name_list:
             dn = None
@@ -238,21 +238,28 @@ class NoddyModelData(object):
         else:
             return None
 
-    def get_grid_model_by_idx(self, dataset: str, idx: [int]) -> list:
+    def get_grid_model_by_idx(self, dataset: str, idx):
         model_num = self.get_model_num(dataset=dataset)
         model_names = self.get_noddy_model_list_names(dataset=dataset)
         if isinstance(idx, list):
-            model_names = [model_names[id] for id in idx if 0 <= id < model_num]
+            out_model_names = [model_names[id] for id in idx if 0 <= id < model_num]
             grid_model_path_map = self.get_noddy_model_list_path_by_names(model_names)
             grid_models = []
-            for model_name in model_names:
+            for model_name in out_model_names:
                 if model_name in grid_model_path_map.keys():
                     bin_path = grid_model_path_map[model_name] + '.pkl'
                     grid_model = self.load_data(bin_path)
                     grid_models.append(grid_model)
             return grid_models
+        elif isinstance(idx, int) and 0 <= idx < model_num:
+            model_name = model_names[idx]
+            grid_model_path_map = self.get_noddy_model_list_path_by_names([model_name])
+            if model_name in grid_model_path_map.keys():
+                bin_path = grid_model_path_map[model_name] + '.pkl'
+                grid_model = self.load_data(bin_path)
+                return grid_model
         else:
-            print('idx is not list type.')
+            print('idx is error.')
             return []
 
     # dataset='FOLD_FOLD_FOLD'

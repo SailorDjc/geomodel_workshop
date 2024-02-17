@@ -2,6 +2,7 @@ from data_structure.grids import Grid
 from data_structure.points import PointSet, get_bounds_from_coords
 from data_structure.boreholes import BoreholeSet, Borehole
 from data_structure.sections import SectionSet, Section
+from data_structure.terrain import TerrainData
 import time
 import pickle
 import os
@@ -13,13 +14,13 @@ def load_object(file_path, gtype=None):
         raise ValueError('file is not exists.')
     with open(file_path, 'rb') as file:
         object = pickle.loads(file.read())
-        if not isinstance(object, (PointSet, BoreholeSet, Grid, Section, SectionSet, GeodataSet)):
-            raise ValueError("Unsupported data type.")
-        if gtype != object.__class__.__name__:
-            raise ValueError('The data type is inconsistent.')
+        if isinstance(object, (PointSet, BoreholeSet, Grid, Section, SectionSet, GeodataSet, TerrainData)):
+            if gtype is not None:
+                if gtype != object.__class__.__name__:
+                    raise ValueError('The data type is inconsistent.')
+            object.load()
         else:
-            dir_path = os.path.join(file_path, '..')
-            object.load(dir_path=dir_path)
+            raise ValueError("Unsupported data type.")
         return object
 
 
@@ -35,15 +36,6 @@ class GeodataSet(object):
         self.classes_num = 0
         self.classes = None
         self.label_dict = None
-
-    def save_object(self, dir_path=None):
-        file_path = os.path.join(dir_path, self.tmp_dump_str)
-        out_put = open(file_path, 'wb')
-        self.save(dir_path=dir_path)
-        out_str = pickle.dumps(self)
-        out_put.write(out_str)
-        out_put.close()
-        return self.__class__.__name__, file_path
 
     def append(self, data):
         if not isinstance(data, (PointSet, Borehole, BoreholeSet, SectionSet, Section, Grid)):
@@ -129,13 +121,23 @@ class GeodataSet(object):
     def __len__(self):
         return len(self.geodata_list)
 
-    def save(self, dir_path: str):
+    def save(self, dir_path: str, out_name: str = None):
         self.dir_path = dir_path
+        if not os.path.exists(self.dir_path):
+            os.makedirs(self.dir_path)
         for s_id in np.arange(len(self.geodata_list)):
-            self.geodata_list[s_id] = self.geodata_list[s_id].save_object(dir_path=dir_path)
+            self.geodata_list[s_id] = self.geodata_list[s_id].save(dir_path=dir_path)
+        file_name = self.tmp_dump_str
+        if out_name is not None:
+            file_name = out_name
+        file_path = os.path.join(dir_path, file_name)
+        out_put = open(file_path, 'wb')
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
-    def load(self, dir_path=None):
-        self.dir_path = dir_path
+    def load(self):
         for s_id in np.arange(len(self.geodata_list)):
-            self.geodata_list[s_id] = load_object(file_path=self.geodata_list[s_id][0]
-                                                  , gtype=self.geodata_list[s_id][1])
+            self.geodata_list[s_id] = load_object(file_path=self.geodata_list[s_id][1]
+                                                  , gtype=self.geodata_list[s_id][0])

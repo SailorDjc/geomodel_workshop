@@ -14,11 +14,12 @@ import torch
 from geograph_parse import GeoMeshGraphParse
 from matplotlib import pyplot as plt
 import imageio as iio
+from threading import Thread
 
 matplotlib.use("TkAgg")
 
 
-# 生成基于规则网格的模型，规则网格已经在geodata中指定
+# 根据神经网络的预测值，生成基于网格的地质模型，网格已经在geodata中指定
 def visual_predicted_values_model(geodata: GeoMeshGraphParse, cell_values, is_show=True, save_path=None):
     if isinstance(cell_values, torch.Tensor):
         cell_values = cell_values.cpu().numpy()
@@ -76,6 +77,7 @@ colors_default = ["ff0000", "28e5da", "0000ff", "ffff00", "c8bebe", "f79292", "f
                   "d785ec", "9d5b13", "e4e0b1", "894509", "af45f5", "fff000", ]
 
 
+# pyvista窗体截图保存事件回调
 class SaveGraphicCallBack:
     def __init__(self, plotter, dir_path=None):
         self.plotter = plotter
@@ -87,24 +89,6 @@ class SaveGraphicCallBack:
                 os.makedirs(self.output)
 
     def __call__(self, *args, **kwargs):
-        file_name = 'pic_' + str(int(time.time())) + '.png'
-        self.plotter.screenshot(filename=os.path.join(self.output, file_name))
-        print('Picture {} has been saved to {}.'.format(file_name, self.output))
-
-
-class SaveVideoCallBack:
-    def __init__(self, plotter, dir_path=None, vtime=10):
-        self.plotter = plotter
-        self.output = dir_path
-        self.vtime = vtime
-        if self.output is None:
-            self.output = os.path.dirname(os.path.abspath(__file__))
-            dir_name = str(int(time.time()))
-            self.output = os.path.join(self.output, '../output', dir_name)
-            if not os.path.exists(self.output):
-                os.makedirs(self.output)
-
-    def __call__(self, state, *args, **kwargs):
         file_name = 'pic_' + str(int(time.time())) + '.png'
         self.plotter.screenshot(filename=os.path.join(self.output, file_name))
         print('Picture {} has been saved to {}.'.format(file_name, self.output))
@@ -186,6 +170,7 @@ def control_visibility_with_layer_label(geo_object_list, lookup_table=None, grid
         callbace_opacity = SetOpacityCallback(actor_list=_actor_list)
         plotter.add_slider_widget(callbace_opacity, value=1, rng=(0, 1), title='Opacity Of Grid'
                                   , pointa=(0.8, 0.1), pointb=(0.95, 0.1))
+    # 截屏按钮
     callback = SaveGraphicCallBack(plotter=plotter)
     w_size = plotter.window_size
     b_x = w_size[0] * 0.9
@@ -222,6 +207,7 @@ def control_threshold_with_scalars(grid: Grid, lookup_table=None):
 # lookup_table: vtkLookupTable, optional
 # only_section: boolen, True 只显示剖面
 # save_path: str  .vtp
+# 读Grid网格模型的平面剖切窗体
 def control_clip_with_plane(grid: Grid, lookup_table=None, only_section=False, save_path=None):
     plotter = pv.Plotter()
     classes_list = grid.get_classes()
@@ -247,6 +233,7 @@ def control_clip_with_plane(grid: Grid, lookup_table=None, only_section=False, s
     return plotter
 
 
+# 对Grid网格模型的样条曲面剖切窗体
 # save_path: str   .vtp
 def control_clip_with_spline(grid: Grid, lookup_table=None, spline_points: np.ndarray = None, save_path=None):
     plotter = pv.Plotter()
@@ -316,7 +303,7 @@ def confuse_matrix_model(ori_model, pred_model, labels_name, title=None, save_pa
     plot_matrix(class_scalar, class_pred, labels_name, title, save_path=save_path)
 
 
-# 显示混淆矩阵
+# 生成混淆矩阵
 def plot_matrix(y_true, y_pred, labels_name, title=None, thresh=0.8, axis_labels=None, save_path=None):
     # 利用sklearn中的函数生成混淆矩阵并归一化
     cm = metrics.confusion_matrix(y_true, y_pred, labels=labels_name, sample_weight=None)  # 生成混淆矩阵
@@ -443,3 +430,32 @@ def create_gif(image_list, gif_path, duration=1):
 # build_plot_from_horizon_metrics(y, r, s, "test2.png")
 #
 # t = 5
+# pyvista窗体录频事件回调
+# class SaveVideoCallBack:
+#     def __init__(self, plotter, dir_path=None, vtime=10):
+#         self.plotter = plotter
+#         self.output = dir_path
+#         self.vtime = vtime
+#         self.thread = None
+#         if self.output is None:
+#             self.output = os.path.dirname(os.path.abspath(__file__))
+#             dir_name = str(int(time.time()))
+#             self.output = os.path.join(self.output, '../output', dir_name)
+#             if not os.path.exists(self.output):
+#                 os.makedirs(self.output)
+#         self.image_list = []
+#
+#     def __call__(self, state, *args, **kwargs):
+#         while state:
+#             image = self.plotter.screenshot()
+#             self.image_list.append(image)
+#         if len(self.image_list) > 0:
+#             file_name = 'pic_' + str(int(time.time())) + '.gif'
+#             gif_path = os.path.join(self.output, file_name)
+#             if isinstance(self.image_list[0], np.ndarray):
+#                 frames = self.image_list
+#             else:
+#                 return
+#             iio.mimsave(gif_path, frames, format='GIF', duration=self.vtime)
+#             print('Picture {} has been saved to {}.'.format(file_name, self.output))
+#             self.image_list = []

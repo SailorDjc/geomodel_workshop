@@ -18,6 +18,8 @@ from gme_trainer import GmeTrainer, GmeTrainerConfig, GraphTransConfig
 from models.model import GraphTransfomer
 from data.retrieve_noddy_files import NoddyModelData
 from data_structure.grids import Grid
+from data_structure.geodata import load_object
+
 # from geograph_parse import GeoMeshGraphParse
 # from data_structure.data_sampler import GeoGridDataSampler
 # from data_structure.boreholes import BoreholeSet, Borehole
@@ -86,12 +88,12 @@ if __name__ == '__main__':
     trainer.train(data_split_idx=model_idx, has_test_label=True)
 
     from utils.plot_utils import control_visibility_with_layer_label
+
     grid_model = Grid(grid_vtk_path=os.path.join(gme_models.processed_dir, 'vtk_model.vtk'))
     boreholes_data = gme_models.sample_data[0]  # boreholes_data,
     plotter_2 = control_visibility_with_layer_label(geo_object_list=[grid_model, boreholes_data], grid_smooth=False
                                                     , show_edge=False)
     plotter_2.show()
-
 
     #####
     # gme_models.set_dat_file_regular_grid(

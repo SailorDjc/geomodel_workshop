@@ -3,7 +3,7 @@ from torch.utils.data import Dataset
 import numpy as np
 from vtkmodules.all import vtkStructuredGrid, vtkImageData, vtkPoints, vtkCellCenters
 from vtkmodules.util import numpy_support
-from utils.vtk_utils import add_np_property_to_vtk_object, create_closed_surface_by_convexhull_2d
+from utils.vtk_utils import add_np_property_to_vtk_object, create_closed_surface_by_convexhull_2d, create_vtk_grid_by_rect_bounds
 import pyvista as pv
 import scipy.spatial as spt
 from data_structure.points import PointSet, get_bounds_from_coords
@@ -110,22 +110,21 @@ class Grid(object):
         self.classes = None  # 类别
 
         self.tmp_dump_str = 'tmp_grid' + str(int(time.time()))
+        # 当gird为规则网格，即沿坐标轴方向的长方体，dims表示轴向网格划分，不规则网格dims为None
+        self.dims = None
 
         # 外部输入的vtk规则网格
         self.vtk_data = grid_vtk
         if self.vtk_data is None and (grid_vtk_path is None or not os.path.exists(grid_vtk_path)):
-            self.dims = None
-            self.bounds = None
+            pass
         else:
-            # 传入的grid_vtk优先级更高，传入路径次之
+            # 传入的grid_vtk优先级更高，传入vtk文件路径次之
             if self.vtk_data is None and grid_vtk_path is not None and os.path.exists(grid_vtk_path):
                 self.vtk_data = pv.read(grid_vtk_path)
                 if name is None:
                     self.name = os.path.basename(grid_vtk_path).split('.')[0]
             if isinstance(self.vtk_data, (pv.RectilinearGrid, pv.StructuredGrid, pv.UnstructuredGrid)):
-                if isinstance(self.vtk_data, pv.UnstructuredGrid):
-                    self.dims = None
-                else:
+                if isinstance(self.vtk_data, (pv.RectilinearGrid, pv.StructuredGrid)):
                     self.dims = self.vtk_data.GetDimensions()
                 self.bounds = np.array(self.vtk_data.bounds)
                 self.grid_points = self.vtk_data.cell_centers().points
@@ -133,15 +132,6 @@ class Grid(object):
                 self.grid_points_num = self.grid_points.shape[0]
         # 对象拷贝
         self.dir_path = dir_path
-
-    def save_object(self, dir_path=None):
-        file_path = os.path.join(dir_path, self.tmp_dump_str)
-        out_put = open(file_path, 'wb')
-        self.save(dir_path=dir_path)
-        out_str = pickle.dumps(self)
-        out_put.write(out_str)
-        out_put.close()
-        return self.__class__.__name__, file_path
 
     def get_classes(self):
         if self.classes is None:
@@ -197,42 +187,6 @@ class Grid(object):
             self.grid_points_series = old_label
         self.__add_properties_to_vtk_object_if_present(grid=self)
 
-    # 可以自由创建 1维、2维、3维网格，如果是规则沿轴向，则只需要dim和bounds参数，也可以通过分割间断点序列xx,yy,zz来自定义网格
-    @staticmethod
-    def create_vtk_grid_by_rect_bounds(dim: np.ndarray = None, bounds: np.ndarray = None, grid_buffer_xy=0):
-        if dim is None or bounds is None:
-            raise ValueError('Bounds array can not be None')
-        else:
-            nx = dim[0]
-            ny = dim[1]
-            nz = dim[2]
-            min_x = bounds[0] - grid_buffer_xy
-            max_x = bounds[1] + grid_buffer_xy
-            min_y = bounds[2] - grid_buffer_xy
-            max_y = bounds[3] + grid_buffer_xy
-            min_z = bounds[4]
-            max_z = bounds[5]
-            xrng = np.linspace(start=min_x, stop=max_x, num=nx)
-            yrng = np.linspace(start=min_y, stop=max_y, num=ny)
-            zrng = np.linspace(start=min_z, stop=max_z, num=nz)
-            vtk_grid = pv.RectilinearGrid(xrng, yrng, zrng)
-            return vtk_grid
-
-    # 在规则格网的基础上，通过一个2d凸包范围切割格网
-    def create_vtk_grid_by_unregular_bounds(self, dims: np.ndarray, bounds: np.ndarray
-                                            , convexhull_2d: np.ndarray, cell_density: np.ndarray = None):
-        convex_surface, grid_outline = create_closed_surface_by_convexhull_2d(bounds=bounds
-                                                                              , convexhull_2d=convexhull_2d)
-        if cell_density is None:
-            if dims is None:
-                raise ValueError('Need to input dims parameters.')
-            x_r = (bounds[1] - bounds[0]) / dims[0]
-            y_r = (bounds[3] - bounds[2]) / dims[1]
-            z_r = (bounds[5] - bounds[4]) / dims[2]
-            cell_density = np.array([x_r, y_r, z_r])
-        sample_grid = pv.voxelize(convex_surface, density=cell_density)
-        return sample_grid, grid_outline
-
     def set_vtk_grid(self, grid_vtk):
         if isinstance(grid_vtk, (pv.RectilinearGrid, vtkImageData)):
             self.dims = grid_vtk.GetDimensions()
@@ -258,7 +212,7 @@ class Grid(object):
         if self.vtk_data is None:
             raise ValueError('The original grid is empty.')
         else:
-            new_vtk_grid = self.create_vtk_grid_by_rect_bounds(dim=dim, bounds=self.bounds)
+            new_vtk_grid = create_vtk_grid_by_rect_bounds(dim=dim, bounds=self.bounds)
             new_vtk_grid_points = new_vtk_grid.cell_centers().points
 
             ckt = spt.cKDTree(self.grid_points)
@@ -415,21 +369,33 @@ class Grid(object):
         else:
             raise ValueError('Please input an object of Grid class.')
 
-    def save(self, dir_path: str):
+    def save(self, dir_path: str, out_name: str = None):
         self.dir_path = dir_path
+        if not os.path.exists(self.dir_path):
+            os.makedirs(self.dir_path)
         if self.vtk_data is not None and isinstance(self.vtk_data, (pv.RectilinearGrid, pv.UnstructuredGrid)):
             save_path = os.path.join(dir_path, self.tmp_dump_str + '.vtk')
             self.vtk_data.save(filename=save_path)
             self.vtk_data = 'dumped'
+        file_name = self.tmp_dump_str
+        if out_name is not None:
+            file_name = out_name
+        file_path = os.path.join(dir_path, file_name)
+        out_put = open(file_path, 'wb')
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
-    def load(self, dir_path: str):
-        if self.vtk_data == 'dumped':
-            save_path = os.path.join(dir_path, self.tmp_dump_str + '.vtk')
-            self.dir_path = dir_path
-            if os.path.exists(save_path):
-                self.vtk_data = pv.read(filename=save_path)
-            else:
-                raise ValueError('vtk data file does not exist')
+    # 加载该类附属的vtk模型
+    def load(self):
+        if self.dir_path is not None:
+            if self.vtk_data == 'dumped':
+                save_path = os.path.join(self.dir_path, self.tmp_dump_str + '.vtk')
+                if os.path.exists(save_path):
+                    self.vtk_data = pv.read(filename=save_path)
+                else:
+                    raise ValueError('vtk data file does not exist')
 
 
 class GridPointDataDistributedSampler(object):

@@ -250,14 +250,14 @@ class BoreholeSet(object):
             # 对象拷贝
         self.dir_path = dir_path
 
-    def save_object(self, dir_path=None):
-        file_path = os.path.join(dir_path, self.tmp_dump_str)
-        out_put = open(file_path, 'wb')
-        self.save(dir_path=dir_path)
-        out_str = pickle.dumps(self)
-        out_put.write(out_str)
-        out_put.close()
-        return self.__class__.__name__, file_path
+    def search_by_rect2d(self, rect2d):
+        x_min, x_max, y_min, y_max = rect2d[0], rect2d[1], rect2d[2], rect2d[3]
+        search_boreholes_list = BoreholeSet()
+        for one_borehole in self.boreholes_list:
+            pos_2d = one_borehole.top_pos[0:2]
+            if x_min <= pos_2d[0] <= x_max and y_min <= pos_2d[1] <= y_max:
+                search_boreholes_list.append(one_borehole=one_borehole)
+        return search_boreholes_list
 
     def get_classes(self):
         if self.classes is None:
@@ -375,6 +375,17 @@ class BoreholeSet(object):
             top_points.append(top_point)
         top_points = np.array(top_points)
         return top_points
+
+    def get_top_points_data(self):
+        top_points = []
+        top_labels = []
+        for one_borehole in self.boreholes_list:
+            top_point = one_borehole.get_top_point()
+            top_points.append(top_point)
+            top_labels.append(one_borehole.holelayer_list[0].layer_label)
+        top_points = np.array(top_points)
+        top_points_data = PointSet(points=top_points, point_labels=np.array(top_labels))
+        return top_points_data
 
     def get_points_data(self, only_interface=False):
         points = []
@@ -530,20 +541,31 @@ class BoreholeSet(object):
     def __getitem__(self, idx):
         return self.boreholes_list[idx]
 
-    def save(self, dir_path: str):
+    def save(self, dir_path: str, out_name: str = None):
         self.dir_path = dir_path
+        if not os.path.exists(self.dir_path):
+            os.makedirs(self.dir_path)
         if self.vtk_data is not None and isinstance(self.vtk_data, pv.MultiBlock):
             num = self.vtk_data.n_blocks
             if num > 0:
                 save_path = os.path.join(dir_path, self.tmp_dump_str)
                 self.vtk_data.save(filename=save_path + '.vtm')
                 self.vtk_data = 'dumped'
+        file_name = self.tmp_dump_str
+        if out_name is not None:
+            file_name = out_name
+        file_path = os.path.join(dir_path, file_name)
+        out_put = open(file_path, 'wb')
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
-    def load(self, dir_path: str):
-        if self.vtk_data == 'dumped':
-            save_path = os.path.join(dir_path, self.tmp_dump_str)
-            self.dir_path = dir_path
-            if os.path.exists(save_path + '.vtm'):
-                self.vtk_data = pv.read(filename=save_path + '.vtm')
-            else:
-                raise ValueError('vtk data file does not exist')
+    def load(self):
+        if self.dir_path is not None:
+            if self.vtk_data == 'dumped':
+                save_path = os.path.join(self.dir_path, self.tmp_dump_str)
+                if os.path.exists(save_path + '.vtm'):
+                    self.vtk_data = pv.read(filename=save_path + '.vtm')
+                else:
+                    raise ValueError('vtk data file does not exist')

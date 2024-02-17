@@ -7,6 +7,7 @@ from sklearn.cluster import DBSCAN
 import time
 import os
 import pickle
+from utils.vtk_utils import get_bounds_from_coords
 from typing import List
 
 
@@ -27,40 +28,6 @@ def merge_bounds(bounds_a, bounds_b):  # : np.ndarray
     max_y = max(bounds_a[3], bounds_b[3])
     max_z = max(bounds_a[5], bounds_b[5])
     bounds = np.array([min_x, max_x, min_y, max_y, min_z, max_z])
-    return bounds
-
-
-# 获取点云数据集的包围盒
-# Parameters: coords 输入是np.array 的二维数组，且坐标是3D坐标
-# xy_buffer z_buffer 为大于0的浮点数，是包围盒的缓冲距离
-def get_bounds_from_coords(coords: np.ndarray, xy_buffer=0, z_buffer=0):
-    assert coords.ndim == 2, "input coords array is not 2D array"
-    assert coords.shape[1] == 3, "input coords are not 3D"
-
-    coord_min = coords.min(axis=0)
-    coord_max = coords.max(axis=0)
-
-    x_min = coord_min[0]
-    x_max = coord_max[0]
-    y_min = coord_min[1]
-    y_max = coord_max[1]
-    z_min = coord_min[2]
-    z_max = coord_max[2]
-    bounds = np.array([x_min, x_max, y_min, y_max, z_min, z_max])
-    if xy_buffer != 0 or z_buffer != 0:
-        if xy_buffer == 0:
-            xy_buffer = z_buffer
-        if z_buffer == 0:
-            z_buffer = xy_buffer
-        dx = bounds[1] - bounds[0]
-        dy = bounds[3] - bounds[2]
-        dz = bounds[5] - bounds[4]
-        bounds[0] = bounds[0] - xy_buffer * dx
-        bounds[1] = bounds[1] + xy_buffer * dx
-        bounds[2] = bounds[2] - xy_buffer * dy
-        bounds[3] = bounds[3] + xy_buffer * dy
-        bounds[4] = bounds[4] - z_buffer * dz
-        bounds[5] = bounds[5] + z_buffer * dz
     return bounds
 
 
@@ -85,8 +52,10 @@ class PointSet(object):
         self.labels = point_labels
         self.points_num = 0
         self.bounds = None
+        self.nidm = None
         if self.points is not None:
             self.points_num = self.points.shape[0]
+            self.nidm = self.points.shape[1]
             self.bounds = get_bounds_from_coords(self.points)
         # 矢量
         self.vectors = vectors
@@ -107,15 +76,6 @@ class PointSet(object):
         self.buffer_dist = 5  # 点控制缓冲半径
         # 对象拷贝
         self.dir_path = dir_path
-
-    def save_object(self, dir_path=None):
-        file_path = os.path.join(dir_path, self.tmp_dump_str)
-        out_put = open(file_path, 'wb')
-        self.save(dir_path=dir_path)
-        out_str = pickle.dumps(self)
-        out_put.write(out_str)
-        out_put.close()
-        return self.__class__.__name__, file_path
 
     def is_empty(self):
         if self.points is not None and self.labels is not None:
@@ -311,11 +271,11 @@ class PointSet(object):
             self.scalars_grad_norm = {}
         self.scalars_grad_norm[scalar_name] = scalars_grad_norm
 
-    # 获取点集合凸包，z值无效
+    # 获取点集合凸包，z值无效, 起始点与终止点不重复
     def get_convexhull_2d(self) -> np.ndarray:  # 3D points array
         if self.points is None:
             raise ValueError('Need to set points first.')
-        points_2d = self.points[0: 2]
+        points_2d = self.points[:, 0: 2]
         hull = spt.ConvexHull(points_2d)
         simplex_idx = []
         for simplex in hull.simplices:
@@ -351,8 +311,10 @@ class PointSet(object):
     def __getitem__(self, idx):
         return self.points[idx]
 
-    def save(self, dir_path: str):
+    def save(self, dir_path: str, out_name: str = None):
         self.dir_path = dir_path
+        if not os.path.exists(self.dir_path):
+            os.makedirs(self.dir_path)
         save_path = os.path.join(dir_path, self.tmp_dump_str)
         if self.vtk_point_data is not None and isinstance(self.vtk_point_data, pv.PolyData):
             self.vtk_point_data.save(filename=save_path + '_p.vtk')
@@ -360,20 +322,29 @@ class PointSet(object):
         if self.vtk_vector_data is not None and isinstance(self.vtk_vector_data, pv.PolyData):
             self.vtk_vector_data.save(filename=save_path + '_v.vtk')
             self.vtk_vector_data = 'dumped'
+        file_name = self.tmp_dump_str
+        if out_name is not None:
+            file_name = out_name
+        file_path = os.path.join(dir_path, file_name)
+        out_put = open(file_path, 'wb')
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
-    def load(self, dir_path: str):
-        save_path = os.path.join(dir_path, self.tmp_dump_str)
-        self.dir_path = dir_path
-        if self.vtk_point_data == 'dumped':
-            if os.path.exists(save_path + '_p.vtk'):
-                self.vtk_point_data = pv.read(filename=save_path + '_p.vtk')
-            else:
-                raise ValueError('vtk data file does not exist')
-        if self.vtk_vector_data == 'dumped':
-            if os.path.exists(save_path + '_v.vtk'):
-                self.vtk_vector_data = pv.read(filename=save_path + '_v.vtk')
-            else:
-                raise ValueError('vtk data file does not exist')
+    def load(self):
+        if self.dir_path is not None:
+            save_path = os.path.join(self.dir_path, self.tmp_dump_str)
+            if self.vtk_point_data == 'dumped':
+                if os.path.exists(save_path + '_p.vtk'):
+                    self.vtk_point_data = pv.read(filename=save_path + '_p.vtk')
+                else:
+                    raise ValueError('vtk data file does not exist')
+            if self.vtk_vector_data == 'dumped':
+                if os.path.exists(save_path + '_v.vtk'):
+                    self.vtk_vector_data = pv.read(filename=save_path + '_v.vtk')
+                else:
+                    raise ValueError('vtk data file does not exist')
 
 
 if __name__ == "__main__":
