@@ -28,10 +28,12 @@ if __name__ == '__main__':
     xm_file_path = os.path.join(root_path, 'data', '厦门数据集', '三级编码', 'sample_drills_big.dat')
     # # 从外部数据文本中加载钻孔数据
     reader = ReadExportFile()
-    boreholes_data_0 = reader.read_boreholes_data_from_text_file(dat_file_path=xm_file_path)
-    boreholes_data_1 = reader.read_boreholes_data_from_text_file(dat_file_path=file_path)
-    bounds = boreholes_data_1.bounds
-    boreholes_data_2 = boreholes_data_0.search_by_rect2d(rect2d=bounds)
+    # boreholes_data_0 = reader.read_boreholes_data_from_text_file(dat_file_path=xm_file_path)
+    # boreholes_data_1 = reader.read_boreholes_data_from_text_file(dat_file_path=file_path)
+    # bounds = boreholes_data_1.bounds
+    # boreholes_data_2 = boreholes_data_0.search_by_rect2d(rect2d=bounds)
+    # boreholes_data_2.export_boreholes_dict_dat_file(file_path=os.path.join(root_path, 'data', 'new_data.dat'))
+    boreholes_data_2 = reader.read_boreholes_data_from_text_file(dat_file_path=os.path.join(root_path, 'data', 'new_data.dat'))
     # # 导出顶点坐标
     # top_points = boreholes_data_2.get_top_points()
     # export_data = pd.DataFrame(top_points)
@@ -39,13 +41,9 @@ if __name__ == '__main__':
 
     # boreholes_data_0.show()
     # 地质数据的容器, 使用钻孔或散点或剖面建模，将数据都加入到容器中，容器中的数据会联合约束地质模型的构建
-    terrain = TerrainData()
-    terrain.set_control_points(control_points=boreholes_data_2.get_top_points_data())
-    terrain.execute()
-    terrain.vtk_data.plot()
 
     gd = GeodataSet()
-    gd.append(boreholes_data_1)
+    gd.append(boreholes_data_2)
     model_idx = 0
     gd.standardize_labels()
     # 将三维模型规则网格数据构建为图网格数据

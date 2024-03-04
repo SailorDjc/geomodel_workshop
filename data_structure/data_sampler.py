@@ -153,7 +153,7 @@ class GeoDataSampler(object):
         sample_points = points_data.points
         sample_labels = points_data.labels
         buffer_dist = points_data.buffer_dist
-        grid_points = pv.PolyData(self._base_grid_labels)
+        grid_points = pv.PolyData(self._base_grid_points)
         new_point_data_list = []
         for p_it, one_point in enumerate(sample_points):
             # 设置一个带有缓冲半径的球体

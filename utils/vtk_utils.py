@@ -37,19 +37,6 @@ def create_implict_surface_reconstruct(points, sample_spacing,
     return surface
 
 
-def add_terrain_to_base_grid(terrain, base_grid):
-    grid_bounds = base_grid.bounds
-    terrain.extend_mesh_from_surface_by_bounds(bounds=grid_bounds)
-    vol = vtk_unstructured_grid_to_vtk_polydata(terrain.vtk_data)
-    vol = vol.triangulate()
-    base_grid = vtk_unstructured_grid_to_vtk_polydata(base_grid)
-    base_grid = base_grid.triangulate()
-    intersect = base_grid.boolean_intersection(vol)
-    intersect.plot()
-    other = base_grid.boolean_difference(intersect)
-    other.plot()
-
-
 def create_closed_surface_by_convexhull_2d(bounds: np.ndarray, convexhull_2d: np.ndarray):
     top_surface_points = copy.deepcopy(convexhull_2d)
     top_surface_points[:, 2] = bounds[5]  # z_max
@@ -248,6 +235,42 @@ def get_bounds_from_coords(coords: np.ndarray, xy_buffer=0, z_buffer=0):
         bounds[4] = bounds[4] - z_buffer * dz
         bounds[5] = bounds[5] + z_buffer * dz
     return bounds
+
+
+# bounds 必须是6元数
+def bounds_merge(bounds_a, bounds_b):
+    if bounds_a is None and bounds_b is not None:
+        return np.array(bounds_b)
+    elif bounds_a is not None and bounds_b is None:
+        return np.array(bounds_a)
+    elif bounds_a is not None and bounds_b is not None:
+        x_min = np.min([bounds_a[0], bounds_b[0]])
+        x_max = np.max([bounds_a[1], bounds_b[1]])
+        y_min = np.min([bounds_a[2], bounds_b[2]])
+        y_max = np.max([bounds_a[3], bounds_b[3]])
+        z_min = np.min([bounds_a[4], bounds_b[4]])
+        z_max = np.max([bounds_a[5], bounds_b[5]])
+        return np.array([x_min, x_max, y_min, y_max, z_min, z_max])
+    else:
+        raise ValueError('Input bounds is None.')
+
+
+# 包围盒求交
+def bounds_intersect(bounds_a, bounds_b, ignore_z=False):
+    min_x_a, max_x_a, min_y_a, max_y_a, min_z_a, max_z_a = bounds_a
+    min_x_b, max_x_b, min_y_b, max_y_b, min_z_b, max_z_b = bounds_b
+    min_x = max(min_x_a, min_x_b)
+    min_y = max(min_y_a, min_y_b)
+    min_z = max(min_z_a, min_z_b)
+    max_x = min(max_x_a, max_x_b)
+    max_y = min(max_y_a, max_y_b)
+    max_z = min(max_z_a, max_z_b)
+    if min_x > max_x or min_y > max_y:
+        return None
+    if ignore_z is False:
+        if min_z > max_z:
+            return None
+    return np.array([min_x, max_x, min_y, max_y, min_z, max_z])
 
 
 def create_continuous_property_vtk_array(name: str, arr: np.ndarray):
@@ -836,3 +859,16 @@ def reader_unstructured_mesh_file(mesh_filename: str):
     reader.Update()
 
     return reader.GetOutput()
+
+##
+# def add_terrain_to_base_grid(terrain, base_grid):
+#     grid_bounds = base_grid.bounds
+#     terrain.extend_mesh_from_surface_by_bounds(bounds=grid_bounds)
+#     vol = vtk_unstructured_grid_to_vtk_polydata(terrain.vtk_data)
+#     vol = vol.triangulate()
+#     base_grid = vtk_unstructured_grid_to_vtk_polydata(base_grid)
+#     base_grid = base_grid.triangulate()
+#     intersect = base_grid.boolean_intersection(vol)
+#     intersect.plot()
+#     other = base_grid.boolean_difference(intersect)
+#     other.plot()

@@ -77,6 +77,12 @@ class PointSet(object):
         # 对象拷贝
         self.dir_path = dir_path
 
+    def get_points(self):
+        return copy.deepcopy(self.points)
+
+    def get_labels(self):
+        return copy.deepcopy(self.labels)
+
     def is_empty(self):
         if self.points is not None and self.labels is not None:
             if self.points.shape[0] > 0:

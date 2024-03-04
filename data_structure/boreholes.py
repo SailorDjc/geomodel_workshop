@@ -519,6 +519,7 @@ class BoreholeSet(object):
             points_data = one_borehole.get_points_data(only_interface=only_interface)
             borehole_points = points_data.points
             borehole_series = points_data.labels
+            borehole_series = borehole_series.reshape(-1, 1)
             points_labels = np.concatenate((borehole_points, borehole_series), axis=1)
             borehole_id_points_labels_map[one_borehole.borehole_id] = points_labels
         return borehole_id_points_labels_map
@@ -528,8 +529,11 @@ class BoreholeSet(object):
         boreholes_dict_map = self.get_boreholes_id_points_labels_map(only_interface=only_interface)
         out_path = file_path
         pd_list = []
+        key_list = []
         for k, v in boreholes_dict_map.items():
+            key_n = [k for k_id in range(v.shape[0])]
             pd_n = pd.DataFrame(v)
+            pd_n.insert(loc=0, column='', value=key_n)
             pd_list.append(pd_n)
         pd_file = pd.concat(pd_list, axis=0)
         pd_file.dropna(axis=0, how='any')
