@@ -1,6 +1,6 @@
 # geomodel_workshop
 
-## 依赖环境
+## 依赖环境安装说明
 * pytorch
 * dgl
 * pyvista
@@ -36,3 +36,5 @@ pip install pytetgen
 依次安装 * pyproj Shapely GDAL Fiona geopandas rasterio 
 其中GDAL,Fiona,rasterio不可以用pip install安装，需要下载whl安装包进行离线安装，下载网址 https://www.lfd.uci.edu/~gohlke/pythonlibs/
 在选择whl包时，建议选择指定python的最高版本库，且注意包后缀为cp，意为使用的CPython实现，例如GDAL-3.4.3-cp38-cp38-win_amd64.whl。
+## 代码运行说明
+
