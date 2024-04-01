@@ -1,4 +1,5 @@
 # geomodel_workshop
+
 ## 依赖环境
 * pytorch
 * dgl
@@ -30,7 +31,7 @@
 pip install Cython==0.29.35  # 该版本支持python2的规则
 pip install pytetgen
 ```
-注：项目添加了地形曲面约束的模块，允许输入DEM的tiff文件生成地形面，因此需要引入rasterio库。
+注3：项目添加了地形曲面约束的模块，允许输入DEM的tiff文件生成地形面，因此需要引入rasterio库。
 * 安装rasterio [optional]
 依次安装 * pyproj Shapely GDAL Fiona geopandas rasterio 
 其中GDAL,Fiona,rasterio不可以用pip install安装，需要下载whl安装包进行离线安装，下载网址 https://www.lfd.uci.edu/~gohlke/pythonlibs/
