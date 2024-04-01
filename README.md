@@ -17,6 +17,7 @@
 注1：本项目使用的是python3.8环境，cuda11.6，
 1. pytorch安装命令为：conda install pytorch==1.13.1 torchvision==0.14.1 torchaudio==0.13.1 pytorch-cuda=11.6 -c pytorch -c nvidia <br />
 2. dgl安装命令为：conda install -c dglteam/label/cu116 dgl<br />
+3. 其他依赖项直接用pip install 依次安装即可。<br />
 
 注2：本项目引入了noddy地质模型数据集，引用了pynoddy库进行地质模拟模型的构建，该库的安装步骤需要做以下说明：
 1. pip install pynoddy  安装pynoddy库<br />
