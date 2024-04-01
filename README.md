@@ -10,7 +10,9 @@
 * matplotlib
 * xgboost
 * pytest
-* pynoddy <br /><br />
+* pynoddy
+* imageio
+* rdp <br /><br />
 注：本项目引入了noddy地质模型数据集，引用了pynoddy库进行地质模拟模型的构建，该库的安装步骤需要做以下说明：
 1. pip install pynoddy  安装pynoddy库<br />
 2. 下载noddy app可执行文件，下载网址是 http://www.tectonique.net/pynoddy 或在 [pynoddy的github仓库下](https://github.com/flohorovicic/pynoddy/tree/master/noddyapp)
@@ -22,3 +24,8 @@
 pip install Cython==0.29.35  # 该版本支持python2的规则
 pip install pytetgen
 ```
+注：项目添加了地形曲面约束的模块，允许输入DEM的tiff文件生成地形面，因此需要引入rasterio库。
+* 安装rasterio [optional]
+依次安装 * pyproj Shapely GDAL Fiona geopandas rasterio 
+其中GDAL,Fiona,rasterio不可以用pip install安装，需要下载whl安装包进行离线安装，下载网址 https://www.lfd.uci.edu/~gohlke/pythonlibs/
+在选择whl包时，建议选择指定python的最高版本库，且注意包后缀为cp，意为使用的CPython实现，例如GDAL-3.4.3-cp38-cp38-win_amd64.whl。

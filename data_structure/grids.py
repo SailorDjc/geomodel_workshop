@@ -98,6 +98,7 @@ class Grid(object):
         self.name = name
         self.grid_points = None
         self.grid_points_num = 0
+        self.is_rtc = False
         self.grid_points_series = None  # 地层标签 np.ndarray([self.grid_points_num, ])
         # -1表示待预测值
         self.scalar_series = None  # dict 每个地层一个标量场, key: value  key-地层名， value-标量场值
@@ -106,8 +107,8 @@ class Grid(object):
         self.scalar_grad_norm = None  # 正则化梯度  dict
 
         self.label_dict = None  # 标签映射字典
-        self.classes_num = 0  #
-        self.classes = None  # 类别
+        self._classes_num = 0  #
+        self._classes = None  # 类别
 
         self.tmp_dump_str = 'tmp_grid' + str(int(time.time()))
         # 当gird为规则网格，即沿坐标轴方向的长方体，dims表示轴向网格划分，不规则网格dims为None
@@ -124,25 +125,52 @@ class Grid(object):
                 if name is None:
                     self.name = os.path.basename(grid_vtk_path).split('.')[0]
             if isinstance(self.vtk_data, (pv.RectilinearGrid, pv.StructuredGrid, pv.UnstructuredGrid)):
-                if isinstance(self.vtk_data, (pv.RectilinearGrid, pv.StructuredGrid)):
-                    self.dims = self.vtk_data.GetDimensions()
-                self.bounds = np.array(self.vtk_data.bounds)
-                self.grid_points = self.vtk_data.cell_centers().points
-                self.standardize_labels_from_vtk_data(label_map=label_map)  # 处理标签
-                self.grid_points_num = self.grid_points.shape[0]
+                self.set_vtk_grid(grid_vtk=self.vtk_data, labels_standardize=label_map)
         # 对象拷贝
         self.dir_path = dir_path
 
-    def get_classes(self):
-        if self.classes is None:
-            if self.grid_points_series is None:
-                raise ValueError('This grid lacks labels.')
-            else:
-                self.classes = sorted(np.unique(self.grid_points_series))
-                self.classes_num = len(self.classes)
-                if -1 in self.classes:
-                    self.classes_num -= 1
-        return self.classes
+    @property
+    def classes(self):
+        self.get_classes()
+        return self._classes
+
+    @classes.setter
+    def classes(self, class_list):
+        self._classes = class_list
+
+    @property
+    def classes_num(self):
+        self.get_classes()
+        return self._classes_num
+
+    @classes_num.setter
+    def classes_num(self, num):
+        self._classes_num = num
+
+    def get_classes(self, ignore_label=-1):
+        if self.grid_points_series is None:
+            return None
+        else:
+            self._classes = np.unique(self.grid_points_series)
+            self._classes_num = len(self._classes)
+            if ignore_label in self._classes:
+                self._classes_num -= 1
+        return self._classes
+
+    @property
+    def points(self):
+        return self.grid_points
+
+    @points.setter
+    def points(self, points):
+        self.grid_points = points
+
+    def compute_relative_points(self, center):
+        if not self.is_rtc:
+            self.is_rtc = True
+            self.points = np.subtract(self.points, center)
+            if self.vtk_data is not None:
+                self.vtk_data.points = np.subtract(self.vtk_data.points, center)
 
     # 将labels映射为连续自然数，从0开始，或按照传入的字典进行标签转换 , default_value 默认未知标签为-1
     def standardize_labels_from_vtk_data(self, label_dict: dict = None, default_value=-1, label_map=True):
@@ -150,7 +178,8 @@ class Grid(object):
             raise ValueError('Default value should be less than 0.')
         series_labels = self.vtk_data.active_scalars
         if series_labels is None:
-            raise ValueError('The input data has not scalar values.')
+            return
+            # raise ValueError('The input data has not scalar values.')
         old_label = np.trunc(series_labels)
         unique_label = np.unique(old_label)
         sorted_label = sorted(unique_label)
@@ -187,14 +216,16 @@ class Grid(object):
             self.grid_points_series = old_label
         self.__add_properties_to_vtk_object_if_present(grid=self)
 
-    def set_vtk_grid(self, grid_vtk):
-        if isinstance(grid_vtk, (pv.RectilinearGrid, vtkImageData)):
+    def set_vtk_grid(self, grid_vtk, labels_standardize=False):
+        if isinstance(grid_vtk, (pv.RectilinearGrid, vtkImageData, pv.StructuredGrid)):
             self.dims = grid_vtk.GetDimensions()
         else:
             self.dims = None
         self.bounds = np.array(grid_vtk.bounds)
         self.grid_points = grid_vtk.cell_centers().points
         self.grid_points_series = grid_vtk.active_scalars
+        if labels_standardize:
+            self.standardize_labels_from_vtk_data()
         self.grid_points_num = self.grid_points.shape[0]
         self.vtk_data = grid_vtk
         self.scalar_series = None

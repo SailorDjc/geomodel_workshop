@@ -1,37 +1,38 @@
 import numpy as np
 import matplotlib
 import pyvista as pv
-from data_structure.boreholes import BoreholeSet, Borehole
-from data_structure.grids import Grid
+
+from data_structure.geodata import BoreholeSet, Borehole, Grid, Section
 import sklearn
 import os
 import copy
 import time
 from vtkmodules.all import vtkPolyDataMapper
 from sklearn import metrics
-import matplotlib.pyplot as pl
+import matplotlib.pyplot as plt
 import torch
 from geograph_parse import GeoMeshGraphParse
-from matplotlib import pyplot as plt
+# from matplotlib import pyplot as plt
 import imageio as iio
 from threading import Thread
+from utils.vtk_utils import CreateLUT
 
 matplotlib.use("TkAgg")
 
 
 # 根据神经网络的预测值，生成基于网格的地质模型，网格已经在geodata中指定
-def visual_predicted_values_model(geodata: GeoMeshGraphParse, cell_values, is_show=True, save_path=None):
+def visual_predicted_values_model(grid_data, cell_values, is_show=True, save_path=None):
     if isinstance(cell_values, torch.Tensor):
         cell_values = cell_values.cpu().numpy()
     if cell_values.ndim > 1:
         scalars = np.argmax(cell_values, axis=1)
     else:
         scalars = np.float32(cell_values)
-    gen_mesh = copy.deepcopy(geodata.data.vtk_data)
+    gen_mesh = copy.deepcopy(grid_data)
     gen_mesh.cell_data['stratum'] = scalars
     gen_mesh.set_active_scalars(name='stratum')
     if is_show:
-        visual_multiple_model([geodata.data.vtk_data, gen_mesh])
+        visual_multiple_model([grid_data, gen_mesh])
     if save_path is not None:
         gen_mesh.save(filename=save_path)
         print('Geodata has been saved to {}.'.format(save_path))
@@ -97,7 +98,9 @@ class SaveGraphicCallBack:
 # 控制每个地层的可见性， 可以展示钻孔与地质格网模型：
 # geo_object_list:  list
 # 输入参数为列表，[BoreholeSet, Grid]， 目前支持BoreholeSet和Grid两种类型的数据
-def control_visibility_with_layer_label(geo_object_list, lookup_table=None, grid_smooth=False, show_edge=False):
+def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None, grid_smooth=False, show_edge=False):
+    if not isinstance(geo_object_list, list):
+        raise ValueError('Input must be list.')
     plotter = pv.Plotter()
 
     plotter.track_click_position()
@@ -110,8 +113,9 @@ def control_visibility_with_layer_label(geo_object_list, lookup_table=None, grid
     max_value = max(classes_list)
     min_value = min(classes_list)
     if lookup_table is None:
-        lookup_table = pv.LookupTable('coolwarm', n_values=256)
-        lookup_table.scalar_range = (min_value, max_value)
+        # lookup_table = pv.LookupTable('Set1', n_values=256)  # coolwarm
+        # lookup_table.scalar_range = (min_value, max_value)
+        lookup_table = CreateLUT(min=min_value, max=max_value)
         lookup_table.below_range_color = 'white'
     _actor_list = []
 
@@ -134,14 +138,14 @@ def control_visibility_with_layer_label(geo_object_list, lookup_table=None, grid
                 self.actor_list[a_i].GetProperty().SetOpacity(slider_val)
 
     for geo_object in geo_object_list:
-        if not isinstance(geo_object, (BoreholeSet, Grid)):
+        if not isinstance(geo_object, (BoreholeSet, Grid, Section)):
             raise ValueError('Input data type is not supported.')
         else:
             grid_flag = False
             if isinstance(geo_object, Grid):
                 grid_flag = True
             vtk_data_dict = geo_object.detach_vtk_component_with_label()
-            for l_id, label in enumerate(vtk_data_dict.keys()):
+            for label in sorted(vtk_data_dict):
                 if isinstance(vtk_data_dict[label], pv.UnstructuredGrid) and grid_smooth:
                     vtk_data_dict[label] = vtk_data_dict[label].extract_geometry().smooth(boundary_smoothing=False
                                                                                           , n_iter=100
@@ -304,36 +308,92 @@ def confuse_matrix_model(ori_model, pred_model, labels_name, title=None, save_pa
 
 
 # 生成混淆矩阵
-def plot_matrix(y_true, y_pred, labels_name, title=None, thresh=0.8, axis_labels=None, save_path=None):
+def plot_matrix(y_true, y_pred, labels_name, title=None, threshold=0.8, axis_labels=None, save_path=None):
     # 利用sklearn中的函数生成混淆矩阵并归一化
     cm = metrics.confusion_matrix(y_true, y_pred, labels=labels_name, sample_weight=None)  # 生成混淆矩阵
     cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]  # 归一化
     # 画图，如果希望改变颜色风格，可以改变此部分的cmap=pl.get_cmap('Blues')处
-    pl.imshow(cm, interpolation='nearest', cmap=pl.get_cmap('Blues'))
-    pl.colorbar()  # 绘制图例
+    plt.imshow(cm, interpolation='nearest', cmap=plt.get_cmap('Blues'))
+    plt.colorbar()  # 绘制图例
     # 图像标题
-    if title is not None:
-        pl.title(title)
+    if title is None:
+        title = "confusion matrix"
+    plt.title(title)
     num_local = np.array(range(len(labels_name)))
     # 绘制坐标
     if axis_labels is None:
         axis_labels = labels_name
-    pl.xticks(num_local, axis_labels, rotation=45)  # 将标签印在x轴坐标上， 并倾斜45度
-    pl.yticks(num_local, axis_labels)  # 将标签印在y轴坐标上
-    pl.ylabel('True label')
-    pl.xlabel('Predicted label')
-    # 将百分比打印在相应的格子内，大于thresh的用白字，小于的用黑字
+    plt.xticks(num_local, axis_labels, rotation=45)  # 将标签印在x轴坐标上， 并倾斜45度
+    plt.yticks(num_local, axis_labels)  # 将标签印在y轴坐标上
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+    # 将百分比打印在相应的格子内，大于threshold的用白字，小于的用黑字
     for i in range(np.shape(cm)[0]):
         for j in range(np.shape(cm)[1]):
             if int(cm[i][j] * 100 + 0.5) > 0:
-                pl.text(j, i, format(int(cm[i][j] * 100 + 0.5), 'd') + '%',
-                        ha="center", va="center",
-                        color="white" if cm[i][j] > thresh else "black")  # 如果要更改颜色风格，需要同时更改此行
+                plt.text(j, i, format(int(cm[i][j] * 100 + 0.5), 'd') + '%',
+                         ha="center", va="center",
+                         color="white" if cm[i][j] > threshold else "black")  # 如果要更改颜色风格，需要同时更改此行
     # 显示
     if save_path is not None:
         pic_name = title + '.jpg'
         save_path = os.path.join(save_path, pic_name)
-        pl.savefig(save_path)
+        plt.savefig(save_path)
+
+
+# TP FN    实际值为正的总数 TP + FN
+# FP TN    实际值为负的总数 FP + TN
+#          预测值为正的总数 TP + FP
+#          预测值为负的总数 FN + TN
+# recall = TP / (TP + FN)
+# precision = TP / (TP + FP)
+# TPR = 灵敏度 = TP / (TP + FN)                            真正率
+# FPR = 1 - 特异度 = 1 - TN / (FP + TN) = FP / (FP + TN)   假正率
+# 设X为预测值，Y为真实值，从条件概率来看
+# precision = P(X=1 | Y=1)
+# recall = 灵敏度 = P(X=1 | Y=1)
+# 特异度 = P(X=0 | Y=0)
+# ROC (Receiver Operating Characteristic)曲线， 接受者操作特征曲线。 ROC曲线的两个指标就是: 横轴 FPR, 纵轴 TPR
+# TPR 越高， FPR越低， 即ROC曲线越陡，模型性能就越好
+# AUC (Area Under Curve) 指TPR和FPR围成的ROC曲线下的面积，将分类任务的实际值和预测值作为参数输入给 roc_curve()方法可
+# 以得到FPR、TPR对应的阈值。
+# AUC 一般判断标准： 0.5-0.7 较低； 0.7-0.85 一般； 0.85-0.95 较好； 0.95-1 非常好，一般不可能。
+def plot_auc_curve(y_true_list, y_pred_list, labels, title=None, colors=None, legend_items=None, save_path=None
+                   , is_show=True):
+    fpr_list = []
+    tpr_list = []
+    auc_list = []
+    if colors is None:
+        colors = ['red', 'blue', 'green', 'orange']
+    if legend_items is None:
+        legend_items = ['1st method', '2nd method', '3rd method', '4th method']
+    for y_true, y_pred in zip(y_true_list, y_pred_list):
+        fpr, tpr, threshold = metrics.roc_curve(y_true, y_pred, pos_label=labels)
+        auc = metrics.auc(fpr, tpr)
+        fpr_list.append(fpr)
+        tpr_list.append(tpr)
+        auc_list.append(auc)
+    for i in range(len(auc_list)):
+        legend_items[i] += '(AUC = %0.4F)'
+    line_width = 1              # 线宽
+    plt.figure(figsize=(8, 5))  # 图大小
+    for i in range(len(auc_list)):
+        plt.plot(fpr_list[i], tpr_list[i], lw=line_width, label=legend_items[i] % auc_list[i], color=colors[i])
+    if title is None:
+        title = "AUC"
+    plt.title(title)
+    plt.xlim([0.0, 1.0])  # x轴范围
+    plt.ylim([0.0, 1.0])  # x轴范围
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.grid()  # 在图中添加网格
+    plt.legend(loc="lower right")  # 显示图例并设置位置
+    if is_show:
+        plt.show()
+    if save_path is not None:
+        pic_name = title + '.jpg'
+        save_path = os.path.join(save_path, pic_name)
+        plt.savefig(save_path)
 
 
 # 'b'蓝色  'g'绿色 'r'红色 'c'青色 'm'品红 'y'黄色 'k'黑色 'w'白色
@@ -352,7 +412,7 @@ def visual_loss_picture(train_loss, test_loss, title=None, x_label='epoch', y_la
         plt.savefig(save_path)
 
 
-def visual_acc_picture(train_acc, test_acc, title=None, x_label='epoch', y_label='Acc', save_path=None):
+def visual_acc_picture(train_acc, test_acc, title=None, x_label='epoch', y_label='Acc', save_path=None, is_show=True):
     plt.figure(figsize=[14, 5])
     plt.plot(train_acc, "ro-", label="Train Acc")
     plt.plot(test_acc, "bs-", label="Test Acc")
@@ -367,6 +427,8 @@ def visual_acc_picture(train_acc, test_acc, title=None, x_label='epoch', y_label
     print('The {}th epoch, test acc reached the highest value: {}.'.format(max_test_acc_idx, max_test_acc_value))
     if title is not None:
         plt.title(title)
+    if is_show:
+        plt.show()
     if save_path is not None:
         pic_name = 'acc_pic.jpg'
         save_path = os.path.join(save_path, pic_name)

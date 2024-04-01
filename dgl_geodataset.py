@@ -6,12 +6,13 @@ import numpy as np
 import torch
 from dgl.data import DGLDataset, utils
 import dgl.backend as F
+from geomodel_analysis import GmeModelGraphList
 
 
 # DGL 图数据集封装，将图处理为dgl数据集
 class DglGeoDataset(DGLDataset):
 
-    def __init__(self, dataset, split_ratio=None, target_ntype=None, **kwargs):
+    def __init__(self, dataset: GmeModelGraphList, split_ratio=None, target_ntype=None, **kwargs):
         self.graph = []
         self.dataset = dataset
         self.split_ratio = split_ratio
@@ -22,11 +23,18 @@ class DglGeoDataset(DGLDataset):
             if torch.is_tensor(self.num_classes['labels']):
                 self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
             self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
+        self.grid_data = []
+        grid_data_num = len(self.dataset.geograph)
+        self.processed_path = self.dataset.processed_dir
+        self.grid_data_path = None
+        if grid_data_num > 0:
+            self.grid_data_path = os.path.join(self.processed_path, self.dataset.geograph[0].data.tmp_dump_str)
         self.train_idx = []
         self.val_idx = []
         self.test_idx = []
         super().__init__(self.dataset.name + '-as-nodepred',
                          hash_key=(split_ratio, target_ntype, dataset.name, 'nodepred'), **kwargs)
+        self.dataset = None
 
     def process(self):
         self.graph.clear()

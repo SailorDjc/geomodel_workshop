@@ -64,17 +64,6 @@ class SpacialConv(nn.Module):
         nn.init.xavier_uniform_(self.fc_spatial.weight, gain=gain)
         nn.init.xavier_uniform_(self.fc_neigh.weight, gain=gain)
 
-    # def edges_weight_func(self, edges):
-    #     relative_pos = edges.dst['position'] - edges.src['position']
-    #     spatial_scal = torch.norm(relative_pos, dim=1) + self.eps
-    #     spatial_scal = spatial_scal.reshape(-1, 1)
-    #     w = torch.add(relative_pos, 1)
-    #     ws = torch.div(w, spatial_scal)
-    #     spatial_scaling = F.leaky_relu(self.fc_spatial(ws))  # [n_edges, coors, hidden_size * in_feats]
-    #     n_edges = spatial_scaling.size(0)
-    #     result = spatial_scaling.reshape(n_edges, self._in_src_feats, -1) * edges.src['h'].unsqueeze(-1)
-    #     return {'e_sp_wight': result.view(n_edges, -1)}
-
     #
     def edges_wight_process(self, edges):
         relative_pos = edges.dst['position'] - edges.src['position']
@@ -84,19 +73,7 @@ class SpacialConv(nn.Module):
         spatial_coeff = torch.div(spatial_att, spatial_scale)
         return {'e': spatial_coeff}
 
-    # def message_func(self, edges):
-    #     edge_weight_neigh = edges.data['e_sp_wight']
-    #     return {'e': edge_weight_neigh}
-    # def reduce_func(self, nodes):
-    #     neigh_embed = nodes.mailbox['e']
-    #     if self._aggre_type == 'cat':
-    #         neigh_h = torch.cat(neigh_embed, dim=1)
-    #     else:
-    #         neigh_h = torch.mean(neigh_embed, dim=1)
-    #     return {'neigh_h': neigh_h}
-
-    def forward(self, graph, feat, edge_weight=None):
-
+    def forward(self, graph, feat):  # , edge_weight=None
         # self._compatibility_check()
         with graph.local_scope():
             feat_src = feat_dst = self.feat_drop(feat)
@@ -118,102 +95,6 @@ class SpacialConv(nn.Module):
 
             h_neigh = self.fc_neigh(graph.dstdata['h_mean'])  # [n_nodes, out_feats]
             # g.update_all(fn.e_add_v('theta', 'phi', 'e'), fn.max('e', 'x'))
-
-            # graph.update_all(self.message_func, self.reduce_func)
-            self_hidden = self.fc_self(h_self)
-            rst = self_hidden + h_neigh
-
-            # bias term
-            if self.bias is not None:
-                rst = rst + self.bias
-
-            # activation
-            if self.activation is not None:
-                rst = self.activation(rst)
-            # normalization
-            if self.norm is not None:
-                rst = self.norm(rst)
-            return rst
-
-
-# 修改后的SpacialConv
-class SpacialConv_1(nn.Module):
-
-    def __init__(self,
-                 coors,
-                 in_feats,
-                 out_feats,
-                 feat_drop=0.,
-                 bias=True,
-                 norm=None,
-                 activation=F.leaky_relu,
-                 eps=1e-7, ):
-        super(SpacialConv, self).__init__()
-
-        self._in_src_feats, self._in_dst_feats = expand_as_pair(in_feats)
-        self._out_feats = out_feats
-        # self._hidden_size = hidden_size
-        self.norm = norm
-        self.feat_drop = nn.Dropout(feat_drop)
-        self.activation = activation
-        self.eps = eps
-
-        self.fc_self = nn.Linear(self._in_dst_feats, out_feats, bias=True)
-        # self.fc_neigh = nn.Linear(self._in_src_feats, out_feats, bias=False)
-
-        self.fc_spatial = nn.Linear(coors, in_feats)
-        self.fc_neigh = nn.Linear(in_feats, out_feats)
-        if bias:
-            self.bias = nn.parameter.Parameter(torch.zeros(self._out_feats))
-        else:
-            self.register_buffer('bias', None)
-        self.res_fc = None
-        self.reset_parameters()
-
-    def reset_parameters(self):
-
-        gain = nn.init.calculate_gain('leaky_relu')
-
-        nn.init.xavier_uniform_(self.fc_self.weight, gain=gain)
-        # nn.init.xavier_uniform_(self.fc_neigh.weight, gain=gain)
-        nn.init.xavier_uniform_(self.fc_spatial.weight, gain=gain)
-        nn.init.xavier_uniform_(self.fc_neigh.weight, gain=gain)
-
-    def edges_wight_process(self, edges):
-        relative_pos = edges.dst['position'] - edges.src['position']
-        spatial_scale = torch.norm(relative_pos, dim=1) + self.eps
-        spatial_scale = spatial_scale.reshape(-1, 1)
-        spatial_att = torch.add(relative_pos, 1)
-        spatial_coeff = torch.div(spatial_att, spatial_scale)
-        return {'e': spatial_coeff}
-
-    def forward(self, graph, feat, edge_weight=None):
-
-        # self._compatibility_check()
-        with graph.local_scope():
-            feat_src = feat_dst = self.feat_drop(feat)
-            if graph.is_block:
-                feat_dst = feat_src[:graph.number_of_dst_nodes()]
-            h_self = feat_dst
-
-            # Handle the case of graphs without edges
-            if graph.number_of_edges() == 0:
-                graph.dstdata['neigh'] = torch.zeros(
-                    feat_dst.shape[0], self._in_src_feats).to(feat_dst)
-            # Message Passing
-            graph.srcdata['h'] = feat_src
-            # 边权重乘以源节点特征，赋给目标节点
-            msg_fn = fn.u_mul_e('h', '_edge_weight', 'm')
-            graph.apply_edges(self.edges_wight_process)
-
-            graph.edata['_edge_weight'] = self.fc_spatial(graph.edata['e'])
-            graph.edata['_edge_weight'] = F.leaky_relu(graph.edata['_edge_weight'])
-
-            graph.update_all(msg_fn, fn.mean('m', 'h_mean'))
-
-            h_neigh = self.fc_neigh(graph.dstdata['h_mean'])  # [n_nodes, out_feats]
-            # g.update_all(fn.e_add_v('theta', 'phi', 'e'), fn.max('e', 'x'))
-
             # graph.update_all(self.message_func, self.reduce_func)
             self_hidden = self.fc_self(h_self)
             rst = self_hidden + h_neigh
@@ -418,7 +299,8 @@ class GraphTransformerLayer(nn.Module):
         self.layer_norm = layer_norm
         self.batch_norm = batch_norm
 
-        self.attention = MultiHeadAttentionLayer(coors, in_dim, out_dim // num_heads, num_heads, use_bias, feat_drop, eps)
+        self.attention = MultiHeadAttentionLayer(coors, in_dim, out_dim // num_heads, num_heads, use_bias, feat_drop,
+                                                 eps)
         self.self_fc = nn.Linear(in_dim, out_dim)
         self.O_h = nn.Linear(out_dim, out_dim)
         # self.O_e = nn.Linear(out_dim, out_dim)
@@ -525,3 +407,119 @@ class MLPReadout(nn.Module):
             y = F.leaky_relu(y)
         y = self.FC_layers[self.L](y)
         return y
+
+
+# 修改后的SpacialConv
+class SpacialConv_1(nn.Module):
+
+    def __init__(self,
+                 coors,
+                 in_feats,
+                 out_feats,
+                 feat_drop=0.,
+                 bias=True,
+                 norm=None,
+                 activation=F.leaky_relu,
+                 eps=1e-7, ):
+        super(SpacialConv, self).__init__()
+
+        self._in_src_feats, self._in_dst_feats = expand_as_pair(in_feats)
+        self._out_feats = out_feats
+        # self._hidden_size = hidden_size
+        self.norm = norm
+        self.feat_drop = nn.Dropout(feat_drop)
+        self.activation = activation
+        self.eps = eps
+
+        self.fc_self = nn.Linear(self._in_dst_feats, out_feats, bias=True)
+        # self.fc_neigh = nn.Linear(self._in_src_feats, out_feats, bias=False)
+
+        self.fc_spatial = nn.Linear(coors, in_feats)
+        self.fc_neigh = nn.Linear(in_feats, out_feats)
+        if bias:
+            self.bias = nn.parameter.Parameter(torch.zeros(self._out_feats))
+        else:
+            self.register_buffer('bias', None)
+        self.res_fc = None
+        self.reset_parameters()
+
+    def reset_parameters(self):
+
+        gain = nn.init.calculate_gain('leaky_relu')
+
+        nn.init.xavier_uniform_(self.fc_self.weight, gain=gain)
+        # nn.init.xavier_uniform_(self.fc_neigh.weight, gain=gain)
+        nn.init.xavier_uniform_(self.fc_spatial.weight, gain=gain)
+        nn.init.xavier_uniform_(self.fc_neigh.weight, gain=gain)
+
+    def edges_wight_process(self, edges):
+        relative_pos = edges.dst['position'] - edges.src['position']
+        spatial_scale = torch.norm(relative_pos, dim=1) + self.eps
+        spatial_scale = spatial_scale.reshape(-1, 1)
+        spatial_att = torch.add(relative_pos, 1)
+        spatial_coeff = torch.div(spatial_att, spatial_scale)
+        return {'e': spatial_coeff}
+
+    def forward(self, graph, feat, edge_weight=None):
+
+        # self._compatibility_check()
+        with graph.local_scope():
+            feat_src = feat_dst = self.feat_drop(feat)
+            if graph.is_block:
+                feat_dst = feat_src[:graph.number_of_dst_nodes()]
+            h_self = feat_dst
+
+            # Handle the case of graphs without edges
+            if graph.number_of_edges() == 0:
+                graph.dstdata['neigh'] = torch.zeros(
+                    feat_dst.shape[0], self._in_src_feats).to(feat_dst)
+            # Message Passing
+            graph.srcdata['h'] = feat_src
+            # 边权重乘以源节点特征，赋给目标节点
+            msg_fn = fn.u_mul_e('h', '_edge_weight', 'm')
+            graph.apply_edges(self.edges_wight_process)
+
+            graph.edata['_edge_weight'] = self.fc_spatial(graph.edata['e'])
+            graph.edata['_edge_weight'] = F.leaky_relu(graph.edata['_edge_weight'])
+
+            graph.update_all(msg_fn, fn.mean('m', 'h_mean'))
+
+            h_neigh = self.fc_neigh(graph.dstdata['h_mean'])  # [n_nodes, out_feats]
+            # g.update_all(fn.e_add_v('theta', 'phi', 'e'), fn.max('e', 'x'))
+
+            # graph.update_all(self.message_func, self.reduce_func)
+            self_hidden = self.fc_self(h_self)
+            rst = self_hidden + h_neigh
+
+            # bias term
+            if self.bias is not None:
+                rst = rst + self.bias
+
+            # activation
+            if self.activation is not None:
+                rst = self.activation(rst)
+            # normalization
+            if self.norm is not None:
+                rst = self.norm(rst)
+            return rst
+
+    # def message_func(self, edges):
+    #     edge_weight_neigh = edges.data['e_sp_wight']
+    #     return {'e': edge_weight_neigh}
+    # def reduce_func(self, nodes):
+    #     neigh_embed = nodes.mailbox['e']
+    #     if self._aggre_type == 'cat':
+    #         neigh_h = torch.cat(neigh_embed, dim=1)
+    #     else:
+    #         neigh_h = torch.mean(neigh_embed, dim=1)
+    #     return {'neigh_h': neigh_h}
+    # def edges_weight_func(self, edges):
+    #     relative_pos = edges.dst['position'] - edges.src['position']
+    #     spatial_scal = torch.norm(relative_pos, dim=1) + self.eps
+    #     spatial_scal = spatial_scal.reshape(-1, 1)
+    #     w = torch.add(relative_pos, 1)
+    #     ws = torch.div(w, spatial_scal)
+    #     spatial_scaling = F.leaky_relu(self.fc_spatial(ws))  # [n_edges, coors, hidden_size * in_feats]
+    #     n_edges = spatial_scaling.size(0)
+    #     result = spatial_scaling.reshape(n_edges, self._in_src_feats, -1) * edges.src['h'].unsqueeze(-1)
+    #     return {'e_sp_wight': result.view(n_edges, -1)}

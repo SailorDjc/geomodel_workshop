@@ -4,7 +4,7 @@ from vtkmodules.all import vtkImageData, vtkStructuredGrid, vtkUnstructuredGrid,
     vtkTransformFilter, vtkBoundingBox, vtkDataSet, VTK_DOUBLE, VTK_INT, vtkLookupTable, vtkColorTransferFunction, \
     vtkImagePermute, vtkProbeFilter, vtkImageMapToColors, vtkPNGWriter, vtkCellArray, vtkPoints, vtkRectilinearGrid, \
     vtkImageDataGeometryFilter, vtkImageToPolyDataFilter, vtkPolyDataMapper, vtkImageStencil, vtkIdList, vtkPointData \
-    , vtkDataSetSurfaceFilter, vtkClipDataSet, vtkPlane
+    , vtkDataSetSurfaceFilter, vtkClipDataSet, vtkPlane, vtkTriangleFilter, vtkPolygon
 from vtkmodules.util import numpy_support
 import os
 import vtkmodules.all as vtk
@@ -12,15 +12,71 @@ from vtkmodules.all import vtkSurfaceReconstructionFilter
 import pyvista as pv
 import copy
 import scipy.spatial as spt
+import collections.abc
 
 
-# # vtk对象剖切
-# def clip_grid_for_section(ugrid, surface: vtk.vtkPlane):
-#     clipper = vtk.vtkClipDataSet()
-#     clipper.SetClipFunction(surface)
-#     clipper.SetInputData(ugrid)
-#     clipper.GenerateClippedOutputOn()
-#     clipper.Update()
+def voxelize(mesh, density=None, check_surface=True, tolerance=0.000000001):
+    if not pv.is_pyvista_dataset(mesh):
+        mesh = pv.wrap(mesh)
+    if density is None:
+        density = mesh.length / 100
+    if isinstance(density, (int, float, np.number)):
+        density_x, density_y, density_z = [density] * 3
+    elif isinstance(density, (collections.abc.Sequence, np.ndarray)):
+        density_x, density_y, density_z = density
+    else:
+        raise TypeError(f'Invalid density {density!r}, expected number or array-like.')
+
+    # check and pre-process input mesh
+    surface = mesh.extract_geometry()  # filter preserves topology
+    if not surface.faces.size:
+        # we have a point cloud or an empty mesh
+        raise ValueError('Input mesh must have faces for voxelization.')
+    if not surface.is_all_triangles:
+        # reduce chance for artifacts, see gh-1743
+        surface.triangulate(inplace=True)
+
+    x_min, x_max, y_min, y_max, z_min, z_max = mesh.bounds
+    x = np.arange(x_min, x_max, density_x)
+    y = np.arange(y_min, y_max, density_y)
+    z = np.arange(z_min, z_max, density_z)
+    x, y, z = np.meshgrid(x, y, z, indexing='ij')
+    # indexing='ij' is used here in order to make grid and ugrid with x-y-z ordering, not y-x-z ordering
+    # see https://github.com/pyvista/pyvista/pull/4365
+
+    # Create unstructured grid from the structured grid
+    grid = pv.StructuredGrid(x, y, z)
+    ugrid = pv.UnstructuredGrid(grid)
+
+    # get part of the mesh within the mesh's bounding surface.
+    selection = ugrid.select_enclosed_points(surface, tolerance=tolerance, check_surface=check_surface)
+    mask = selection.point_data['SelectedPoints'].view(np.bool_)
+
+    # extract cells from point indices
+    vox = ugrid.extract_points(mask)
+    return vox
+
+
+def create_polygon_with_sorted_points_3d(points_3d):
+    tri_filter = vtkTriangleFilter()
+    pts = vtkPoints()
+    polygon = vtkPolygon()
+    polygon.GetPointIds().SetNumberOfIds(len(points_3d))
+    for k, l in enumerate(points_3d):
+        pts.InsertNextPoint(l)
+        polygon.GetPointIds().SetId(k, k)
+    polygons = vtkCellArray()
+    polygons.InsertNextCell(polygon)
+    polygon_poly = vtkPolyData()
+    polygon_poly.SetPoints(pts)
+    polygon_poly.SetPolys(polygons)
+    tri_filter.SetInputData(polygon_poly)
+    tri_filter.Update()
+    polygon_poly_filtered = tri_filter.GetOutput()
+    pp = pv.wrap(polygon_poly_filtered)
+    return pp
+
+
 # 隐式表面重建，根据一堆网格点来隐式地构建表面， 待修改
 def create_implict_surface_reconstruct(points, sample_spacing,
                                        neighbour_size=20) -> pv.PolyData:
@@ -112,18 +168,17 @@ def create_closed_surface_by_convexhull_2d(bounds: np.ndarray, convexhull_2d: np
 
 # 创建一个封闭的圆柱面
 def create_closed_cylinder_surface(top_point: np.ndarray, bottom_point: np.ndarray, radius: float, segment_num=10):
-    line_direction = np.subtract(top_point, bottom_point)
-    line_direction_norm = line_direction / np.linalg.norm(line_direction)
+    # line_direction = np.subtract(top_point, bottom_point)
+    # line_direction_norm = line_direction / np.linalg.norm(line_direction)
     height = np.linalg.norm(top_point - bottom_point)
     t = np.linspace(0, 2 * np.pi, segment_num)
     top_line_points_x = top_point[0] + radius * np.cos(t)
     top_line_points_y = top_point[1] + radius * np.sin(t)
     top_line_points_z = np.full_like(top_line_points_x, fill_value=top_point[2])
     top_line_points = np.array(list(zip(top_line_points_x, top_line_points_y, top_line_points_z)))
-    bounds = get_bounds_from_coords(top_line_points)
-    bounds[4] = bottom_point[2]
-    cylinder_surface, _ = create_closed_surface_by_convexhull_2d(bounds=bounds, convexhull_2d=top_line_points)
-    cylinder_surface = cylinder_surface.extract_surface()
+    circle_polygon = create_polygon_with_sorted_points_3d(points_3d=top_line_points)
+    circle_polygon = circle_polygon.triangulate()
+    cylinder_surface = circle_polygon.extrude((0, 0, -height), capping=True)
     return cylinder_surface
 
 
@@ -255,6 +310,19 @@ def bounds_merge(bounds_a, bounds_b):
         raise ValueError('Input bounds is None.')
 
 
+def compute_bounds_center(bounds):
+    if len(bounds) == 6:
+        x_min, x_max, y_min, y_max, z_min, z_max = bounds
+        center = np.array([(x_min + x_max) * 0.5, (y_min + y_max) * 0.5, (z_min + z_max) * 0.5])
+        return center
+    elif len(bounds) == 4:
+        x_min, x_max, y_min, y_max = bounds
+        center = np.array([(x_min + x_max) * 0.5, (y_min + y_max) * 0.5, 0])
+        return center
+    else:
+        raise ValueError('Input error.')
+
+
 # 包围盒求交
 def bounds_intersect(bounds_a, bounds_b, ignore_z=False):
     min_x_a, max_x_a, min_y_a, max_y_a, min_z_a, max_z_a = bounds_a
@@ -306,7 +374,8 @@ def add_vtk_data_array_to_vtk_object(vtk_object, vtk_array):
         assert vtk_object.GetNumberOfCells() == vtk_array.GetNumberOfTuples(), \
             "Num of Tuples is different than number of cells on vtk object"
         vtk_object.GetCellData().AddArray(vtk_array)
-    elif type(vtk_object) == pv.RectilinearGrid:
+    elif type(vtk_object) == pv.RectilinearGrid or \
+            type(vtk_object) == pv.UnstructuredGrid:
         scalar_name = vtk_array.GetName()
         scalars = numpy_support.vtk_to_numpy(vtk_array)
         vtk_object[scalar_name] = scalars
@@ -386,6 +455,16 @@ def create_vtk_polydata_from_coords_and_property(coords: np.ndarray, prop: np.nd
 
     add_np_property_to_vtk_object(poly, prop_name, prop)
     return poly
+
+
+class CustomLookUpTabel(object):
+    def __init__(self, lut: vtkLookupTable):
+        self.lut = lut
+
+    def map_value(self, value):
+        rgb = [0, 0, 0]
+        self.lut.GetColor(value, rgb)
+        return rgb
 
 
 def CreateLUT(min, max):
@@ -663,8 +742,7 @@ def CreateLUT(min, max):
     for i in range(256):
         r, g, b = ctf.GetColor(float(i / 255.0))
         lut.SetTableValue(i, r, g, b)
-
-    return lut
+    return CustomLookUpTabel(lut)
 
 
 def write_slices_from_unstructured_grid_as_pictures(grid: vtkUnstructuredGrid, output_dir):

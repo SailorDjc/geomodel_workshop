@@ -61,6 +61,7 @@ class PointSet(object):
         self.vectors = vectors
         # 标量
         self.scalars = None  # dict
+        # 暂时用不到
         self.scalars_grad = None  # dict
         self.scalars_grad_norm = None  # dict
 
@@ -77,17 +78,82 @@ class PointSet(object):
         # 对象拷贝
         self.dir_path = dir_path
 
+        self._classes = None
+        self._classes_num = 0
+
+    # 数据筛选，通过索引进行筛选
+    def get_points_data_by_ids(self, ids):
+        new_points_data = PointSet()
+        cur_points = self.get_points()
+        if cur_points is not None and len(ids) > 0:
+            select_points = cur_points[ids]
+            if len(select_points) == 0:
+                raise ValueError('Ids is out of range.')
+            new_points_data.set_points(points=select_points)
+            cur_labels = self.get_labels()
+            if cur_labels is not None:
+                select_labels = cur_labels[ids]
+                new_points_data.set_labels(select_labels)
+            if self.vectors is not None:
+                cur_vectors = copy.deepcopy(self.vectors)
+                select_vectors = cur_vectors[ids]
+                new_points_data.set_vectors(select_vectors)
+            if self.scalars is not None:
+                cur_scalars = copy.deepcopy(self.scalars)
+                for key in cur_scalars.keys():
+                    select_scalars = cur_scalars[key][ids]
+                    new_points_data.set_scalars(scalar_name=key, scalars=select_scalars)
+        return new_points_data
+
     def get_points(self):
-        return copy.deepcopy(self.points)
+        if self.points is not None:
+            return copy.deepcopy(self.points)
+        else:
+            return None
 
     def get_labels(self):
-        return copy.deepcopy(self.labels)
+        if self.labels is not None:
+            return copy.deepcopy(self.labels)
+        else:
+            return None
 
-    def is_empty(self):
-        if self.points is not None and self.labels is not None:
-            if self.points.shape[0] > 0:
-                return False
-        return True
+    def is_empty(self, check_labels=False):
+        if self.points is None:
+            return True
+        if self.points.shape[0] == 0:
+            return True
+        if check_labels:
+            if self.labels is None:
+                return True
+        return False
+
+    @property
+    def classes(self):
+        self.get_classes()
+        return self._classes
+
+    @classes.setter
+    def classes(self, class_list):
+        self._classes = class_list
+
+    @property
+    def classes_num(self):
+        self.get_classes()
+        return self._classes_num
+
+    @classes_num.setter
+    def classes_num(self, num):
+        self._classes_num = num
+
+    def get_classes(self, ignore_label=-1):
+        if self.labels is None:
+            return None
+        else:
+            self._classes = np.unique(self.labels)
+            self._classes_num = len(self._classes)
+            if ignore_label in self._classes:
+                self._classes_num -= 1
+        return self._classes
 
     # 使用append方法，合并Pointset，会导致scalars和vectors丢失
     def append(self, item):
@@ -99,11 +165,11 @@ class PointSet(object):
                 self.set_points(new_item.points)
                 self.set_labels(new_item.labels)
                 self.scalars = new_item.scalars
-                self.scalars_grad = new_item.scalars_grad
-                self.scalars_grad_norm = None
+                self.set_vectors(new_item.vectors)
             else:
                 raise ValueError('Neither of the two merged objects can be null.')
 
+    # 对于要合并的points_data属性，只合并共有属性，若出现属性不一致的情况，则该属性数据丢失
     @staticmethod
     def points_data_merge(points_data_list: list):
         # 要合并的PointSet对象要先进行数据检查，确保合并共有属性
@@ -123,9 +189,7 @@ class PointSet(object):
                     if data.vectors is not None:
                         vectors_merge.append(data.vectors)
                     if data.scalars is not None:
-                        scalras_merge.append(data.scalars)
-                    if data.scalars_grad is not None:
-                        scalars_grad_merge.append(data.scalars_grad)
+                        scalras_merge.append(data.scalars)  # 字典
         if len(points_data_list) == 0:
             raise ValueError('Input list is empty.')
         else:
@@ -133,15 +197,17 @@ class PointSet(object):
                 raise ValueError('Input list is empty.')
             merge_num = len(points_merge)
             points_merge = np.vstack(points_merge)
+            points_data_merge = PointSet(points=points_merge)
             if len(labels_merge) == merge_num:
                 labels_merge = np.hstack(labels_merge)
             else:
                 labels_merge = None
-            points_data_merge = PointSet(points=points_merge, point_labels=labels_merge)
+            points_data_merge.set_labels(labels=labels_merge)
             if len(vectors_merge) == merge_num:
                 vectors_merge = np.vstack(vectors_merge)
                 points_data_merge.set_vectors(vectors=vectors_merge)
             if len(scalras_merge) == merge_num:
+                # 对于字典的合并，以第一个字典的键为基准
                 keys_map = scalras_merge[0].keys()
                 scalars_common_merge = {}
                 for key in keys_map:
@@ -155,20 +221,6 @@ class PointSet(object):
                 for key in scalars_common_merge.keys():
                     scalars_value = np.vstack(scalars_common_merge[key])
                     points_data_merge.set_scalars(scalars=scalars_value, scalar_name=key)
-            if len(scalars_grad_merge) == merge_num:
-                keys_map = scalars_grad_merge[0].keys()
-                scalars_grad_common_merge = {}
-                for key in keys_map:
-                    scalars_grad_common_merge[key] = []
-                    for item in scalars_grad_merge:
-                        if key in item.keys():
-                            scalars_grad_common_merge[key].append(item[key])
-                        else:
-                            scalars_grad_common_merge.pop(key)  # 只要有一个PointSet中没有相应属性，则该属性不保留
-                            break
-                for key in scalars_grad_common_merge.keys():
-                    scalars_grad_value = np.vstack(scalars_grad_common_merge[key])
-                    points_data_merge.set_scalars_grad(scalars_grad=scalars_grad_value, scalar_name=key)
             return points_data_merge
 
     # 去除重复点， 距离小于阈值可以认为是重复点
@@ -231,16 +283,18 @@ class PointSet(object):
             self.buffer_dist = radius
 
     def set_points(self, points: np.ndarray):
-        self.points = points
-        self.points_num = points.shape[0]
-        self.bounds = get_bounds_from_coords(self.points)
+        if points is not None:
+            self.points = points
+            self.points_num = points.shape[0]
+            self.bounds = get_bounds_from_coords(self.points)
 
     def set_vectors(self, vectors: np.ndarray):
         if self.points is None:
             raise ValueError('Need to set points first.')
-        if self.points.shape[0] != vectors.shape[0]:
-            raise ValueError('Vectors array size not match to points.')
-        self.vectors = vectors
+        if vectors is not None:
+            if self.points.shape[0] != vectors.shape[0]:
+                raise ValueError('Vectors array size not match to points.')
+            self.vectors = vectors
 
     def set_labels(self, labels: np.ndarray):
         if self.points is None:
@@ -248,34 +302,37 @@ class PointSet(object):
         if labels is not None:
             if self.points.shape[0] != len(labels):
                 raise ValueError('labels array size not match to points.')
-        self.labels = labels
+            self.labels = labels
 
     def set_scalars(self, scalars: np.ndarray, scalar_name: str):
         if self.points is None:
             raise ValueError('Need to set points first.')
-        if self.points.shape[0] != len(scalars):
-            raise ValueError('Scalars array size not match to points.')
-        if self.scalars is None:
-            self.scalars = {}
-        self.scalars[scalar_name] = scalars
+        if scalars is not None:
+            if self.points.shape[0] != len(scalars):
+                raise ValueError('Scalars array size not match to points.')
+            if self.scalars is None:
+                self.scalars = {}
+            self.scalars[scalar_name] = scalars
 
     def set_scalars_grad(self, scalars_grad: np.ndarray, scalar_name: str):
         if self.points is None:
             raise ValueError('Need to set points first.')
-        if self.points.shape[0] != len(scalars_grad):
-            raise ValueError('Scalars_grad array size not match to points.')
-        if self.scalars_grad is None:
-            self.scalars_grad = {}
-        self.scalars_grad[scalar_name] = scalars_grad
+        if scalars_grad is not None:
+            if self.points.shape[0] != len(scalars_grad):
+                raise ValueError('Scalars_grad array size not match to points.')
+            if self.scalars_grad is None:
+                self.scalars_grad = {}
+            self.scalars_grad[scalar_name] = scalars_grad
 
     def set_scalars_grad_norm(self, scalars_grad_norm: np.ndarray, scalar_name: str):
         if self.points is None:
             raise ValueError('Need to set points first.')
-        if self.points.shape[0] != len(scalars_grad_norm):
-            raise ValueError('Scalars_grad array size not match to points.')
-        if self.scalars_grad_norm is None:
-            self.scalars_grad_norm = {}
-        self.scalars_grad_norm[scalar_name] = scalars_grad_norm
+        if scalars_grad_norm is not None:
+            if self.points.shape[0] != len(scalars_grad_norm):
+                raise ValueError('Scalars_grad array size not match to points.')
+            if self.scalars_grad_norm is None:
+                self.scalars_grad_norm = {}
+            self.scalars_grad_norm[scalar_name] = scalars_grad_norm
 
     # 获取点集合凸包，z值无效, 起始点与终止点不重复
     def get_convexhull_2d(self) -> np.ndarray:  # 3D points array

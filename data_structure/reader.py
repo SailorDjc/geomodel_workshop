@@ -1,13 +1,10 @@
 import pandas as pd
 import os
 import numpy as np
-from data_structure.grids import Grid
-from data_structure.boreholes import Borehole, BoreholeSet
-from data_structure.points import PointSet
-from data_structure.sections import Section, SectionSet
-from data_structure.geodata import GeodataSet, load_object
-from data_structure.terrain import TerrainData
+from data_structure.geodata import GeodataSet, load_object, Section, Borehole, BoreholeSet, Grid, PointSet, TerrainData
 import pickle
+from utils.vtk_utils import reader_xml_polydata_file, reader_unstructured_mesh_file
+import pyvista as pv
 
 
 class ReadExportFile(object):
@@ -149,4 +146,221 @@ class ReadExportFile(object):
         geo_object = load_object(file_path=file_path)
         return geo_object
 
+    @staticmethod
+    def read_vtk_data(file_path: str):
+        path, filename = os.path.split(file_path)
+        model_name, suffix = os.path.splitext(filename)
+        if suffix == '.vtp':
+            model = reader_xml_polydata_file(pd_filename=file_path)
+            model = pv.wrap(model)
+        elif suffix == '.vtk':
+            model = reader_unstructured_mesh_file(mesh_filename=file_path)
+            model = pv.wrap(model)
+        elif suffix == '.vtm':
+            model = pv.read(filename=file_path)
+        else:
+            model = reader_unstructured_mesh_file(mesh_filename=file_path)
+            model = pv.wrap(model)
+        return model
 
+    # col_names = ['label', 'code', 'name']
+    @staticmethod
+    def read_labels_map(map_file_path, col_names=None, **kwargs):
+        if col_names is None:
+            col_names = ['label', 'code', 'name']
+        if not os.path.exists(map_file_path):
+            raise ValueError('The file path does not exist.')
+        comment = "#"
+        encoding = 'unicode_escape'
+        header = None
+        sep = '\s+'
+        if 'comment' in kwargs.keys():
+            comment = kwargs['comment']
+        if 'encoding' in kwargs.keys():
+            encoding = kwargs['encoding']
+        if 'header' in kwargs.keys():
+            header = kwargs['header']
+        if 'sep' in kwargs.keys():
+            sep = kwargs['sep']
+        df = pd.read_table(map_file_path, header=header, comment=comment, sep=sep, encoding=encoding)
+        df.columns = col_names
+        # 清理空值
+        df.dropna(how='all')
+        map_data = df.loc[:, col_names]
+        map_dict = []
+        for index, row in map_data.iterrows():
+            for r_i in range(len(col_names)):
+                map_record = {col_names[r_i]: row[col_names[r_i]]}
+                map_dict.append(map_record)
+        return map_dict
+
+    @staticmethod
+    def tmp_read_virtual_boreholes(dat_file_path):
+        df_0 = pd.read_excel(dat_file_path, sheet_name=0)
+        df_1 = pd.read_excel(dat_file_path, sheet_name=1)
+        layer_info = df_1.groupby(df_1.columns[0])
+        borehole_list = BoreholeSet()
+        for borehole_id, group in layer_info:
+            borehole_info = df_0[df_0[df_0.columns[0]] == borehole_id]
+            b_id = borehole_info.iat[0, 0]
+            xx = borehole_info.iat[0, 1]
+            yy = borehole_info.iat[0, 2]
+            top = borehole_info.iat[0, 3]
+            depth = borehole_info.iat[0, 4]
+            one_borehole = Borehole(borehole_id=b_id)
+            one_borehole.top_pos = np.array([xx, yy, top])
+            one_borehole.bottom_pos = np.array([xx, yy, top - depth])
+            for index, row in group.iterrows():
+                layer_code = row[df_1.columns[1]]
+                layer_top = row[df_1.columns[2]]
+                layer_bottom = row[df_1.columns[3]]
+                one_layer = Borehole.Holelayer(coord_top=np.array([xx, yy, top - layer_top]),
+                                               coord_bottom=np.array([xx, yy, top - layer_bottom]),
+                                               layer_label=layer_code)
+                one_borehole.holelayer_list.append(one_layer)
+            borehole_list.append(one_borehole)
+        return borehole_list
+
+    @staticmethod
+    def tmp_read_boreholes(excel_path):
+        df_0 = pd.read_excel(excel_path, sheet_name=1)
+        df_1 = pd.read_excel(excel_path, sheet_name=2)
+        layer_info = df_1.groupby(df_1.columns[1])
+        borehole_list = BoreholeSet()
+        for borehole_id, group in layer_info:
+            borehole_info = df_0[df_0[df_0.columns[1]] == borehole_id]
+            b_id = borehole_info.iat[0, 1]
+            xx = borehole_info.iat[0, 2]
+            yy = borehole_info.iat[0, 3]
+            top = borehole_info.iat[0, 4]
+            depth = borehole_info.iat[0, 5]
+            one_borehole = Borehole(borehole_id=b_id)
+            one_borehole.top_pos = np.array([xx, yy, top])
+            one_borehole.bottom_pos = np.array([xx, yy, top - depth])
+            for index, row in group.iterrows():
+                layer_code = row[df_1.columns[2]]
+                layer_top = row[df_1.columns[3]]
+                layer_bottom = row[df_1.columns[4]]
+                one_layer = Borehole.Holelayer(coord_top=np.array([xx, yy, top - layer_top]),
+                                               coord_bottom=np.array([xx, yy, top - layer_bottom]),
+                                               layer_label=layer_code)
+                one_borehole.holelayer_list.append(one_layer)
+            borehole_list.append(one_borehole)
+        return borehole_list
+
+    @staticmethod
+    def read_train_loss_log(txt_file_path, **kwargs):
+        if not os.path.exists(txt_file_path):
+            raise ValueError('The file path does not exist.')
+        comment = "#"
+        encoding = 'utf-8'
+        header = None
+        sep = ' '
+        use_cols = [0, 1, 2, 3]
+        if 'comment' in kwargs.keys():
+            comment = kwargs['comment']
+        if 'encoding' in kwargs.keys():
+            encoding = kwargs['encoding']
+        if 'header' in kwargs.keys():
+            header = kwargs['header']
+        if 'sep' in kwargs.keys():
+            sep = kwargs['sep']
+        if 'use_cols' in kwargs.keys():
+            use_cols = kwargs['use_cols']
+        df_logs = pd.read_table(txt_file_path, header=header, comment=comment, sep=sep, encoding=encoding)
+        columns_num = df_logs.columns.size
+        names = ['epoch', 'train_loss', 'train_acc', 'train_rmse', 'val_loss', 'val_acc', 'val_rmse']
+        if columns_num == len(names):
+            df_logs.columns = names
+        else:
+            raise ValueError()
+        df_logs.dropna()
+        epoch = np.array(df_logs.loc[:, ['epoch']])
+        train_loss = np.array(df_logs.loc[:, ['train_loss']])
+        train_acc = np.array(df_logs.loc[:, ['train_acc']])
+        train_rmse = np.array(df_logs.loc[:, ['train_rmse']])
+        val_loss = np.array(df_logs.loc[:, ['val_loss']])
+        val_acc = np.array(df_logs.loc[:, ['val_acc']])
+        val_rmse = np.array(df_logs.loc[:, ['val_rmse']])
+        return epoch, train_loss, train_acc, train_rmse, val_loss, val_acc, val_rmse
+
+
+class BoreholeSetManager(object):
+    def __init__(self):
+        self.reader = ReadExportFile()
+        self.borehole_data = []
+        self.labels_map = None
+        self.col_names = ['label', 'code', 'name']
+
+    def get_labels(self, ind=0):
+        # if self.labels_map is None:
+        #     # labels
+        #     for borehole_data in self.borehole_data:
+        #         labels = self.borehole_data.get_classes()
+        #     return labels
+        # labels = [l_item.get(self.col_names[ind]) for l_item in self.labels_map]
+        # return np.trunc(labels)
+        pass
+
+    def append_boreholes_dataset_from_txt_file(self, dat_file_path, **kwargs):
+        borehole_data = self.reader.read_boreholes_data_from_text_file(dat_file_path=dat_file_path, **kwargs)
+        self.borehole_data.append(borehole_data)
+
+    def read_labels_map(self, map_file_path, col_names=None, **kwargs):
+        if col_names is not None:
+            self.col_names = col_names
+        self.labels_map = self.reader.read_labels_map(map_file_path=map_file_path, col_names=col_names, **kwargs)
+
+    # 标准化标签，标签是从0开始的连续自然数
+    def standardize_labels(self, label_dict: dict = None, default_value=-1):
+        series_labels = self.get_labels()
+        if series_labels is None:
+            raise ValueError('The input data has not scalar values.')
+        sorted_label = sorted(series_labels)
+        if label_dict is not None:
+            # 判断label_dict 是否符合要求
+            # 默认值不映射
+            if default_value in label_dict.keys():
+                raise ValueError('The input label_dict is invalid.')
+            for idx, item in enumerate(sorted_label):
+                # 所有标签都包含
+                if item == default_value:
+                    continue
+                if item not in label_dict.keys():
+                    raise ValueError('The input label_dict is invalid.')
+                # 不连续
+                if idx + 1 < len(sorted_label) and item + 1 != label_dict[idx + 1]:
+                    raise ValueError('The input label_dict is invalid.')
+        else:
+            label_dict = {}
+            for idx, item in enumerate(sorted_label):
+                if item == default_value:  # 对于默认未知值则不改变
+                    continue
+                label_dict[item] = idx
+        # 更新标签
+        for sample_data in self.borehole_data:
+            sample_data.classes = sorted(label_dict.values())
+            if isinstance(sample_data, BoreholeSet):
+                sample_data.series = np.vectorize(label_dict.get)(np.array(sample_data.series))
+                # 遍历钻孔
+                for idx in np.arange(len(sample_data.boreholes_list)):
+                    sample_data.boreholes_list[idx].series = (
+                        np.vectorize(label_dict.get)(np.array(sample_data.boreholes_list[idx].series)))
+                    for l_id in np.arange(len(sample_data.boreholes_list[idx].holelayer_list)):
+                        sample_data.boreholes_list[idx].holelayer_list[l_id].layer_label = (
+                            label_dict)[sample_data.boreholes_list[idx].holelayer_list[l_id].layer_label]
+            else:
+                raise ValueError('The Input data is not BoreholeSet.')
+        if self.labels_map is not None:
+            for r_i in range(len(self.labels_map)):
+                self.labels_map[r_i][self.col_names[0]] = label_dict[self.labels_map[r_i][self.col_names[0]]]
+
+    # 去除特殊地质体
+    def delete_special_geologic_body(self, del_labels_list):
+        pass
+
+    # 获取钻孔地层序列
+    def get_boreholes_labels_sequence(self, is_align_bott=False, is_align_top=False):
+        label_sequence = []
+        for one_borehole in self.borehole_data:
+            pass

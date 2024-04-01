@@ -37,7 +37,7 @@ class Borehole(object):
         self.sub_att_scalar_pnt = {}  # 附加属性点，在钻孔勘测范围内，不一定是分层点
         self.radius = radius  # 孔径， 用于可视化
         self.buffer_dist_xy = buffer_dist_xy  # 缓冲大小，距离钻孔中心一定缓冲范围内，属于该钻孔控制范围
-        self.borehole_id = borehole_id  # 钻孔唯一标识
+        self.borehole_id = borehole_id  # 钻孔唯一标识  如 well_0
 
         self.vtk_data = None
 
@@ -51,7 +51,7 @@ class Borehole(object):
 
     class Holelayer(object):
         def __init__(self, coord_top, coord_bottom, layer_label, azimuth=0, dip=90, is_virtual=False
-                     , buffer_dist_xy=5, borehole_id=None):
+                     , buffer_dist_xy=5, borehole_id=None, layer_name=None, layer_att=None):
             self.borehole_id = borehole_id  # 所属钻孔标识
             self.top_pos = coord_top  # 顶部点
             self.bottom_pos = coord_bottom  # 底部点
@@ -59,8 +59,10 @@ class Borehole(object):
             self.dip = dip  # 倾角
             self.layer_label = layer_label  # 地层编号(编码)
             self.layer_label_old = layer_label  # 作为老标签的备份，在标签标准化后，值不变
+            self.layer_name = layer_name  # 层名称
             self.is_virtual = is_virtual  # 是否是虚拟地层
             self.buffer_dist_xy = buffer_dist_xy  # 钻孔控制范围
+            self.layer_att = layer_att  # 层属性
 
     def update_holelayer_list(self):
         self.holelayer_list = []  # 清空
@@ -77,6 +79,29 @@ class Borehole(object):
                                                    layer_label=series[i], borehole_id=self.borehole_id)
                     self.holelayer_list.append(one_holelayer)
                 self.holelayer_num = num - 1
+
+    # 若钻孔只有分层，通过分层信息，更新
+    def update_borehole_data_by_holelayers(self):
+        if len(self.holelayer_list) > 0:
+            layer_z_list = [layer.bottom_pos[2] for layer in self.holelayer_list]
+            sort_indices = sorted(range(len(layer_z_list)), key=lambda i: layer_z_list[i], reverse=True)
+            # 更新顺序，按照坐标z值从大到小，即钻孔分层按从上到下的顺序排序
+            holelayer_list = []
+            for l_id in sort_indices:
+                holelayer_list.append(self.holelayer_list[l_id])
+            self.holelayer_list = holelayer_list
+            tmp_points = []
+            tmp_labels = []
+            for l_id, layer in enumerate(self.holelayer_list):
+                tmp_points.append(layer.top_pos)
+                tmp_labels.append(layer.layer_label)
+                if l_id == len(self.holelayer_list) - 1:
+                    tmp_points.append(layer.bottom_pos)
+                    tmp_labels.append(layer.layer_label)
+            self.borehole_id = self.holelayer_list[0].borehole_id
+            self.points = np.array(tmp_points)
+            self.series = np.array(tmp_labels)
+            self.points_num = len(self.holelayer_list) + 1
 
     # 遍历钻孔地层序列点，获取界面点 is_delete=False, 中间点不删除，True则删除
     def remove_duplicates_series(self, is_delete=False):
@@ -148,6 +173,10 @@ class Borehole(object):
         if self.points is not None:
             return copy.deepcopy(self.points[0])
 
+    def get_bottom_point(self):
+        if self.points is not None:
+            return copy.deepcopy(self.points[-1])
+
     # 判断一个点属于钻孔的哪一个分层，若返回-1则在钻孔控制深度之下，若为-2则在地表之上
     def get_layer_label_with_point_z(self, point_value):
         pnt_z = None
@@ -169,6 +198,7 @@ class Borehole(object):
                 layer_label = -1
         return layer_label
 
+    # 未完成
     # 钻孔加密，有两种方式，一种是设定采样间隔，按等距离加密，一种是指定每层加密点数
     def boreholes_points_densify(self, dist: float = None, pnt_num_per_layer: int = None):
         new_points = []
@@ -212,7 +242,8 @@ class BoreholeSet(object):
     def __init__(self, points: np.ndarray = None, series: np.ndarray = None, borehole_idx: np.ndarray = None
                  , radius: float = 10, name=None, dir_path=None):
         self.name = name
-        self.points = points  # 二维
+        self._points = points  #
+        self.is_rtc = False
         self.points_num = 0
         self.series = series
         self.boreholes_index = borehole_idx  # 钻孔点集索引, 记录每个钻孔首个点在点集中的索引, 必须是递增序列
@@ -221,8 +252,8 @@ class BoreholeSet(object):
         self.bounds = None
         self.radius = radius
 
-        self.classes = None
-        self.classes_num = 0
+        self._classes = None
+        self._classes_num = 0
 
         self.vtk_data = None
 
@@ -250,6 +281,24 @@ class BoreholeSet(object):
             # 对象拷贝
         self.dir_path = dir_path
 
+    @property
+    def points(self):
+        return self._points
+
+    @points.setter
+    def points(self, points):
+        self._points = points
+
+    def compute_relative_points(self, center):
+        if not self.is_rtc:
+            self.is_rtc = True
+            self.points = np.subtract(self.points, center)
+            for borehole_id in range(len(self.boreholes_list)):
+                if self.boreholes_list[borehole_id].points is None:
+                    self.boreholes_list[borehole_id].update_borehole_data_by_holelayers()
+                self.boreholes_list[borehole_id].points = np.subtract( self.boreholes_list[borehole_id].points, center)
+                self.boreholes_list[borehole_id].update_holelayer_list()
+
     def search_by_rect2d(self, rect2d):
         x_min, x_max, y_min, y_max = rect2d[0], rect2d[1], rect2d[2], rect2d[3]
         search_boreholes_list = BoreholeSet()
@@ -259,14 +308,34 @@ class BoreholeSet(object):
                 search_boreholes_list.append(one_borehole=one_borehole)
         return search_boreholes_list
 
-    def get_classes(self):
-        if self.classes is None:
-            if self.series is None:
-                raise ValueError('This borehole dataset lacks labels.')
-            else:
-                self.classes = sorted(np.unique(self.series))
-                self.classes_num = len(self.classes)
-        return self.classes
+    @property
+    def classes(self):
+        self.get_classes()
+        return self._classes
+
+    @classes.setter
+    def classes(self, class_list):
+        self._classes = class_list
+
+    @property
+    def classes_num(self):
+        self.get_classes()
+        return self._classes_num
+
+    @classes_num.setter
+    def classes_num(self, num):
+        self._classes_num = num
+
+    def get_classes(self, ignore_label=-1):
+        if self.series is None:
+            # raise ValueError('This borehole dataset lacks labels.')
+            return None
+        else:
+            self._classes = np.unique(self.series)
+            self._classes_num = len(self._classes)
+            if ignore_label in self._classes:
+                self._classes_num -= 1
+        return self._classes
 
     def select_virtual_bolehole(self, is_virtual=True):
         select_boreholes = []
@@ -281,6 +350,8 @@ class BoreholeSet(object):
         if not isinstance(one_borehole, Borehole):
             raise TypeError('The input data should be Borehole type.')
         else:
+            if one_borehole.points is None:
+                one_borehole.update_borehole_data_by_holelayers()
             self.boreholes_list.append(one_borehole)
             if one_borehole.points is None or one_borehole.points_num < 2:
                 raise ValueError('Input borehole data is invalid.')
@@ -376,6 +447,14 @@ class BoreholeSet(object):
         top_points = np.array(top_points)
         return top_points
 
+    def get_bottom_points(self):
+        bottom_points = []
+        for one_borehole in self.boreholes_list:
+            bottom_point = one_borehole.get_bottom_point()
+            bottom_points.append(bottom_point)
+        bottom_points = np.array(bottom_points)
+        return bottom_points
+
     def get_top_points_data(self):
         top_points = []
         top_labels = []
@@ -416,6 +495,25 @@ class BoreholeSet(object):
             vtk_dict[key] = self.merge_vtk_lines(vtk_dict[key])
         return vtk_dict
 
+    # 得到最小层间距
+    def get_minimum_layer_interval(self):
+        min_interval = 10000
+        for one_borehole in self.boreholes_list:
+            for one_layer in one_borehole.holelayer_list:
+                cur_interval = one_layer.top_pos[2] - one_layer.bottom_pos[2]
+                if cur_interval < min_interval:
+                    min_interval = cur_interval
+        return min_interval
+
+    def get_thin_layers(self, threshold_dist):
+        label_list = []
+        for one_borehole in self.boreholes_list:
+            for one_layer in one_borehole.holelayer_list:
+                cur_interval = one_layer.top_pos[2] - one_layer.bottom_pos[2]
+                if cur_interval < threshold_dist:
+                    label_list.append(one_layer.layer_label)
+        return np.unique(label_list)
+
     def merge_vtk_lines(self, poly_lines: list):
         if len(poly_lines) == 0:
             raise ValueError('Input data is empty.')
@@ -431,7 +529,7 @@ class BoreholeSet(object):
             return vtk_data
 
     # 创建钻孔集的凸包，获取凸包面体与外框
-    def get_boreholes_convexhull_bouding_surface_and_outline(self):
+    def get_boreholes_convexhull_bounding_surface_and_outline(self):
         if self.boreholes_list is None or len(self.boreholes_list):
             raise ValueError('Boreholes list is empty.')
         points_data = PointSet(self.get_top_points())
@@ -538,6 +636,37 @@ class BoreholeSet(object):
         pd_file = pd.concat(pd_list, axis=0)
         pd_file.dropna(axis=0, how='any')
         pd_file.to_csv(out_path, index=False, header=False, sep='\t')
+
+    # 添加基底层
+    # base_label = None, 则会自动寻找当前的所有标签，找到最大值标签，即最底层max_label， base_label=max_label+1
+    def add_base_layer_for_each_borehole(self, base_label=None, min_z_value=None):
+        cur_labels = self.get_classes()
+        bottom_points = self.get_bottom_points()
+        min_z = np.min(bottom_points[:, 2])
+        if min_z_value is not None:
+            if min_z_value < min_z:
+                min_z = min_z_value
+        if cur_labels is not None:
+            if base_label is not None:
+                if base_label in cur_labels:
+                    raise ValueError('base_label conflicts with current labels.')
+            else:
+                arr_type = cur_labels.dtype
+                if arr_type.kind not in 'biuf':
+                    raise ValueError('Boreholes layer label must be numeric.')
+                max_label = np.max(cur_labels)
+                base_label = max_label + 1
+            # 添加基底层
+            for idx, one_borehole in enumerate(self.boreholes_list):
+                bot_pos = one_borehole.get_bottom_point()
+                if abs(bot_pos[2] - min_z) > 0.0001:  # 不相等相等
+                    one_layer = Borehole.Holelayer(coord_top=bot_pos
+                                                   , coord_bottom=np.array([bot_pos[0], bot_pos[1], min_z])
+                                                   , layer_label=base_label, borehole_id=one_borehole.borehole_id
+                                                   , is_virtual=True)
+                    one_borehole.holelayer_list.append(one_layer)
+                one_borehole.update_borehole_data_by_holelayers()
+                self.boreholes_list[idx] = one_borehole
 
     def __len__(self):
         return self.borehole_num

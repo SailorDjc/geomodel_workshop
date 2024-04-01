@@ -4,18 +4,20 @@ import numpy as np
 from vtkmodules.util import numpy_support
 from vtkmodules.all import vtkXMLUnstructuredGridReader, vtkPoints, vtkCellArray, vtkTriangle, vtkUnstructuredGrid, \
     vtkImageData, vtkPlaneSource
-from scipy import interpolate
 from data_structure.grids import PointSet
 from tqdm import tqdm
-from utils.vtk_utils import create_vtk_grid_by_rect_bounds, vtk_unstructured_grid_to_vtk_polydata
-from utils.vtk_utils import create_implict_surface_reconstruct, bounds_merge, get_bounds_from_coords, bounds_intersect
+from utils.vtk_utils import create_vtk_grid_by_rect_bounds, vtk_unstructured_grid_to_vtk_polydata, \
+    create_polygon_with_sorted_points_3d
+from utils.vtk_utils import create_implict_surface_reconstruct, bounds_merge, get_bounds_from_coords, \
+    bounds_intersect, voxelize
 import os
 import json
 import time
 import pickle
-from scipy.interpolate import LinearNDInterpolator
+from scipy.interpolate import LinearNDInterpolator, RegularGridInterpolator, Rbf, splprep, RBFInterpolator
 import scipy.spatial as spt
 from importlib import util
+from utils.math_libs import simplify_polyline_2d, remove_duplicate_points
 from matplotlib.path import Path
 from vtkmodules.all import vtkPolyDataReader, vtkPolyDataMapper, vtkProperty, vtkRenderer, \
     vtkBooleanOperationPolyDataFilter
@@ -39,7 +41,7 @@ if has_shapely is None:
     has_shapely = False
 else:
     has_shapely = True
-    from shapely.geometry import box, Polygon
+    from shapely.geometry import box, Polygon, LineString
 if has_geopandas is None:
     has_geopandas = False
 else:
@@ -100,7 +102,7 @@ def bounds_to_corners_2d(bounds, inner_points=None):
         # 故通过内部点集计算bounds角点高程，取最近邻3个点的高程均值
         ckt = spt.cKDTree(inner_points)
         for p_i, pt in enumerate(corners_list):
-            d, pid = ckt.query(pt, k=[1, 2, 3])
+            d, pid = ckt.query(pt, k=[1, 2])
             search_pts = inner_points[pid]
             z_value = np.mean(search_pts[:, 2])
             corners_list[p_i][2] = z_value
@@ -136,11 +138,18 @@ def compare_data_bounds(tmp_bounds, data_bounds):
     return np.array([x_min_a, x_max_a, y_min_a, y_max_a, z_min_a, z_max_a])
 
 
+# 地形曲面生成类，可以通过输入tiff文件和钻孔顶点来构建地形曲面，或者采用tiff和钻孔地表控制点联合约束的方法，钻孔顶点用来修正tiff局部高程。
+# 输入tiff:     set_input_tiff_file()
+# 输入控制点:    set_control_points()
+# 输入边界约束:   set_boundary()
+
 class TerrainData(object):
     def __init__(self, tiff_path=None, control_points=None):
         # 地形面数据
         self.grid_points = None  # 与dem对应栅格点坐标点坐标
         self._bounds = None
+        self._center = None
+        self.is_rtc = False  # 是否为相对坐标
         # tiff 元数据
         self.tiff_path = tiff_path
         self._transform = None
@@ -149,6 +158,7 @@ class TerrainData(object):
         self.src_tiff_bounds = None  # tiff数据范围
         # 高程控制点
         self.control_points = control_points
+        self.buffer_dist = 20
         self.dst_crs = None  # 目标投影
         self.vtk_data = None
         # 边界约束
@@ -169,9 +179,11 @@ class TerrainData(object):
 
     # 数据输入接口
     def set_control_points(self, control_points, buffer_dist=20):
-        self.control_points = control_points
-        if self.control_points is not None:
-            self.modify_local_terrain_by_points(self.control_points, buffer_dist=buffer_dist)
+        self.buffer_dist = buffer_dist
+        if control_points is not None:
+            if not isinstance(control_points, PointSet):
+                control_points = PointSet(points=control_points)
+            self.control_points = control_points
 
     # boundary_2d是边界点按顺序排列的列表，首尾点不重复， mask_bounds 包围盒6元组， mask_shp_path shp文件
     def set_boundary(self, boundary_2d=None, mask_bounds=None, mask_shp_path=None, is_bound=False):
@@ -184,7 +196,8 @@ class TerrainData(object):
             self.boundary_type = 0
         elif self.mask_shp_path is not None:
             mask_gdf = gpd.read_file(self.mask_shp_path)
-            self.boundary_points = np.array(mask_gdf['geometry'][0].exterior.coords)
+            x, y = mask_gdf['geometry'][0].exterior.coords
+            self.boundary_points = np.array([x, y]).transpose()
             self.boundary_type = 1
         elif self.boundary_2d is not None:
             self.boundary_points = np.array(self.boundary_2d)
@@ -193,6 +206,15 @@ class TerrainData(object):
             self.boundary_type = 3
         else:
             self.boundary_type = 4
+
+    # 设置线状工程边界，通过线性缓冲区设置边界
+    def set_boundary_from_line_buffer(self, trajectory_line_xy, buffer_dist=30, principal_axis='x'):
+        line_xy_sorted = simplify_polyline_2d(polyline_points=trajectory_line_xy, principal_axis=principal_axis, eps=1)
+        lineStrip = LineString(line_xy_sorted)
+        buffer_area = lineStrip.buffer(distance=buffer_dist, cap_style='square')
+        x, y = buffer_area.exterior.xy
+        self.boundary_2d = np.array([x, y]).transpose()
+        self.set_boundary(boundary_2d=self.boundary_2d)
 
     # 设置栅格影像输入
     def set_input_tiff_file(self, file_path, dst_crs_code=None):
@@ -211,11 +233,13 @@ class TerrainData(object):
         if self.check_crs_change():
             self.reproject_tiff(self.tiff_path)
 
-    def execute(self):
+    def execute(self, is_rtc=False):
         if self.tiff_path is not None:
             self.read_tiff_data_from_file(file_path=self.tiff_path)
         if self.control_points is not None:
-            self.set_control_points(self.control_points)
+            self.append_control_points(self.control_points)
+        if is_rtc:
+            self.compute_relative_points()
         self.create_terrain_surface_from_points(PointSet(points=self.grid_points))
         self.clip_terrain_surface_by_boundary_points()
 
@@ -237,6 +261,15 @@ class TerrainData(object):
         else:
             self._bounds = None
         return self._bounds
+
+    @property
+    def center(self):
+        if self.bounds is not None and self.is_rtc is False:
+            x = (self.bounds[0] + self.bounds[1]) * 0.5
+            y = (self.bounds[2] + self.bounds[3]) * 0.5
+            z = (self.bounds[4] + self.bounds[5]) * 0.5
+            self._center = np.array([x, y, z])
+        return self._center
 
     # 重投影栅格影像
     def reproject_tiff(self, file_path):
@@ -305,6 +338,10 @@ class TerrainData(object):
                     self.grid_points.append(np.array([x, y, z_matrix[i, j]]))
             self.grid_points = np.array(self.grid_points)
 
+    def append_control_points(self, control_points):
+        if control_points is not None:
+            self.modify_local_terrain_by_points(control_points, buffer_dist=self.buffer_dist)
+
     # 设置目标投影
     def set_dst_crs_code(self, dst_crs_code):
         if self.dst_crs is not None:
@@ -340,7 +377,7 @@ class TerrainData(object):
         tmp_bounds = points_data.bounds
         result_bounds = bounds_merge(self.bounds, tmp_bounds)
         self._bounds = result_bounds
-        if self.boundary_type == 0:
+        if self.boundary_type == 0 or self.boundary_type == 1 or self.boundary_type == 2:
             result_bounds = get_bound_2d_from_points_2d(self.boundary_points, buffer_dist=0)
         if self.boundary_type == 3:
             result_bounds = get_bound_2d_from_points_2d(points_data.points, buffer_dist=0)
@@ -362,11 +399,13 @@ class TerrainData(object):
         x = known_points[:, 0]
         y = known_points[:, 1]
         z = known_points[:, 2]
-        interp = LinearNDInterpolator(list(zip(x, y)), z)
+        print('Terrain is being built...')
+        interp = RBFInterpolator(list(zip(x, y, )), z)  #
+        # interp = LinearNDInterpolator(list(zip(x, y)), z)
         cell_points = terrain_surface.points
         pred_x = cell_points[:, 0]
         pred_y = cell_points[:, 1]
-        pred_z = interp(pred_x, pred_y)
+        pred_z = interp(list(zip(pred_x, pred_y)))
         terrain_surface['Elevation'] = pred_z
         terrain_surface = terrain_surface.warp_by_scalar()
         terrain_surface = vtk_unstructured_grid_to_vtk_polydata(terrain_surface)
@@ -382,31 +421,42 @@ class TerrainData(object):
         z_min = min_z - 5
         if self.boundary_type == 0 or self.boundary_type == 3:
             return self.vtk_data
-        else:   # 4 or 1 or 2:
+        else:  # 4 or 1 or 2:
             boundary_points = copy.deepcopy(self.boundary_points)
         # 范围约束没有高程设置，这里使用最大高程和最小高程，创建一个范围盒子，筛选出在盒子范围内的网格点，范围外的网格删除
         if boundary_points.shape[1] == 2:
             boundary_points = np.pad(array=boundary_points, pad_width=((0, 0), (0, 1))
-                                          , constant_values=((z_max, z_max), (z_max, z_max)))
+                                     , constant_values=((z_max, z_max), (z_max, z_max)))
         else:
             boundary_points[:, 2] = z_max
+
         points_3d = copy.deepcopy(boundary_points)
-        N = len(points_3d)
-        face = [N + 1] + list(range(N)) + [0]
-        polygon = pv.PolyData(points_3d, faces=face)
+        points_3d, rids = remove_duplicate_points(points_3d, tolerance=10, is_remove=True)
+        polygon = create_polygon_with_sorted_points_3d(points_3d=points_3d)
+
+        # N = len(points_3d)
+        # face = [N + 1] + list(range(N)) + [0]
+
+        # cells = np.full((N, 3), 2, dtype=np.int_)
+        # cells[:, 1] = np.arange(0, N, dtype=np.int_)
+        # cells[:, 2] = np.array(list(np.arange(1, N)) + [0], dtype=np.int_)
+        #
+        print('Terrain surfaces are being cropped by range...')
         polygon = polygon.triangulate()
-        polygon = polygon.subdivide_adaptive(max_n_passes=5)  # max_edge_len=resolytion_xy
+        polygon = polygon.subdivide_adaptive(max_n_passes=2)  # max_edge_len=resolytion_xy
+
         side_surf = polygon.extrude((0, 0, z_min - z_max), capping=True)
+
         # 筛选出在边界范围内的网格点索引
         grid_points = pv.PolyData(self.grid_points)
-        selected = grid_points.select_enclosed_points(side_surf, tolerance=0.000001)
+        selected = grid_points.select_enclosed_points(side_surf, tolerance=0.000000001)
         cell_indices = selected.point_data['SelectedPoints']
         delete_cell_indices = np.argwhere(cell_indices <= 0).flatten()
-        new_terrain_surface = self.vtk_data.remove_cells(delete_cell_indices)
-        return new_terrain_surface
+        self.vtk_data = self.vtk_data.remove_cells(delete_cell_indices)
+        return self.vtk_data
 
-
-    def create_grid_from_terrain_surface(self, z_min=-100, boundary_2d=None, bounds=None, cell_density=2
+    # 通过地表曲面，构建延展到指定深度的建模网格
+    def create_grid_from_terrain_surface(self, z_min=-100, boundary_2d=None, bounds=None, cell_density=None
                                          , is_smooth=False):
         if boundary_2d is not None:
             self.set_boundary(boundary_2d=boundary_2d, mask_bounds=bounds)
@@ -414,14 +464,14 @@ class TerrainData(object):
             raise ValueError('The vtk surface is None.')
         size_x = self.bounds[1] - self.bounds[0] + 5
         size_y = self.bounds[3] - self.bounds[2] + 5
-        dim_x = size_x / cell_density
-        max_dim = 400
-        if dim_x > max_dim:
-            cell_density = size_x / max_dim
         plane = pv.Plane(center=(self.vtk_data.center[0], self.vtk_data.center[1], z_min), direction=(0, 0, -1)
                          , i_size=size_x, j_size=size_y)
         grid_extrude_trim = self.vtk_data.extrude_trim((0, 0, z_min), trim_surface=plane)
-        grid_extrude_trim = pv.voxelize(grid_extrude_trim, density=cell_density)
+        if cell_density is None:
+            raise ValueError('cell_density can not be None.')
+        print('voxelize...')
+        print(f'cell_density is {cell_density}...')
+        grid_extrude_trim = voxelize(grid_extrude_trim, density=cell_density)
         if is_smooth:
             grid_extrude_trim = vtk_unstructured_grid_to_vtk_polydata(grid_extrude_trim)
             grid_extrude_trim = grid_extrude_trim.smooth(n_iter=1000)
@@ -429,26 +479,28 @@ class TerrainData(object):
 
     # 通过高程点修改局部地形， 注意points_data.buffer_dist，这个缓冲距离表示高程点的控制范围
     def modify_local_terrain_by_points(self, control_points_data: PointSet, buffer_dist):
-        if self.grid_points is None:
+        if control_points_data is None:
+            raise ValueError('Control points is None')
+        if self.grid_points is not None:
+            tree = spt.cKDTree(self.grid_points)
+            erase_points_list = []
+            # 球状影响范围搜索，搜索临近点，做替换
+            control_points = control_points_data.get_points()
+            for con_pnt in control_points:
+                ll = tree.query_ball_point(x=con_pnt, r=buffer_dist)
+                erase_points_list.extend(ll)
+            # 删除影响范围内的点集
+            erase_points_list = list(set(erase_points_list))
+            if len(erase_points_list) > 0:
+                self.grid_points = np.delete(self.grid_points, obj=erase_points_list, axis=0)
+            if len(self.grid_points) > 0:
+                self.grid_points = np.stack((self.grid_points, control_points), axis=0)
+            else:
+                self.grid_points = control_points
+        else:
             self.grid_points = control_points_data.get_points()
             if self.boundary_points is None:
                 self.boundary_points = control_points_data.get_convexhull_2d()
-            return
-        tree = spt.cKDTree(self.grid_points)
-        erase_points_list = []
-        # 球状影响范围搜索，搜索临近点，做替换
-        control_points = control_points_data.get_points()
-        for con_pnt in control_points:
-            ll = tree.query_ball_point(x=con_pnt, r=buffer_dist)
-            erase_points_list.extend(ll)
-        # 删除影响范围内的点集
-        erase_points_list = list(set(erase_points_list))
-        if len(erase_points_list) > 0:
-            self.grid_points = np.delete(self.grid_points, obj=erase_points_list, axis=0)
-        if len(self.grid_points) > 0:
-            self.grid_points = np.stack((self.grid_points, control_points), axis=0)
-        else:
-            self.grid_points = control_points
 
     # @brief 坐标范围整体偏移
     # @param new_rect_2d和new_center二选一，优先考虑new_center，new_rect_2d除平移外，还涉及坐标伸缩变换
@@ -461,6 +513,21 @@ class TerrainData(object):
             pass
         else:
             raise ValueError('Need to input transform parameters.')
+
+    # 计算相对坐标，reverse=True恢复为原坐标
+    def compute_relative_points(self, center=None, reverse=False):
+        if reverse is False:
+            if self.grid_points is not None and self.is_rtc is False:
+                if center is None:
+                    center = self.center
+                self.grid_points = np.subtract(self.grid_points, center)
+                self.is_rtc = True
+        else:
+            if self.grid_points is not None and self.is_rtc is True:
+                if center is None:
+                    center = self.center
+                self.grid_points = np.add(self.grid_points, center)
+                self.is_rtc = False
 
     def save(self, dir_path: str, out_name: str = None):
         self.dir_path = dir_path

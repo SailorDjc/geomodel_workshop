@@ -1,3 +1,4 @@
+import copy
 import pickle
 import numpy as np
 
@@ -91,7 +92,8 @@ def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None,
 class GmeModelGraphList(object):
     def __init__(self, name, root, grid_data: list = None, input_sample_data=None,
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
-                 dgl_graph_param=None, update_graph=False, grid_dims=None, **kwargs):
+                 dgl_graph_param=None, update_graph=False, grid_dims=None, terrain_data=None,
+                 grid_cell_density=None, **kwargs):
         # 注：.dat文件格式与Voxler软件一致
         if dgl_graph_param is None:
             dgl_graph_param = [['position'], None]  # [[node_feat], [edge_feat]]
@@ -114,7 +116,8 @@ class GmeModelGraphList(object):
         self.result_model = {}
         self.graph_log = {}  # 待删除
         self.num_classes = None  # 数据集分类数目
-
+        self.terrain_data = terrain_data  # 地形数据
+        self.grid_cell_density = grid_cell_density
         # 文件存储路径，在processed文件夹下共存储3个数据文件，两个模型训练checkpoint存储文件
         processed_dir = os.path.join(self.root, 'processed')  # 存储
 
@@ -130,6 +133,7 @@ class GmeModelGraphList(object):
         self.graph = None  # 图数据
         super(GmeModelGraphList, self).__init__()
         self.kwargs = kwargs
+        self.terrain_data = terrain_data
         self.access_model_data()
 
     # 访问模型数据
@@ -141,6 +145,8 @@ class GmeModelGraphList(object):
         # 加载dgl_graph和geodata, 其中dgl_graph是图神经网络训练的数据源, geodata主要存储地质数据源用来可视化分析
         if os.path.exists(self.processed_geodata_path):  # geodata
             self.load_geograph()
+            geodata = self.geograph[0]
+            label_num = geodata.data.classes_num
             print('Loading {} GeoModel Data ...'.format(len(self.geograph)))
         # 加载图数据
         if os.path.exists(self.processed_file_path):
@@ -186,15 +192,26 @@ class GmeModelGraphList(object):
                 self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
             self.num_classes['labels'].extend(labels_num_list)
             self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
-        # 采样数据只有采样数据，没有网格数据的情况下，进行建模
+        # 只有采样数据，没有输入的网格数据的情况下，进行建模
         elif self.input_sample_data is not None and len(self.input_sample_data) > 0:
             # 只支持单图构建
             geodata = GeoMeshGraphParse(input_sample_data=self.input_sample_data, name='boreholes_model'
                                         , grid_dims=self.grid_dims)
+            external_grid = None
+            if self.terrain_data is not None:
+                if self.terrain_data.vtk_data is None:
+                    top_points = self.input_sample_data.get_terrain_points()
+                    self.terrain_data.set_control_points(control_points=top_points)
+                    self.terrain_data.execute()
+                build_bounds = self.input_sample_data.bounds
+                external_grid = self.terrain_data.create_grid_from_terrain_surface(z_min=build_bounds[4]
+                                                                                   , cell_density=self.grid_cell_density
+                                                                                   , is_smooth=False)
             dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
-                                        feat_normalize=True, **self.kwargs)
+                                        feat_normalize=True, ext_grid=external_grid, **self.kwargs)
             # 对标签进行处理
             label_num = geodata.classes_num
+            labels = geodata.data.classes
             labels_num_list.append(label_num)
             # 已存储数据集
             pre_save_graph_num = len(self.graph)
@@ -234,17 +251,17 @@ class GmeModelGraphList(object):
             if self.geograph[idx].train_data_indexes is None:
                 # random_state 确保每次切分是确定的
                 train, val_test = train_test_split(x, test_size=0.4, random_state=2)
-                valid, test = train_test_split(val_test, test_size=0.5, random_state=2)
+                val, test = train_test_split(val_test, test_size=0.5, random_state=2)
             else:
                 print('get split Dataset')
                 train_val = np.array(self.geograph[idx].train_data_indexes)
-                train, valid = train_test_split(train_val, test_size=0.1)  # , random_state=2
+                train, val = train_test_split(train_val, test_size=0.1)  # , random_state=2
                 test = np.array(list(set(x) - set(self.geograph[idx].train_data_indexes)))
             # train = train_val
             # val_test = np.array(list(set(x) - set(self.geograph[idx].train_idx)))
             # valid, test = train_test_split(val_test, test_size=0.1, random_state=2)
             train_idx = torch.from_numpy(train)
-            valid_idx = torch.from_numpy(valid)
+            valid_idx = torch.from_numpy(val)
             test_idx = torch.from_numpy(test)
             return {'train': train_idx, 'valid': valid_idx, 'test': test_idx}
 
@@ -318,19 +335,21 @@ class GmeModelGraphList(object):
 #     sample_points_data = data_sampler.get_sample_data(idx=0)
 #     points_data.append(sample_points_data)
 class GeoDataMLClassifier(object):
-    def __init__(self, method: str = None, **kwargs):
+    def __init__(self, method: str = None, is_grid_search=False, **kwargs):
         self.params = None
-        self.known_data_list = []  # 已知数据  支持分批加入
-        self.unkown_data_list = []  # 未知数据
-        self.predict_result = []  # 预测结果
+        self.data_list = []  # 已知数据  支持分批加入
+        self.known_data = None
+        self.unknown_data = None  # 未知数据
 
         # K折交叉验证，如果 k_fold > 1， 则使用
         self.k_fold = 1
         # 参数网格搜索
-        self.grid_search = False
+        self.grid_search = is_grid_search
         self.method = method
         if self.method is not None:
             self.method = self.method.lower()
+        else:
+            self.method = 'svm'
         self.support_methods = ['svm', 'rf', 'xgboost']
         self.estimator = None
         self.classes = None
@@ -340,42 +359,41 @@ class GeoDataMLClassifier(object):
         self.valid_ratio = None
         self.test_ratio = None
         self.kwargs = kwargs
+        self.best_model = None
 
     # 添加已知数据
-    def append_known_data(self, known_data):
-        if isinstance(known_data, (BoreholeSet, PointSet, SectionSet, Grid)):
-            self.known_data_list.append(known_data)
+    def append_data(self, data: PointSet):
+        if isinstance(data, PointSet):
+            self.data_list.append(data)
         else:
             raise ValueError('Input data is not supported.')
 
-    def get_known_data_as_points_data(self, index=None):
-        new_points_data = PointSet()
-        for k_it, known_data in enumerate(self.known_data_list):
-            if index is not None and 0 <= index < len(self.known_data_list):
+    # index=None 则数据全部获取，若index=0则只获取第一份数据
+    # predict_label 需要预测的数据标签，默认为-1
+    def extract_known_data_from_data_list(self, index=None, predict_label=-1):
+        known_points_data = PointSet()
+        unknown_points_data = PointSet()
+        for k_it, data in enumerate(self.data_list):
+            if index is not None and 0 <= index < len(self.data_list):
                 if k_it != index:
                     continue
-            if isinstance(known_data, BoreholeSet):
-                points_data = known_data.get_points_data(only_interface=False)
-                new_points_data.append(points_data)
-            if isinstance(known_data, PointSet):
-                new_points_data.append(known_data)
-            if isinstance(known_data, SectionSet):
-                points_data = known_data.get_points_data()
-                new_points_data.append(points_data)
-            if isinstance(known_data, Grid):
-                points_data = known_data.get_points_data()
-                new_points_data.append(points_data)
-        return new_points_data
+            if isinstance(data, PointSet):
+                labels = data.get_labels()
+                if predict_label in labels:
+                    train_idx = np.argwhere(labels != -1).flatten()
+                    known_data = data.get_points_data_by_ids(ids=train_idx)
+                    known_points_data.append(known_data)
+                    pred_idx = np.argwhere(labels == -1).flatten()
+                    unknown_data = data.get_points_data_by_ids(ids=pred_idx)
+                    unknown_points_data.append(unknown_data)
+        self.known_data = known_points_data
+        return self.known_data, self.unknown_data
 
-    def execute_train(self, index=None, data_x='points'):
-        known_points_data = self.get_known_data_as_points_data(index=index)
+    def execute_train(self, index=None):
+        known_points_data, unknown_points_data = self.extract_known_data_from_data_list(index=index)
         # 已知数据
-        if data_x == 'points':
-            known_data_x = known_points_data.points
-        else:
-            known_data_x = known_points_data.scalars[data_x]
-        known_data_y = known_points_data.labels
-
+        train_x = known_points_data.points
+        train_y = known_points_data.labels
         if self.method is not None and self.method in self.support_methods:
             method_to_index = {label: index for index, label in enumerate(self.support_methods)}
             if method_to_index[self.method] == 0:
@@ -394,52 +412,22 @@ class GeoDataMLClassifier(object):
         if self.grid_search:
             self.estimator = GridSearchCV(estimator=self.estimator, param_grid=self.params)
         print('Classifier computing ...')
-        # 分割数据集
-        points_num = len(known_data_x)
-        known_index = np.arange(points_num)
-        train_index, valid_index = train_test_split(known_index, train_size=self.train_ratio, random_state=2)
-        if self.test_ratio is not None:
-            test_index = train_test_split(valid_index, train_size=self.valid_ratio, random_state=2)
-        train_x = known_data_x[train_index]
-        train_y = known_data_y[train_index]
-        if self.k_fold > 1:
-            scores = cross_val_score(self.estimator, train_x, train_y, cv=self.k_fold)
-        else:
-            self.estimator.fit(train_x, train_y)
-        # self.estimator.predict
+        self.estimator.fit(train_x, train_y)
+        clf_best = self.estimator.best_estimator_
+        self.best_model = clf_best
 
-        #         clf.fit(train_x, train_y)  # 输出测试集的预测结果
-        #         clf_best = clf.best_estimator_
-        #         predict_test_y = clf_best.predict(test_x)
-        #         # 获得预测出的模型类别值集合，可用于可视化
-        #         # prediction[test_idx] = predict_test_y
-        #         prediction = predict_test_y
-        #         print(classification_report(test_y, predict_test_y))
-        #         # accuracy = MF.accuracy(torch.tensor(predict_test_y[test_idx]), torch.tensor(test_y[test_idx]))
-        #         # print('================Test Accuracy {:.4f}================'.format(accuracy.item()))
-
-        #         if method == 'svm':
-        #             clf = GridSearchCV(estimator=svm.SVC(), param_grid=param, cv=cv)
-        #         elif method == 'rf':
-        #             clf = GridSearchCV(estimator=RandomForestClassifier(), param_grid=param)
-        #         elif method == 'xgboost':
-        #             clf = GridSearchCV(estimator=XGBClassifier(), param_grid=param)
-        #         print('Classifier computing ...')
-        #         clf.fit(train_x, train_y)  # 输出测试集的预测结果
-        #         clf_best = clf.best_estimator_
-        #         predict_test_y = clf_best.predict(test_x)
-        #         # 获得预测出的模型类别值集合，可用于可视化
-        #         # prediction[test_idx] = predict_test_y
-        #         prediction = predict_test_y
-        #         print(classification_report(test_y, predict_test_y))
-        #         # accuracy = MF.accuracy(torch.tensor(predict_test_y[test_idx]), torch.tensor(test_y[test_idx]))
-
-    # 添加待求解数据
-    def append_unknown_data(self, unknown_data):
-        if self.unkown_data_list is None:
-            self.unkown_data_list = []
-        if isinstance(unknown_data, (BoreholeSet, PointSet, SectionSet, Grid)):
-            self.unkown_data_list.append(unknown_data)
+    def predict(self, grid):
+        if isinstance(grid, (Grid, Section, PointSet)):
+            # 获得预测出的模型类别值集合，可用于可视化
+            new_grid = copy.deepcopy(grid)
+            predict_points = new_grid.points
+            if self.best_model is not None:
+                predict_test_y = self.best_model.predict(predict_points)
+                new_grid.labels = predict_test_y
+                if new_grid.vtk_data is not None:
+                    new_grid.vtk_data['label'] = predict_test_y
+                return new_grid
+        return None
 
     # 添加一些分类参数
     def set_estimator_param(self, **kwargs):

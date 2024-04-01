@@ -5,6 +5,7 @@ from gme_trainer import GmeTrainer, GmeTrainerConfig, GraphTransConfig
 from models.model import GraphTransfomer
 from data_structure.reader import ReadExportFile
 from data_structure.geodata import GeodataSet
+from utils.plot_utils import visual_multiple_model
 from data_structure.terrain import TerrainData
 from data_structure.grids import Grid
 from data_structure.data_sampler import GeoGridDataSampler
@@ -23,17 +24,32 @@ if __name__ == '__main__':
     # section = grid_sample.sample_with_sections_along_axis(sample_axis='x', section_num=1)
     # section.show()
 
-    file_path = os.path.join(root_path, 'data', 'origin_borehole_data.dat')
-    #
-    xm_file_path = os.path.join(root_path, 'data', '厦门数据集', '三级编码', 'sample_drills_big.dat')
+    # file_path = os.path.join(root_path, 'data', 'origin_borehole_data.dat')
+    # #
+    # xm_file_path = os.path.join(root_path, 'data', '厦门数据集', '三级编码', 'sample_drills_big.dat')
     # # 从外部数据文本中加载钻孔数据
     reader = ReadExportFile()
+
+    ###
+    boreholes_data_2 = reader.read_boreholes_data_from_text_file(
+        dat_file_path=os.path.join(root_path, 'data', 'new_data.dat'))
+    ###
     # boreholes_data_0 = reader.read_boreholes_data_from_text_file(dat_file_path=xm_file_path)
     # boreholes_data_1 = reader.read_boreholes_data_from_text_file(dat_file_path=file_path)
     # bounds = boreholes_data_1.bounds
     # boreholes_data_2 = boreholes_data_0.search_by_rect2d(rect2d=bounds)
     # boreholes_data_2.export_boreholes_dict_dat_file(file_path=os.path.join(root_path, 'data', 'new_data.dat'))
-    boreholes_data_2 = reader.read_boreholes_data_from_text_file(dat_file_path=os.path.join(root_path, 'data', 'new_data.dat'))
+    # boreholes_data_2 = reader.read_labels_map(
+    #     map_file_path=os.path.join(root_path, 'data', 'sample_drills_0306.map'), encoding='ANSI')
+
+    # 构建底面
+    # from data_structure.terrain import TerrainData
+    # terrain = TerrainData()
+    # terrain.set_control_points(control_points=boreholes_data_2.get_bottom_points())
+    # terrain.execute()
+    # vt = terrain.create_grid_from_terrain_surface(z_min=-100)
+    # vt.plot()
+
     # # 导出顶点坐标
     # top_points = boreholes_data_2.get_top_points()
     # export_data = pd.DataFrame(top_points)
@@ -48,9 +64,12 @@ if __name__ == '__main__':
     gd.standardize_labels()
     # 将三维模型规则网格数据构建为图网格数据
     # 这里采用真实钻孔，不采用虚拟钻孔采样
+
+    terrain_data = TerrainData()
     gme_models = GmeModelGraphList('gme_model', root=root_path,
                                    input_sample_data=gd,
-                                   add_inverse_edge=True)
+                                   add_inverse_edge=True,
+                                   terrain_data=terrain_data)
 
     # 训练已经结束，结果保存到  os.path.join(gme_models.processed_dir, 'vtk_model.vtk') 路径下
     from utils.plot_utils import control_visibility_with_layer_label

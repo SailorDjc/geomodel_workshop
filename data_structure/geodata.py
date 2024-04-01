@@ -7,6 +7,7 @@ import time
 import pickle
 import os
 import numpy as np
+from utils.vtk_utils import bounds_merge, compute_bounds_center
 
 
 def load_object(file_path, gtype=None):
@@ -42,33 +43,40 @@ class GeodataSet(object):
             raise ValueError("Input data type is not supported.")
         self.geodata_list.append(data)
 
-    def standardize_labels(self, label_dict: dict = None, default_value=-1):
-        series_labels = self.get_points_data().labels
-        if series_labels is None:
-            raise ValueError('The input data has not scalar values.')
-        old_label = np.trunc(series_labels)
-        unique_label = np.unique(old_label)
-        sorted_label = sorted(unique_label)
-        if label_dict is not None:
-            # 判断label_dict 是否符合要求
-            # 默认值不映射
-            if default_value in label_dict.keys():
-                raise ValueError('The input label_dict is invalid.')
-            for idx, item in enumerate(sorted_label):
-                # 所有标签都包含
-                if item == default_value:
-                    continue
-                if item not in label_dict.keys():
-                    raise ValueError('The input label_dict is invalid.')
-                # 不连续
-                if idx + 1 < len(sorted_label) and item + 1 != label_dict[idx + 1]:
-                    raise ValueError('The input label_dict is invalid.')
+    def set_class_dict(self, label_dict=None):
+        pass
+
+    def get_terrain_points(self):
+        terrain_points = []
+        for gd in self.geodata_list:
+            if isinstance(gd, BoreholeSet):
+                top_points = gd.get_top_points()
+                terrain_points.append(top_points)
+            if isinstance(gd, PointSet):
+                pass
+        if len(terrain_points) > 0:
+            terrain_points = np.concatenate(terrain_points, axis=0)
+            return terrain_points
         else:
-            label_dict = {}
-            for idx, item in enumerate(sorted_label):
-                if item == default_value:  # 对于默认未知值则不改变
-                    continue
-                label_dict[item] = idx
+            return None
+
+    def compute_relative_coords(self):
+        # 求中心点坐标
+        bb_list = []
+        for geo_data in self.geodata_list:
+            cur_bounds = geo_data.bounds
+            bb_list.append(cur_bounds)
+        if len(bb_list) >= 1:
+            result_bounds = bb_list[0]
+            for id in range(len(bb_list) - 1):
+                result_bounds = bounds_merge(bounds_a=result_bounds, bounds_b=bb_list[id + 1])
+        else:
+            raise ValueError('Data is empty.')
+        center = compute_bounds_center(result_bounds)
+        for geo_data in self.geodata_list:
+            geo_data.compute_relative_points(center=center)
+
+    def update_labels_from_label_dict(self, label_dict):
         # 更新标签
         for sample_data in self.geodata_list:
             sample_data.classes = sorted(label_dict.values())
@@ -94,6 +102,62 @@ class GeodataSet(object):
         self.label_dict = label_dict
         self.classes_num = len(label_dict.values())
         self.classes = np.array(list(label_dict.values()))
+
+    def standardize_labels(self, label_dict: dict = None, default_value=-1, is_continuous=True):
+        series_labels = self.get_points_data().labels
+        # 原始数据必须有标签值
+        if series_labels is None:
+            raise ValueError('The input data has not scalar values.')
+        arr_type = series_labels.dtype
+        continuous_flag = False  # 连续化操作
+        if label_dict is not None:
+            unique_label = np.unique(series_labels)
+            # 字符型数组，若标签是字符，需要通过输入的映射表，将字符标签映射为数值标签
+            # 判断label_dict 是否符合要求
+            if default_value in label_dict.keys():  # 默认值不映射
+                raise ValueError('The input label_dict conflicts with the default value.')
+            for idx, item in enumerate(unique_label):
+                # 所有标签都覆盖到
+                if item == default_value:
+                    continue
+                if item not in label_dict.keys():
+                    raise ValueError('The input label_dict is invalid.')
+                    # 标签映射
+            self.update_labels_from_label_dict(label_dict=label_dict)
+            if self.classes.dtype.kind in 'SU':
+                raise ValueError('The labels must be numeric.')
+            series_labels = self.get_points_data().labels
+            sorted_label = sorted(np.unique(np.trunc(series_labels)))
+            # 判断映射后标签的连续性
+            if is_continuous:
+                # 不连续
+                for idx, item in enumerate(sorted_label):
+                    if idx + 1 < len(sorted_label) and item + 1 != sorted_label[idx + 1]:
+                        # 连续化
+                        continuous_flag = True
+        else:
+            if arr_type.kind in 'SU':
+                raise ValueError('The labels must be numeric, should input label_dict.')
+        if (label_dict is None and arr_type.kind in 'biuf') or continuous_flag is True:
+            # 数值型标签
+            # 没有映射表，则按数值大小自动排序
+            # 标签自动连续化
+            series_labels = self.get_points_data().labels
+            trunc_label = np.trunc(series_labels)  # 将浮点型化为整型
+            sorted_label = sorted(np.unique(trunc_label))
+            new_label_dict = {}
+            for idx, item in enumerate(sorted_label):
+                if item == default_value:  # 对于默认未知值则不改变
+                    continue
+                new_label_dict[item] = idx
+            self.update_labels_from_label_dict(label_dict=new_label_dict)
+            if continuous_flag is True and label_dict is not None:
+                self.label_dict = {}
+                for n_key, n_value in new_label_dict.items():
+                    for key, value in label_dict.items():
+                        if n_key == value:
+                            self.label_dict[key] = n_value
+                            break
 
     def get_points_data(self):
         points_data_list = []

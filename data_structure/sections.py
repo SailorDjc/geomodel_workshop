@@ -90,6 +90,14 @@ class Section(object):
     def set_input_pngdata(self, png_file, corner_coordinates, pixel_label_dict):
         pass
 
+    @property
+    def grid_points_series(self):
+        return self.series
+
+    @grid_points_series.setter
+    def grid_points_series(self, series):
+        self.series = series
+
     def set_vtk_grid(self, grid_vtk):
         if isinstance(grid_vtk, (pv.RectilinearGrid, vtkImageData)):
             self.dims = grid_vtk.GetDimensions()
@@ -307,7 +315,7 @@ class Section(object):
             raise ValueError('The vtk_data of the section is empty.')
         classes = self.get_classes()
         vtk_dict = {}
-        if isinstance(self.vtk_data, (pv.UnstructuredGrid, pv.PolyData)):
+        if isinstance(self.vtk_data, (pv.UnstructuredGrid, pv.PolyData, pv.StructuredGrid)):
             for item in classes:
                 vtk_dict[item] = self.vtk_data.threshold(value=[item - 0.001, item + 0.001])
         return vtk_dict

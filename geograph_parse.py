@@ -26,7 +26,7 @@ from vtkmodules.all import vtkProbeFilter
 from data_structure.data_sampler import GeoGridDataSampler
 import time
 import pytetgen
-import tetgen
+# import tetgen
 
 
 class GeoMeshGraphParse(object):
@@ -59,7 +59,7 @@ class GeoMeshGraphParse(object):
         self.tmp_dump_str = 'tmp' + str(int(time.time()))
 
     def execute(self, sample_operator=None, edge_feat=None, node_feat=None, feat_normalize=False,
-                is_create_graph=True, **kwargs):
+                is_create_graph=True, ext_grid=None, **kwargs):
         self.is_create_graph = is_create_graph
         if node_feat is None:
             node_feat = ['position']
@@ -71,7 +71,8 @@ class GeoMeshGraphParse(object):
         if self.data is not None:
             self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, **kwargs)
         elif self.input_sample_data is not None and len(self.input_sample_data) > 0:
-            self.set_geo_sample_data(input_sample_data=self.input_sample_data, grid_dims=self.grid_dims)
+            self.set_geo_sample_data(input_sample_data=self.input_sample_data, grid_dims=self.grid_dims
+                                     , ext_grid=ext_grid)
         # 生成三角网剖分
         self.get_triangulate_edges()
         # 生成边权重，以距离作为边权
@@ -96,10 +97,11 @@ class GeoMeshGraphParse(object):
             self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
 
-    def set_geo_sample_data(self, input_sample_data: GeodataSet, grid_dims=None, **kwargs):
+    def set_geo_sample_data(self, input_sample_data: GeodataSet, grid_dims=None, ext_grid=None, **kwargs):
         # 将钻孔数据映射到空网格上
         geo_borehole_sample = GeoGridDataSampler(**kwargs)
-        geo_borehole_sample.set_base_grid_by_geodataset(geodataset=input_sample_data, dims=grid_dims)
+        geo_borehole_sample.set_base_grid_by_geodataset(geodataset=input_sample_data, dims=grid_dims
+                                                        , external_grid=ext_grid)
         geo_borehole_sample.execute()
         self.sample_data = self.input_sample_data.geodata_list
         self.data = geo_borehole_sample.grid
@@ -292,11 +294,11 @@ class GeoMeshGraphParse(object):
         # save self.sample_data
         # save self.data
         if self.data is not None and isinstance(self.data, Grid):
-            self.data = self.data.save_object(dir_path=dir_path)
+            self.data = self.data.save(dir_path=dir_path)
         if self.sample_data is not None:
             for s_i in np.arange(len(self.sample_data)):
                 if isinstance(self.sample_data[s_i], (Grid, BoreholeSet, SectionSet, Section, PointSet)):
-                    self.sample_data[s_i] = self.sample_data[s_i].save_object(dir_path=dir_path)
+                    self.sample_data[s_i] = self.sample_data[s_i].save(dir_path=dir_path)
                 else:
                     raise ValueError("The data type is not supported.")
 

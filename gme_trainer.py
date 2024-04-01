@@ -14,11 +14,13 @@ import torchmetrics.functional as MF
 import torchmetrics
 from utils.plot_utils import visual_loss_picture, visual_acc_picture
 import utils.plot_utils as mvk
+from data_structure.geodata import load_object
 # import model_visual_kit as mvk
 from datetime import datetime
 from sklearn.metrics import mean_squared_error
 
 logger = logging.getLogger(__name__)
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 
 class GraphTransConfig:
@@ -57,10 +59,10 @@ class Rmse(torchmetrics.Metric):
 
 class GmeTrainerConfig:
     # optimization parameters
-    device = 'cuda'
+    device = 'cpu'
 
     def __init__(self, max_epochs=10, batch_size=512, learning_rate=1e-3, weight_decay=1e-4, lr_decay=False,
-                 ckpt_path=None, tokens=0, num_workers=4, output_dir=None, sample_neigh=None, **kwargs):
+                 ckpt_path=None, tokens=0, num_workers=4, output_dir=None, sample_neigh=None, gpu_num=1, **kwargs):
         self.max_epochs = max_epochs
         self.batch_size = batch_size
         self.learning_rate = learning_rate
@@ -73,10 +75,11 @@ class GmeTrainerConfig:
         self.num_workers = num_workers
         self.output_dir = output_dir
         self.sample_neigh = sample_neigh
+        self.gpu_num = gpu_num
         if not os.path.exists(output_dir):
             os.mkdir(output_dir)
-        if torch.cuda.is_available():
-            setattr(self, 'device', torch.cuda.current_device())
+        if torch.cuda.is_available() and gpu_num > 0:
+            self.device = torch.cuda.current_device()
         self.kwargs = kwargs
 
 
@@ -96,11 +99,12 @@ class GmeTrainer:
         self.log_name = None
         self.iter_record_path = None
         # take over whatever gpus are on the system
-        self.device = 'cpu'
+        self.device = config.device
 
-        if torch.cuda.is_available():
-            self.device = torch.cuda.current_device()
-            self.model = torch.nn.DataParallel(self.model).to(self.device)
+        if 1 < config.gpu_num <= torch.cuda.current_device():
+            self.model = torch.nn.DataParallel(self.model, device_ids=self.device).cuda()  #
+        else:
+            self.model = self.model.to(self.device)
 
     def preprocess_input(self, data, idx):
         if idx >= data.__len__():
@@ -115,15 +119,13 @@ class GmeTrainer:
                                   prefetch_node_feats=['feat'],
                                   prefetch_labels=['label'])
 
-        train_dataloader = DataLoader(g, train_idx, sampler, device=self.device,
-                                      batch_size=self.config.batch_size, shuffle=True,
-                                      drop_last=False,
-                                      use_uva=False)  # num_workers=0,
+        train_dataloader = dgl.dataloading.DataLoader(g, train_idx, sampler, device=self.device,
+                                                      batch_size=self.config.batch_size, shuffle=True,
+                                                      drop_last=False)  # num_workers=0,use_uva=False,
 
-        val_dataloader = DataLoader(g, val_idx, sampler, device=self.device,
-                                    batch_size=self.config.batch_size, shuffle=True,
-                                    drop_last=False,
-                                    use_uva=False)  # num_workers=0,
+        val_dataloader = dgl.dataloading.DataLoader(g, val_idx, sampler, device=self.device,
+                                                    batch_size=self.config.batch_size, shuffle=True,
+                                                    drop_last=False)  # num_workers=0, use_uva=False
 
         return train_dataloader, val_dataloader
 
@@ -152,7 +154,7 @@ class GmeTrainer:
         model = self.model.module if hasattr(self.model, "module") else self.model
 
         graph = data[idx].to(self.device)
-        geograph = data.dataset.geograph[idx]
+        # geograph = data.dataset.geograph[idx]
         nodes = torch.arange(graph.number_of_nodes())
         sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.config.gnn_n_layer,
                                                                 prefetch_node_feats=['feat'],
@@ -169,8 +171,9 @@ class GmeTrainer:
                 x = blocks[0].srcdata['feat']
                 y = model(blocks, x)
                 pred[output_nodes] = y.to(graph.device)
-            scalars = np.argmax(pred.cpu().numpy(), axis=1)
-            mvk.visual_predicted_values_model(geograph, pred, is_show=is_show, save_path=save_path)
+            # scalars = np.argmax(pred.cpu().numpy(), axis=1)
+            grid_data = load_object(data.grid_data_path)
+            mvk.visual_predicted_values_model(grid_data.vtk_data, pred, is_show=is_show, save_path=save_path)
 
             if has_test_label:
                 test_idx = data.test_idx[idx]
@@ -188,7 +191,6 @@ class GmeTrainer:
         optimizer = torch.optim.Adam(raw_model.parameters(), lr=lr, weight_decay=config.weight_decay)
 
         # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.8)
-        #
         # torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=10, verbose=True,
         #                                            threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1e-8,
         #                                            eps=1e-08)
@@ -206,7 +208,7 @@ class GmeTrainer:
             y_hats = []
             pbar = tqdm(enumerate(loader), total=len(loader)) if is_train else enumerate(loader)
 
-            for it, (input_nodes, output_nodes, blocks) in pbar:
+            for it, (input_nodes, output_nodes, blocks) in pbar:  # pbar:
                 torch.cuda.empty_cache()
                 # forward the model
                 with torch.set_grad_enabled(is_train):  # torch.set_grad_enabled(False)与torch.no_grad()等价
@@ -229,7 +231,7 @@ class GmeTrainer:
                     lr = optimizer.param_groups[0]['lr']
                     acc = MF.accuracy(preds=torch.cat(y_hats), target=torch.cat(ys), task='multiclass'
                                       , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
-                    #.num_classes['labels'][model_idx]
+                    # .num_classes['labels'][model_idx]
                     # report progress
                     pbar.set_description(
                         f"epoch {epoch + 1} iter {it}: train loss {loss.item():.5f}. "
@@ -252,11 +254,11 @@ class GmeTrainer:
 
         best_loss = float('inf')
         self.tokens = 0  # counter used for learning rate decay
-        self.log_name = os.path.join(os.path.dirname(self.config.ckpt_path), 'tran_loss_log.txt')
-        self.iter_record_path = os.path.join(os.path.dirname(self.config.ckpt_path), 'tran_iter.txt')
+        self.log_name = os.path.join(os.path.dirname(self.config.ckpt_path), 'train_loss_log.txt')
+        self.iter_record_path = os.path.join(os.path.dirname(self.config.ckpt_path), 'train_iter.txt')
         with open(self.log_name, "a") as log_file:
             now = time.strftime("%c")
-            log_file.write('================ Training Loss (%s) ================\n' % now)
+            log_file.write('# ================ Training Loss (%s) ================\n' % now)
         try:
             self.first_epoch, self.tokens = np.loadtxt(
                 self.iter_record_path, delimiter=',', dtype=int)
@@ -291,7 +293,8 @@ class GmeTrainer:
             var_acc_list.append(val_acc)
 
             with open(self.log_name, "a") as log_file:
-                log_file.write('%s\n' % message)
+                message_write = f"{epoch + 1},{train_loss},{train_acc},{train_rmse},{val_loss},{val_acc},{val_rmse}"
+                log_file.write('%s\n' % message_write)
 
             np.savetxt(self.iter_record_path, (epoch + 1, self.tokens), delimiter=',', fmt='%d')
             # supports early stopping based on the test loss, or just save always if no test set is provided
