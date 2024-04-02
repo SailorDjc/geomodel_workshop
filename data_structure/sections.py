@@ -119,6 +119,10 @@ class Section(object):
                 points_data.set_scalars(scalars=v, scalar_name=k)
         return points_data
 
+    def get_points_num(self):
+        points_data_list = self.get_points_data()
+        return len(points_data_list)
+
     def get_classes(self):
         if self.classes is None:
             if self.series is None:
@@ -324,6 +328,9 @@ class Section(object):
     def clip_line_with_bounds(self, line_points: np.ndarray, grid_bounds: np.ndarray):
         pass
 
+    def __len__(self):
+        return self.points_num
+
     def save(self, dir_path: str, out_name: str = None):
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
@@ -381,6 +388,10 @@ class SectionSet(object):
         if len(points_data_list) > 0:
             points_data_list = PointSet.points_data_merge(points_data_list=points_data_list)
         return points_data_list
+
+    def get_points_num(self):
+        points_data_list = self.get_points_data()
+        return len(points_data_list)
 
     def show(self):
         if len(self.sections) > 0:

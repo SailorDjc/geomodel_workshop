@@ -12,11 +12,13 @@ from geomodel_analysis import GmeModelGraphList
 # DGL 图数据集封装，将图处理为dgl数据集
 class DglGeoDataset(DGLDataset):
 
-    def __init__(self, dataset: GmeModelGraphList, split_ratio=None, target_ntype=None, **kwargs):
+    def __init__(self, dataset: GmeModelGraphList, val_ratio=None, test_ratio=None, **kwargs):
         self.graph = []
         self.dataset = dataset
-        self.split_ratio = split_ratio
-        self.target_ntype = target_ntype
+        self.val_ratio = val_ratio  # 自定义验证集比例参数
+        self.test_ratio = test_ratio  # 自定义验证集比例参数
+        self.split_ratio = None  # 这是dgl封装的数据集切分参数
+        self.target_ntype = None
         self.num_classes = getattr(self.dataset, 'num_classes', None)
         # self.predict_num_classes = getattr(self.dataset, 'predict_num_classes', None)
         if self.num_classes is not None:
@@ -33,7 +35,7 @@ class DglGeoDataset(DGLDataset):
         self.val_idx = []
         self.test_idx = []
         super().__init__(self.dataset.name + '-as-nodepred',
-                         hash_key=(split_ratio, target_ntype, dataset.name, 'nodepred'), **kwargs)
+                         hash_key=(self.split_ratio, self.target_ntype, dataset.name, 'nodepred'), **kwargs)
         self.dataset = None
 
     def process(self):
@@ -58,7 +60,7 @@ class DglGeoDataset(DGLDataset):
                 raise ValueError("Missing node labels. Make sure labels are stored "
                                  "under name 'label'.")
             if self.split_ratio is None:
-                split = self.dataset.get_split_idx(g_idx)
+                split = self.dataset.get_split_idx(g_idx, val_ratio=self.val_ratio, test_ratio=self.test_ratio)
                 train_idx, val_idx, test_idx = split['train'], split['valid'], split['test']
                 n = self.graph[g_idx].num_nodes()
                 train_mask = utils.generate_mask_tensor(utils.idx2mask(train_idx, n))

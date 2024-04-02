@@ -23,14 +23,16 @@ from data_structure.points import PointSet
 from data_structure.sections import Section, SectionSet
 from data_structure.geodata import load_object, GeodataSet
 from vtkmodules.all import vtkProbeFilter
-from data_structure.data_sampler import GeoGridDataSampler
+from data_structure.data_sampler import GeoGridDataSampler, GeodataSet
 import time
 import pytetgen
+
+
 # import tetgen
 
 
 class GeoMeshGraphParse(object):
-    def __init__(self, mesh: Grid = None, input_sample_data=None, grid_dims=None, name=None
+    def __init__(self, mesh: Grid = None, input_sample_data: GeodataSet = None, grid_dims=None, name=None
                  , is_normalize=False, dir_path=None):  # , pre_train=True
         self.name = name
         self.is_normalize = is_normalize  # 坐标是否归一化
@@ -46,9 +48,12 @@ class GeoMeshGraphParse(object):
         self.edge_list = None  # list 边集（采样数据，包括训练数据与测试数据）
         # 训练数据样本构建，随机散点、钻孔、剖面，作为带标签数据输入模型进行训练
         self.train_data_indexes = None  # list 训练数据的idx索引, 对应self.grid_points
+        self.val_data_indexes = None
+
         self.train_data_proportion = 0  # 已知标签数据比例
         # 可以外部输入，或从网格中进行采样
         self.input_sample_data = input_sample_data  # 采样数据(类型为散点、钻孔、剖面)
+        self.sample_operator = []
         self.grid_dims = grid_dims
         self.sample_data = []
         # 图特征  下面两个变量用来装数据
@@ -59,7 +64,7 @@ class GeoMeshGraphParse(object):
         self.tmp_dump_str = 'tmp' + str(int(time.time()))
 
     def execute(self, sample_operator=None, edge_feat=None, node_feat=None, feat_normalize=False,
-                is_create_graph=True, ext_grid=None, **kwargs):
+                is_create_graph=True, ext_grid=None, val_ratio=None, **kwargs):
         self.is_create_graph = is_create_graph
         if node_feat is None:
             node_feat = ['position']
@@ -69,10 +74,10 @@ class GeoMeshGraphParse(object):
         # self.map_grid_vertex_labels()
         # 选择测试模型的样本形式
         if self.data is not None:
-            self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, **kwargs)
+            self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, val_ratio=val_ratio, **kwargs)
         elif self.input_sample_data is not None and len(self.input_sample_data) > 0:
             self.set_geo_sample_data(input_sample_data=self.input_sample_data, grid_dims=self.grid_dims
-                                     , ext_grid=ext_grid)
+                                     , ext_grid=ext_grid, val_ratio=val_ratio, **kwargs)
         # 生成三角网剖分
         self.get_triangulate_edges()
         # 生成边权重，以距离作为边权
@@ -86,32 +91,47 @@ class GeoMeshGraphParse(object):
                                      self_loop=False, add_inverse_edge=True, normalize=feat_normalize)
 
     # 设置虚拟地质采样切分以获取训练集
-    def set_virtual_geo_sample(self, grid: Grid, sample_operator=None, **kwargs):
-        if sample_operator is None:
-            sample_operator = ['None']
+    def set_virtual_geo_sample(self, grid: Grid, sample_operator=None, val_ratio=None, **kwargs):
         geo_grid_sampler = GeoGridDataSampler(grid=grid, sample_operator=sample_operator, **kwargs)
+        geo_grid_sampler.set_val_boreholes_ratio(val_ratio=val_ratio)
         geo_grid_sampler.execute(**kwargs)
         self.sample_data = geo_grid_sampler.sample_data_list
-        self.train_data_indexes = geo_grid_sampler.get_sample_points_indexex_for_grid_points()
+        self.sample_operator = geo_grid_sampler.sample_operator
+        self.train_data_indexes, self.val_data_indexes = geo_grid_sampler.get_sample_points_indexes_for_grid_points()
         if self.train_data_indexes is not None and len(self.train_data_indexes) > 0:
             self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
 
-    def set_geo_sample_data(self, input_sample_data: GeodataSet, grid_dims=None, ext_grid=None, **kwargs):
+    # 设置真实的地质采样数据，将采样数据映射到建模网格上
+    def set_geo_sample_data(self, input_sample_data: GeodataSet, grid_dims=None, ext_grid=None, val_ratio=None,
+                            **kwargs):
         # 将钻孔数据映射到空网格上
         geo_borehole_sample = GeoGridDataSampler(**kwargs)
+        geo_borehole_sample.set_val_boreholes_ratio(val_ratio=val_ratio)
         geo_borehole_sample.set_base_grid_by_geodataset(geodataset=input_sample_data, dims=grid_dims
                                                         , external_grid=ext_grid)
         geo_borehole_sample.execute()
         self.sample_data = self.input_sample_data.geodata_list
+        self.sample_operator = geo_borehole_sample.sample_operator
         self.data = geo_borehole_sample.grid
         self.grid_points = self.data.grid_points
         self.grid_points_series = self.data.grid_points_series
         self.classes_num = self.data.classes_num  # np.array
-        self.train_data_indexes = geo_borehole_sample.get_sample_points_indexex_for_grid_points()
+        self.train_data_indexes, self.val_data_indexes = geo_borehole_sample.get_sample_points_indexes_for_grid_points()
         if self.train_data_indexes is not None and len(self.train_data_indexes) > 0:
             self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
+
+    # 修改验证集的切分比例
+    def change_val_data_split(self, val_ratio):
+        # set_geo_sample_data(input_sample_data=self.input_sample_data, grid_dims=self.grid_dims
+        #                     , ext_grid=ext_grid, val_ratio=val_ratio, **kwargs)
+        grid_sampler = GeoGridDataSampler(sample_operator=self.sample_operator)
+        grid_sampler.set_val_boreholes_ratio(val_ratio=val_ratio)
+        grid_sampler.sample_data_list = self.sample_data
+        grid_sampler.grid = self.data
+        for sid in range(len(self.sample_operator)):
+            grid_sampler.update_train_val_split_state(sid=sid)
 
     # 要保证 edge_list 图中没有自环
     def create_dgl_graph(self, edge_list=None, node_feat=None, edge_feat=None, node_label=None,

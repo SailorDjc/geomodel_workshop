@@ -105,6 +105,12 @@ class PointSet(object):
                     new_points_data.set_scalars(scalar_name=key, scalars=select_scalars)
         return new_points_data
 
+    def get_points_data(self):
+        return self
+
+    def get_points_num(self):
+        return self.points_num
+
     def get_points(self):
         if self.points is not None:
             return copy.deepcopy(self.points)
@@ -373,6 +379,9 @@ class PointSet(object):
 
     def __getitem__(self, idx):
         return self.points[idx]
+
+    def __len__(self):
+        return self.points_num
 
     def save(self, dir_path: str, out_name: str = None):
         self.dir_path = dir_path

@@ -305,6 +305,9 @@ class Grid(object):
                 points_data.set_scalars_grad_norm(scalars_grad_norm=scalars_grad_norm_value, scalar_name=scalar_name)
         return points_data
 
+    def get_points_num(self):
+        return self.grid_points_num
+
     def transform(self, scalar):
         self.grid_points = scalar.transform(self.grid_points)
 

@@ -281,6 +281,10 @@ class BoreholeSet(object):
             # 对象拷贝
         self.dir_path = dir_path
 
+    def get_points_num(self):
+        points_data_list = self.get_points_data()
+        return len(points_data_list)
+
     @property
     def points(self):
         return self._points
@@ -429,8 +433,8 @@ class BoreholeSet(object):
             return self.__getitem__(idx=idx)
         elif isinstance(idx, (list, np.ndarray)):
             borehole_list = BoreholeSet()
-            for id in idx:
-                borehole_list.append(self.__getitem__(idx=id))
+            for bid in idx:
+                borehole_list.append(self.__getitem__(idx=bid))
             return borehole_list
 
     def get_boreholes_by_id(self, borehole_id):
@@ -454,6 +458,8 @@ class BoreholeSet(object):
             bottom_points.append(bottom_point)
         bottom_points = np.array(bottom_points)
         return bottom_points
+
+
 
     def get_top_points_data(self):
         top_points = []
@@ -505,6 +511,7 @@ class BoreholeSet(object):
                     min_interval = cur_interval
         return min_interval
 
+    # 获取层厚度小于阈值的地层
     def get_thin_layers(self, threshold_dist):
         label_list = []
         for one_borehole in self.boreholes_list:

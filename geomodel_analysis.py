@@ -90,7 +90,7 @@ def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None,
 
 
 class GmeModelGraphList(object):
-    def __init__(self, name, root, grid_data: list = None, input_sample_data=None,
+    def __init__(self, name, root, grid_data: list = None, input_sample_data=None, val_ratio=None,
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
                  dgl_graph_param=None, update_graph=False, grid_dims=None, terrain_data=None,
                  grid_cell_density=None, **kwargs):
@@ -106,6 +106,7 @@ class GmeModelGraphList(object):
         self.sample_data = []
         self.dgl_graph_param = dgl_graph_param  # 图节点特征、边特征类型参数
         self.sample_operator = sample_operator  # ['rand_drills', 'axis_sections'] 设置已知数据采样方式
+        self.val_ratio = val_ratio
         self.self_loop = self_loop  # 添加自环
         self.add_inverse_edge = add_inverse_edge  # 无向图
         self.root = root  # 代码工作空间根目录， 会默认将处理后数据存放在 root/processed目录下
@@ -172,7 +173,7 @@ class GmeModelGraphList(object):
                 geodata = GeoMeshGraphParse(mesh, name=mesh.name)
                 dgl_graph = geodata.execute(sample_operator=self.sample_operator,
                                             edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
-                                            feat_normalize=True, **self.kwargs)
+                                            feat_normalize=True, val_ratio=self.val_ratio, **self.kwargs)
                 # 对标签进行处理
                 label_num = geodata.classes_num
                 labels_num_list.append(label_num)
@@ -198,6 +199,7 @@ class GmeModelGraphList(object):
             geodata = GeoMeshGraphParse(input_sample_data=self.input_sample_data, name='boreholes_model'
                                         , grid_dims=self.grid_dims)
             external_grid = None
+            # 以带地形的体素网格作为建模框架
             if self.terrain_data is not None:
                 if self.terrain_data.vtk_data is None:
                     top_points = self.input_sample_data.get_terrain_points()
@@ -208,15 +210,18 @@ class GmeModelGraphList(object):
                                                                                    , cell_density=self.grid_cell_density
                                                                                    , is_smooth=False)
             dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
-                                        feat_normalize=True, ext_grid=external_grid, **self.kwargs)
+                                        feat_normalize=True, ext_grid=external_grid, val_ratio=self.val_ratio
+                                        , **self.kwargs)
+            print("Hmmmm")
+            geodata.data.vtk_data.plot()
             # 对标签进行处理
             label_num = geodata.classes_num
             labels = geodata.data.classes
             labels_num_list.append(label_num)
             # 已存储数据集
             pre_save_graph_num = len(self.graph)
-            is_connected = geodata.is_connected_graph()
-            print('is_connected:', is_connected)
+            # is_connected = geodata.is_connected_graph()
+            # print('is_connected:', is_connected)
             self.geograph.append(geodata)
             dgl_graph_list.append(dgl_graph)
             self.update_graph_log(model_name='boreholes',
@@ -241,25 +246,31 @@ class GmeModelGraphList(object):
             save_graphs(self.processed_file_path, self.graph, self.num_classes)
             self.graph, self.num_classes = load_graphs(self.processed_file_path)
 
-    def get_split_idx(self, idx):
+    # 如果数据集已经进行了验证集分割，则这里的参数val_ratio无效
+    def get_split_idx(self, idx, val_ratio=None, test_ratio=None):
         if idx >= len(self.graph) or idx < 0:
             raise ValueError('Input idx is out of graph array range.')
         else:
             node_num = self.graph[idx].num_nodes()
             x = np.arange(node_num)
             # 已经预先划分了训练数据，即已知标签数据
+            default_val_ratio = 0.1
+            if val_ratio is None:
+                val_ratio = default_val_ratio
+            if test_ratio is None or test_ratio + val_ratio >= 1:
+                test_ratio = (1 - val_ratio) * 0.7
             if self.geograph[idx].train_data_indexes is None:
                 # random_state 确保每次切分是确定的
-                train, val_test = train_test_split(x, test_size=0.4, random_state=2)
-                val, test = train_test_split(val_test, test_size=0.5, random_state=2)
+                val_train, test = train_test_split(x, test_size=test_ratio, random_state=2)
+                train, val = train_test_split(val_train, test_size=val_ratio, random_state=2)
             else:
                 print('get split Dataset')
-                train_val = np.array(self.geograph[idx].train_data_indexes)
-                train, val = train_test_split(train_val, test_size=0.1)  # , random_state=2
-                test = np.array(list(set(x) - set(self.geograph[idx].train_data_indexes)))
-            # train = train_val
-            # val_test = np.array(list(set(x) - set(self.geograph[idx].train_idx)))
-            # valid, test = train_test_split(val_test, test_size=0.1, random_state=2)
+                train = np.array(self.geograph[idx].train_data_indexes)
+                if self.geograph[idx].val_data_indexes is not None and len(self.geograph[idx].val_data_indexes) > 0:
+                    val = np.array(self.geograph[idx].val_data_indexes)
+                else:
+                    train, val = train_test_split(train, test_size=val_ratio, random_state=2)
+                test = np.array(list(set(x) - set(train) - set(val)))
             train_idx = torch.from_numpy(train)
             valid_idx = torch.from_numpy(val)
             test_idx = torch.from_numpy(test)

@@ -12,6 +12,7 @@ from utils.vtk_utils import vtk_polydata_to_vtk_unstructured_grid, create_vtk_gr
     create_vtk_grid_by_unregular_bounds, get_bounds_from_coords, create_closed_cylinder_surface
 from utils.math_libs import remove_repeated_elements_with_lists
 from data_structure.terrain import TerrainData
+from sklearn.model_selection import train_test_split
 
 random.seed(1)
 
@@ -36,23 +37,82 @@ class GeoDataSampler(object):
                 raise ValueError('grid type is not supported.')
         self._sample_num = 0  # 采样次数
         self.sample_data_list = []  # 采样数据
+        self.sample_operator = []
         self.map_flag = False
         self.default_value = -1
         # 设置验证集和训练集
-        self.boreholes_val_ratio = None  # 为None则不设置验证集，值在0和1之间
-        self.val_boreholes = None
-        self.val_indices = None
+        self.val_ratio = None  # 为None则不设置验证集，值在0和1之间
+        # 钻孔、剖面或散点  {sid: {'train':[], 'val': []}}  sid对应的是self.sample_data_list中的数据索引
+        self.geo_sample_data_val_map = {}
         self.train_indexes = []
         self.val_indexes = []
 
+    def update_train_val_split_state(self, sid=-1):
+        if sid < 0 or sid >= len(self.sample_data_list):
+            sid = len(self.sample_data_list) - 1
+        if len(self.sample_data_list) >= 1:
+            if self.sample_operator[sid] == 'None':
+                val_idx = []
+                if isinstance(self.sample_data_list[sid], (PointSet, SectionSet, Section)):
+                    points_num = self.sample_data_list[sid].get_points_num()
+                    sample_data_all_idx = range(points_num)
+                    if self.val_ratio is not None:
+                        val_sample_num = int(self.val_ratio * points_num)
+                        val_idx = list(random.sample(sample_data_all_idx, val_sample_num))
+                    train_idx = [x for x in sample_data_all_idx if x not in val_idx]
+                elif isinstance(self.sample_data_list[sid], BoreholeSet):
+                    borehole_num = self.sample_data_list[sid].borehole_num
+                    sample_data_all_idx = range(borehole_num)
+                    if self.val_ratio is not None:
+                        val_sample_num = int(self.val_ratio * borehole_num)
+                        val_idx = list(random.sample(sample_data_all_idx, val_sample_num))
+                    train_idx = [x for x in sample_data_all_idx if x not in val_idx]
+                else:
+                    raise ValueError('Not support.')
+                self.geo_sample_data_val_map[sid] = {}
+                self.geo_sample_data_val_map[sid]['train'] = train_idx
+                self.geo_sample_data_val_map[sid]['val'] = val_idx
+            else:
+                val_idx = []
+                ckt = spt.cKDTree(self._base_grid_points)
+                if isinstance(self.sample_data_list[sid], (PointSet, SectionSet, Section)):
+                    sample_points = self.sample_data_list[sid].get_points_data().points
+                    d, pid = ckt.query(sample_points)
+                    # 点数据，直接按比例切分
+                    sample_data_all_idx = list(sorted(np.unique(pid)))
+                    train_idx = sample_data_all_idx
+                    if self.val_ratio is not None:
+                        train_idx, val_idx = train_test_split(
+                            sample_data_all_idx, test_size=self.val_ratio, random_state=2)
+                elif isinstance(self.sample_data_list[sid], BoreholeSet):
+                    borehole_num = self.sample_data_list[sid].borehole_num
+                    all_sample_points = self.sample_data_list[sid].get_points_data().points
+                    da, all_pid = ckt.query(all_sample_points)
+                    all_idx = list(sorted(np.unique(all_pid)))
+                    train_idx = all_pid
+                    # 涉及到钻孔，数据集切分需要以钻孔为单位
+                    if self.val_ratio is not None:
+                        val_sample_num = int(self.val_ratio * borehole_num)
+                        all_borehole_idx = np.arange(borehole_num)
+                        val_borehole_idx = list(random.sample(all_borehole_idx, val_sample_num))
+                        val_boreholes = self.sample_data_list[sid].get_boreholes(idx=val_borehole_idx)
+                        val_sample_points = val_boreholes.get_points_data().points
+                        dv, val_pid = ckt.query(val_sample_points)
+                        val_idx = list(sorted(np.unique(val_pid)))
+                        train_idx = list(set(all_idx) - set(val_idx))
+                else:
+                    raise ValueError('Not support.')
+                self.geo_sample_data_val_map[sid] = {}
+                self.geo_sample_data_val_map[sid]['train'] = train_idx
+                self.geo_sample_data_val_map[sid]['val'] = val_idx
+
     def set_val_boreholes_ratio(self, val_ratio):
         if val_ratio is None:
-            self.val_boreholes = None
-            self.boreholes_val_ratio = None
+            self.val_ratio = None
             return
         if val_ratio < 0 or val_ratio >= 1:
             raise ValueError('ratio value must between 0 and 1.')
-        self.boreholes_val_ratio = val_ratio
+        self.val_ratio = val_ratio
 
     @property
     def sample_num(self):
@@ -165,56 +225,71 @@ class GeoDataSampler(object):
 
     # 将散点采样标签映射到空白网格上
     def set_map_points_data_labels_to_base_grid(self, points_data: PointSet):
+        self.sample_data_list.append(points_data)
         if self.map_flag:
             cells_series = self._base_grid_labels
         else:
             cells_series = np.full((len(self._base_grid_points),), fill_value=self.default_value)
-        cell_indices, cell_labels, repeated_indices = self.map_base_grid_points_by_sample_data(sample_data=points_data)
-        # 去重
-        if len(repeated_indices) > 0:
-            dinds = []
-            rinds = []
-            for rid in repeated_indices:
-                if cell_indices[rid] not in rinds:
-                    rinds.extend(rid)
-                else:
-                    dinds.extend(rid)
-            cell_indices = np.delete(cell_indices, dinds, axis=0)
-            cell_labels = np.delete(cell_labels, dinds, axis=0)
+        # 如果设置了验证钻孔比例，则
+        self.update_train_val_split_state()
+        log_id = len(self.sample_operator) - 1
+        if log_id in self.geo_sample_data_val_map.keys():
+            val_points_data = points_data.get_points_data_by_ids(ids=self.geo_sample_data_val_map[log_id]['val'])
+            train_points_data = points_data.get_points_data_by_ids(ids=self.geo_sample_data_val_map[log_id]['train'])
+            val_cell_indices, val_cell_labels = self.map_base_grid_points_by_sample_data(sample_data=val_points_data)
+            train_cell_indices, train_cell_labels = self.map_base_grid_points_by_sample_data(
+                sample_data=train_points_data)
+            self.train_indexes.append(train_cell_indices)
+            self.val_indexes.append(val_cell_indices)
+            # 合并
+            cell_indices = np.hstack((val_cell_indices, train_cell_indices))
+            cell_labels = np.hstack((val_cell_labels, train_cell_labels))
+            cell_indices, cell_labels = remove_repeated_elements_with_lists(
+                list_item_1=cell_indices, list_item_2=cell_labels)
+        else:
+            cell_indices, cell_labels = self.map_base_grid_points_by_sample_data(sample_data=points_data)
+            self.train_indexes.append(cell_indices)
         cells_series[cell_indices] = cell_labels
         self.map_flag = True
-        self.sample_data_list.append(points_data)
         self._base_grid.grid_points_series = cells_series
         self._base_grid_labels = cells_series
         self._base_grid.vtk_data.cell_data['Scalar Field'] = cells_series
         self._base_grid.classes = np.unique(cells_series)
         self._base_grid.classes_num = len(self._base_grid.classes)
+        if self.default_value in np.unique(cells_series):
+            self._base_grid.classes_num -= 1
 
     # 将钻孔采样标签映射到空白网格上
     # 会将钻孔存入 sample_data_list
     # z_buffer 会将每段钻孔柱上下缓冲一下，避免有数据漏选，但是值不能设置太大
     def set_map_boreholes_labels_to_base_grid(self, boreholes: BoreholeSet):
+        self.sample_data_list.append(boreholes)
         # 遍历钻孔每一个分段，寻找与base_grid的交集
         # 默认 -1 为未知值
         if self.map_flag:
             cells_series = self._base_grid.grid_points_series
         else:
             cells_series = np.full((len(self._base_grid_points),), fill_value=self.default_value)
-
         # 如果设置了验证钻孔比例，则
-        if self.boreholes_val_ratio is not None:
-            boreholes_num = boreholes.borehole_num
-            val_boreholes_idx = random.sample(range(boreholes_num), boreholes_num)
-
-        cell_indices, cell_labels, repeated_indices = self.map_base_grid_points_by_sample_data(sample_data=boreholes)
-        # 去重
-        if len(repeated_indices) > 0:
-            cell_indices, cell_labels = remove_repeated_elements_with_lists(list_item_1=cell_indices
-                                                                            , list_item_2=cell_labels)
+        self.update_train_val_split_state()
+        log_id = len(self.sample_operator) - 1
+        if log_id in self.geo_sample_data_val_map.keys():
+            val_boreholes = boreholes.get_boreholes(idx=self.geo_sample_data_val_map[log_id]['val'])
+            train_boreholes = boreholes.get_boreholes(idx=self.geo_sample_data_val_map[log_id]['train'])
+            val_cell_indices, val_cell_labels = self.map_base_grid_points_by_sample_data(sample_data=val_boreholes)
+            train_cell_indices, train_cell_labels = self.map_base_grid_points_by_sample_data(
+                sample_data=train_boreholes)
+            self.train_indexes.append(train_cell_indices)
+            self.val_indexes.append(val_cell_indices)
+            # 合并
+            cell_indices = np.hstack((val_cell_indices, train_cell_indices))
+            cell_labels = np.hstack((val_cell_labels, train_cell_labels))
+            cell_indices, cell_labels = remove_repeated_elements_with_lists(
+                list_item_1=cell_indices, list_item_2=cell_labels)
+        else:
+            cell_indices, cell_labels = self.map_base_grid_points_by_sample_data(sample_data=boreholes)
+            self.train_indexes.append(cell_indices)
         cells_series[cell_indices] = cell_labels
-
-
-
         self.map_flag = True
         self._base_grid.grid_points_series = cells_series
         self._base_grid_labels = cells_series
@@ -224,7 +299,6 @@ class GeoDataSampler(object):
         self._base_grid.classes_num = len(self._base_grid.classes)
         if self.default_value in uniq_labels:
             self._base_grid.classes_num -= 1
-        self.sample_data_list.append(boreholes)
 
     def map_base_grid_points_by_sample_data(self, sample_data):
         global_cell_indexes = []
@@ -249,10 +323,11 @@ class GeoDataSampler(object):
                 global_cell_labels.append(cells_labels)
             global_cell_indexes = np.hstack(global_cell_indexes)
             global_cell_labels = np.hstack(global_cell_labels)
-            unique, counts = np.unique(global_cell_indexes, return_counts=True)
-            repeated_indexes = np.where(counts > 1)[0]
-            return global_cell_indexes, global_cell_labels, repeated_indexes
-        if isinstance(sample_data, BoreholeSet):
+            global_cell_indexes, global_cell_labels = remove_repeated_elements_with_lists(
+                list_item_1=global_cell_indexes,
+                list_item_2=global_cell_labels)
+            return global_cell_indexes, global_cell_labels
+        elif isinstance(sample_data, BoreholeSet):
             z_buffer = 0.2
             if self._bounds is not None:
                 if self._base_grid.dims is not None:
@@ -305,33 +380,49 @@ class GeoDataSampler(object):
                     global_cell_labels.append(cells_labels)
             global_cell_indexes = np.hstack(global_cell_indexes)
             global_cell_labels = np.hstack(global_cell_labels)
-            unique, counts = np.unique(global_cell_indexes, return_counts=True)
-            repeated_indexes = np.where(counts > 1)[0]
-            return global_cell_indexes, global_cell_labels, repeated_indexes
+            global_cell_indexes, global_cell_labels = remove_repeated_elements_with_lists(
+                list_item_1=global_cell_indexes,
+                list_item_2=global_cell_labels)
+            return global_cell_indexes, global_cell_labels
+        else:
+            raise ValueError('Unknown input.')
 
     # 获取采样点相对于格网点的索引, idx=None 返回所有数据， idx=0则返回第一个采样数据
     # 获取所有采样点的索引 train + val （训练集+验证集）数据集
-    def get_sample_points_indexex_for_grid_points(self, idx=None) -> list:  # 返回 index
+    def get_sample_points_indexes_for_grid_points(self) -> (list, list):  # 返回 index
         if self._base_grid_points is None:
             raise ValueError('Grid points should not be empty.')
-        ckt = spt.cKDTree(self._base_grid_points)
-        points_indexes = []
-        for sample_id, sample_data in enumerate(self.sample_data_list):
-            pid = []
-            if idx is not None:
-                if idx != sample_id:
-                    continue
-                return list(sorted(np.unique(pid)))
-            if isinstance(sample_data, PointSet):
-                sample_points = sample_data.points
-                d, pid = ckt.query(sample_points)
-                points_indexes.extend(pid)
-            elif isinstance(sample_data, (BoreholeSet, SectionSet)):
-                sample_points = sample_data.get_points_data().points
-                d, pid = ckt.query(sample_points)
-                points_indexes.extend(pid)
-            points_indexes = list(sorted(np.unique(points_indexes)))
-        return points_indexes
+        train_indexes = []
+        val_indexes = []
+        for sample_op_it in range(len(self.sample_operator)):
+            if self.sample_operator[sample_op_it] != 'None':
+                self.update_train_val_split_state(sid=sample_op_it)
+                train_indexes_1 = self.geo_sample_data_val_map[sample_op_it]['train']
+                val_indexes_1 = self.geo_sample_data_val_map[sample_op_it]['val']
+                train_indexes.extend(train_indexes_1)
+                val_indexes.extend(val_indexes_1)
+        if 'None' in self.sample_operator:
+            val_indexes_2 = self.val_indexes
+            train_indexes_2 = self.train_indexes
+            if len(self.val_indexes) > 0:
+                val_indexes_2 = np.hstack(self.val_indexes)
+            if len(self.train_indexes) > 0:
+                train_indexes_2 = np.hstack(self.train_indexes)
+            train_indexes.extend(train_indexes_2)
+            val_indexes.extend(val_indexes_2)
+        if len(train_indexes) > 0:
+            train_indexes = np.hstack(train_indexes)
+        if len(val_indexes) > 0:
+            val_indexes = np.hstack(val_indexes)
+        val_indexes = list(sorted(np.unique(val_indexes)))
+        train_indexes = list(sorted(np.unique(train_indexes)))
+        del_indexes = []
+        for v_id in val_indexes:
+            if v_id in train_indexes:
+                del_indexes.append(v_id)
+        if len(del_indexes) > 0:
+            train_indexes = np.delete(train_indexes, del_indexes, axis=0)
+        return train_indexes, val_indexes
 
     # 获取采样点数据
     def get_points_data(self, sample_id=0):
@@ -375,7 +466,8 @@ class GeoDataSampler(object):
 class GeoGridDataSampler(GeoDataSampler):
     def __init__(self, grid: Grid = None, sample_operator: list = None, sample_data_names: list = None, **kwargs):
         super().__init__(grid)
-        self.sample_operator = sample_operator
+        if sample_operator is not None:
+            self.sample_operator.extend(sample_operator)
         self.names = sample_data_names
         self.kwargs = kwargs
 
@@ -490,13 +582,13 @@ class GeoGridDataSampler(GeoDataSampler):
         grid.set_vtk_grid(grid_vtk=external_grid)
         self.grid = grid
         if self.sample_operator is None:
-            self.sample_operator = ['None']
-        else:
-            self.sample_operator.append('None')
+            self.sample_operator = []
         for sample_data in geodataset.geodata_list:
             if sample_data.__class__.__name__ == 'PointSet':
+                self.sample_operator.append('None')
                 self.set_map_points_data_labels_to_base_grid(points_data=sample_data)
             if sample_data.__class__.__name__ == 'BoreholeSet':
+                self.sample_operator.append('None')
                 self.set_map_boreholes_labels_to_base_grid(boreholes=sample_data)
             #
 
@@ -601,7 +693,8 @@ class GeoSectionDataSampler(GeoDataSampler):
     def __init__(self, section: Section = None, sample_operator: list = None, **kwargs):
         super().__init__()
         self._section = section
-        self.sample_operator = sample_operator
+        if sample_operator is not None:
+            self.sample_operator.extend(sample_operator)
         self.kwargs = kwargs
 
     @property

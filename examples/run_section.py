@@ -87,7 +87,8 @@ if __name__ == "__main__":
                                    input_sample_data=geod,  # ,  geod
                                    add_inverse_edge=True,
                                    terrain_data=terr,  # terr
-                                   grid_cell_density=[10, 10, 5])  #
+                                   grid_cell_density=[2, 2, 0.5],
+                                   val_ratio=0.2)  #
     dataset = DglGeoDataset(gme_models)
     import gc
 
