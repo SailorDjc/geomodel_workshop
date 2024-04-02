@@ -16,10 +16,7 @@ from sklearn.model_selection import GridSearchCV
 
 from xgboost import XGBClassifier
 
-from data_structure.grids import Grid
-from data_structure.boreholes import BoreholeSet, Borehole
-from data_structure.sections import Section, SectionSet
-from data_structure.points import PointSet
+from data_structure.geodata import Grid, Section, SectionSet, PointSet, Borehole, BoreholeSet
 
 
 # from data_structure.data_sampler import GeoGridDataSampler
@@ -30,10 +27,7 @@ from data_structure.points import PointSet
 # from sklearn.metrics import classification_report
 # import model_visual_kit as mvk
 # import torchmetrics.functional as MF
-# import pyvista as pv
-# import pandas as pd
 # from sklearn import preprocessing
-# import copy
 # from scipy.interpolate import griddata
 
 def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None, add_inverse_edge=False):
@@ -212,8 +206,7 @@ class GmeModelGraphList(object):
             dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
                                         feat_normalize=True, ext_grid=external_grid, val_ratio=self.val_ratio
                                         , **self.kwargs)
-            print("Hmmmm")
-            geodata.data.vtk_data.plot()
+            # geodata.data.vtk_data.plot()
             # 对标签进行处理
             label_num = geodata.classes_num
             labels = geodata.data.classes

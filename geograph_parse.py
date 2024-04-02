@@ -1,15 +1,11 @@
 from sklearn import preprocessing
 import numpy as np
-import pyvista as pv
-import os
-import pickle
 import scipy.spatial as spt
 
 import networkx as nx
 import random
 import dgl
 import torch
-import copy
 import dgl.backend as F
 from sklearn.model_selection import train_test_split
 import pandas as pd
@@ -17,12 +13,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from sklearn import svm
 from sklearn.ensemble import RandomForestClassifier
-from data_structure.grids import Grid
-from data_structure.boreholes import Borehole, BoreholeSet
-from data_structure.points import PointSet
-from data_structure.sections import Section, SectionSet
-from data_structure.geodata import load_object, GeodataSet
-from vtkmodules.all import vtkProbeFilter
+from data_structure.geodata import load_object, GeodataSet, Grid, BoreholeSet, Borehole, PointSet, Section, SectionSet
 from data_structure.data_sampler import GeoGridDataSampler, GeodataSet
 import time
 import pytetgen
@@ -130,8 +121,34 @@ class GeoMeshGraphParse(object):
         grid_sampler.set_val_boreholes_ratio(val_ratio=val_ratio)
         grid_sampler.sample_data_list = self.sample_data
         grid_sampler.grid = self.data
+        train_idx = []
+        val_idx = []
         for sid in range(len(self.sample_operator)):
             grid_sampler.update_train_val_split_state(sid=sid)
+            if self.sample_operator[sid] == 'None':
+                in_train_data_idx = grid_sampler.geo_sample_data_val_map[sid]['train']
+                in_val_data_idx = grid_sampler.geo_sample_data_val_map[sid]['val']
+                if isinstance(grid_sampler.sample_data_list[sid], BoreholeSet):
+                    all_boreholes = grid_sampler.sample_data_list[sid]
+                    t_train_idx, _ = grid_sampler.set_map_boreholes_labels_to_base_grid(
+                        boreholes=all_boreholes.get_boreholes(idx=in_train_data_idx))
+                    t_val_idx, _ = grid_sampler.set_map_boreholes_labels_to_base_grid(
+                        boreholes=all_boreholes.get_boreholes(idx=in_val_data_idx))
+                else:
+                    all_points_data = grid_sampler.sample_data_list[sid].get_points_data()
+                    t_train_idx, _ = grid_sampler.set_map_points_data_labels_to_base_grid(
+                        points_data=all_points_data.get_points_data_by_ids(ids=in_train_data_idx))
+                    t_val_idx, _ = grid_sampler.set_map_points_data_labels_to_base_grid(
+                        points_data=all_points_data.get_points_data_by_ids(ids=in_val_data_idx))
+                train_idx.extend(t_train_idx)
+                val_idx.extend(t_val_idx)
+            else:
+                train_idx.extend(grid_sampler.geo_sample_data_val_map[sid]['train'])
+                val_idx.extend(grid_sampler.geo_sample_data_val_map[sid]['val'])
+        train_idx = list(np.unique(train_idx))
+        val_idx = list(np.unique(val_idx))
+        self.train_data_indexes = train_idx
+        self.val_data_indexes = val_idx
 
     # 要保证 edge_list 图中没有自环
     def create_dgl_graph(self, edge_list=None, node_feat=None, edge_feat=None, node_label=None,
