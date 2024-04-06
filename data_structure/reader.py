@@ -5,6 +5,7 @@ from data_structure.geodata import GeodataSet, load_object, Section, Borehole, B
 import pickle
 from utils.vtk_utils import reader_xml_polydata_file, reader_unstructured_mesh_file
 import pyvista as pv
+import torch
 
 
 class ReadExportFile(object):
@@ -283,6 +284,11 @@ class ReadExportFile(object):
         val_acc = np.array(df_logs.loc[:, ['val_acc']])
         val_rmse = np.array(df_logs.loc[:, ['val_rmse']])
         return epoch, train_loss, train_acc, train_rmse, val_loss, val_acc, val_rmse
+
+    @staticmethod
+    def read_array_from_txt(txt_file_path) -> torch.Tensor:
+        loaded_tensor = torch.from_numpy(np.loadtxt(txt_file_path))
+        return loaded_tensor
 
 
 class BoreholeSetManager(object):

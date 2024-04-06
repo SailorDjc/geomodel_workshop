@@ -192,6 +192,7 @@ class GmeModelGraphList(object):
             # 只支持单图构建
             geodata = GeoMeshGraphParse(input_sample_data=self.input_sample_data, name='boreholes_model'
                                         , grid_dims=self.grid_dims)
+
             external_grid = None
             # 以带地形的体素网格作为建模框架
             if self.terrain_data is not None:
@@ -269,6 +270,22 @@ class GmeModelGraphList(object):
             test_idx = torch.from_numpy(test)
             return {'train': train_idx, 'valid': valid_idx, 'test': test_idx}
 
+    # 修改验证集比例，不能修改采样数据，用于调整验证集钻孔数量，调整范围不能超过初始采样数量
+    def change_val_indexes(self, val_ratio, g_idx=0, replace=False):
+        geograph_num = len(self.geograph)
+        if g_idx < geograph_num:
+            print('Changing Graph Data val_data proportion ...')
+            self.geograph[g_idx].change_val_data_split(val_ratio=val_ratio)
+            # x = np.arange(len(self.geodata[model_index].grid_points))
+            val_proportion = self.geograph[g_idx].train_data_proportion
+
+            print('The previous train data proportion is {}.'.format(val_proportion))
+            # self.geodata[model_index].set_virtual_geo_sample(sample_operator=sample_operator, **kwargs)
+            # # 替换并存储
+        if replace:
+            self.save_geograph()
+            self.geograph = self.load_geograph()
+
     # 更新self.graph_log 添加dgl_graph数据信息
     # {'graph': {save_idx:{graph_name: , dims: , node_feat:, edge_feat:}}
     # save_idx 与 goedata 中的索引 geo_idx 对应，也与 graph中的索引对应
@@ -331,13 +348,6 @@ class GmeModelGraphList(object):
 # GeoGridMLClassifier
 # grid: optional  Grid类型，建模区域网格
 # method: str, 'svm', 'rf', 'xgboost'
-
-
-# if self.grid is not None:
-#     data_sampler = GeoGridDataSampler()
-#     data_sampler.set_base_grid_by_boreholes(boreholes=known_data, external_grid=self.grid)
-#     sample_points_data = data_sampler.get_sample_data(idx=0)
-#     points_data.append(sample_points_data)
 class GeoDataMLClassifier(object):
     def __init__(self, method: str = None, is_grid_search=False, **kwargs):
         self.params = None
@@ -406,11 +416,11 @@ class GeoDataMLClassifier(object):
             elif method_to_index[self.method] == 1:
                 self.estimator = RandomForestClassifier()
                 self.params = [{'n_estimators': [50, 120, 160, 200, 250, 280, 300, 350, 400]
-                                   , 'max_depth': [2, 4, 6, 8, 10, 12, 14]}]
+                                , 'max_depth': [2, 4, 6, 8, 10, 12, 14]}]
             elif method_to_index[self.method] == 2:
                 self.estimator = XGBClassifier()
                 self.params = [{'n_estimators': [50, 120, 160, 200, 250], 'max_depth': [2, 4, 6, 8, 10]
-                                   , 'learning_rate': [0.001, 0.01, 0.03]}]
+                                , 'learning_rate': [0.001, 0.01, 0.03]}]
             else:
                 raise ValueError('The method type is not supported.')
         if self.grid_search:
@@ -476,196 +486,3 @@ class GeoGridInterpolator(object):
             self.method = self.method.lower()
         self.support_methods = ['rbf', 'idw']
 
-# 支持向量机
-
-#     graph_num = len(self.graph) + len(self.predict_graph)
-#     if model_idx < graph_num:
-#         if param is None and method is 'svm':
-#             param = [{'kernel': ['rbf'], 'C': [1, 10, 100, 200, 500]}]  #
-#         if param is None and method is 'rf':
-#             param = [{'n_estimators': [50, 120, 160, 200, 250, 280, 300, 350, 400],
-#                       'max_depth': [2, 4, 6, 8, 10, 12, 14]}]
-#         if param is None and method is 'xgboost':
-#             param = [{'n_estimators': [50, 120, 160, 200, 250], 'max_depth': [2, 4, 6, 8, 10],
-#                       'learning_rate': [0.001, 0.01, 0.03]}]
-#         geodata = self.geodata[model_idx]
-#         label = np.int64(geodata.grid_point_label)
-#         label = np.squeeze(label)
-#         prediction = copy.deepcopy(label)
-#
-#         split = self.get_split_idx(model_idx)
-#         train_idx = split['train']
-#
-#         train_x = geodata.grid_points[train_idx]
-#         train_y = label[train_idx]
-#         test_idx = list(set(np.arange(len(geodata.grid_points))) - set(geodata.train_idx))
-#
-#         # test_x = geodata.grid_points[test_idx]
-#         test_x = geodata.grid_points
-#         # 测试集真实标签
-#         # test_y = label[test_idx]
-#         test_y = label
-#         clf = None
-#         if method == 'svm':
-#             clf = GridSearchCV(estimator=svm.SVC(), param_grid=param, cv=cv)
-#         elif method == 'rf':
-#             clf = GridSearchCV(estimator=RandomForestClassifier(), param_grid=param)
-#         elif method == 'xgboost':
-#             clf = GridSearchCV(estimator=XGBClassifier(), param_grid=param)
-#         print('Classifier computing ...')
-#         clf.fit(train_x, train_y)  # 输出测试集的预测结果
-#         clf_best = clf.best_estimator_
-#         predict_test_y = clf_best.predict(test_x)
-#         # 获得预测出的模型类别值集合，可用于可视化
-#         # prediction[test_idx] = predict_test_y
-#         prediction = predict_test_y
-#         print(classification_report(test_y, predict_test_y))
-#         # accuracy = MF.accuracy(torch.tensor(predict_test_y[test_idx]), torch.tensor(test_y[test_idx]))
-#         # print('================Test Accuracy {:.4f}================'.format(accuracy.item()))
-#
-#         gen_mesh = mvk.generate_model_on_base_grid(geodata, prediction, save_path=save_path)
-#         mvk.visual_multiple_model(geodata.sample_grid, gen_mesh, camera=[1, 0, 0])
-#     else:
-#         raise ValueError
-
-# method = {'rbf', 'nearest', 'idw'}
-# def predict_with_interpolate(self, model_idx, method='rbf', iso_list=None, stratum_match=None,
-#                              save_path=None, **kwargs):
-#     graph_num = len(self.graph) + len(self.predict_graph)
-#     if model_idx < graph_num:
-#         geodata = self.geodata[model_idx]
-#         label = np.int64(geodata.grid_point_label)
-#         label = np.squeeze(label)
-#         prediction = np.float32(copy.deepcopy(label))
-#         # train_idx = geodata.extract_drills_layer_points()
-#         train_idx = geodata.train_idx
-#         train_x = geodata.grid_points[train_idx]
-#         train_y = label[train_idx]
-#         test_idx = list(set(np.arange(len(geodata.grid_points))) - set(train_idx))
-#         test_x = geodata.grid_points[test_idx]
-#         test_y = label[test_idx]
-#         predict_test_y = None
-#         if method == 'rbf':
-#             neighbors = None
-#             smoothing = 0
-#             degree = None
-#             if 'neighbors' in kwargs.keys():
-#                 neighbors = kwargs['neighbors']
-#                 smoothing = kwargs['neighbors']
-#                 degree = kwargs['degree']
-#                 # , neighbors=neighbors, smoothing=smoothing, degree=degree
-#             yflat = RBFInterpolator(train_x, train_y)(test_x)
-#             predict_test_y = torch.tensor(np.array(yflat))
-#         elif method == 'idw':
-#             # 暂时还不支持三维空间散点的IDW插值，将数据以文件形式到处，使用voxler软件处理
-#             return train_x, train_y, test_x, test_y, geodata.bound
-#         elif method == 'nearest':
-#             interp = NearestNDInterpolator(train_x, train_y)
-#             predict_value = interp(test_x)
-#             predict_test_y = torch.tensor(np.array(predict_value))
-#         if predict_test_y is None:
-#             raise ValueError
-#         prediction[test_idx] = predict_test_y
-#         sample_grid, contour, cell_mesh, cell_stratum = mvk.process_point_field_model(geodata.sample_grid,
-#                                                                                       cell_labels=prediction,
-#                                                                                       iso_list=iso_list,
-#                                                                                       stratum_match=stratum_match,
-#                                                                                       save_path=save_path)
-#         predict_labels = np.int64(cell_stratum)
-#         predict_labels_test = torch.tensor(predict_labels[test_idx])
-#         accuracy = MF.accuracy(predict_labels_test, torch.tensor(test_y))
-#         print('================Test Accuracy {:.4f}================'.format(accuracy.item()))
-#
-#         tmp_drill_param = geodata.train_plot_data[0]
-#         drill_pos, drill_num = tmp_drill_param
-#         drills, _, _, _ = geodata.sample_with_drills(drill_pos=drill_pos)
-#         drills = mvk.drill_construct_tube(drills, drill_radius=25)
-#         mvk.visual_multiple_model([drills, contour], geodata.sample_grid, cell_mesh, sample_grid)
-#
-#         ori_path = os.path.join(self.root, 'processed', 'ori.vtk')
-#         geodata.sample_grid.save(filename=ori_path)
-#
-#         slice_x = mvk.clip_section_along_axis(cell_mesh, sample_axis='x')
-#         slice_y = mvk.clip_section_along_axis(cell_mesh, sample_axis='y')
-#         mvk.visual_multiple_model([drills, slice_x, slice_y])
-#
-#     else:
-#         raise ValueError
-
-# 生成二维剖面网格，
-# def generate_section_grid(self, model_idx, sample_axis='x', scroll_scale=0.5, drill_num=6, is_save=False):
-#     graph_num = len(self.graph) + len(self.predict_graph)
-#     if model_idx < graph_num:
-#         geodata = self.geodata[model_idx]
-#         section, section_point, section_point_label, drills, drill_pid, train_plot_data_type, train_plot_data = \
-#             geodata.generate_section2d_with_drills_test(sample_axis=sample_axis, scroll_scale=scroll_scale,
-#                                                         drill_num=drill_num)
-#         for sec in section:
-#             axis_labels = ['x', 'y', 'z']
-#             label_to_index = {label: index for index, label in enumerate(axis_labels)}
-#             ax_index = label_to_index[sample_axis.lower()]
-#             section_geodata = GeoMeshParse(sec, name=geodata.name + '_sec2d')
-#             section_geodata.sample_grid_extent = copy.deepcopy(geodata.sample_grid_extent)
-#             section_geodata.sample_grid_extent[ax_index] = 1
-#
-#             section_geodata.sample_grid = sec
-#             section_geodata.grid_points = section_point
-#             section_geodata.grid_point_label = section_point_label
-#             section_geodata.train_idx = drill_pid
-#             # 获取二维剖面三角网格
-#             section_geodata.get_triangulate_edges_2d(axis_label=sample_axis)
-#             # 获取节点特征
-#             section_geodata.get_node_feat(node_feat='position')
-#             # 将采样数据参数记录下来
-#             section_geodata.train_plot_data_type = []
-#             section_geodata.train_plot_data = []
-#             section_geodata.train_plot_data_type.append(train_plot_data_type)
-#             section_geodata.train_plot_data.append(train_plot_data)
-#             # 构建dgl图结构网格
-#             sectiona_graph = section_geodata.create_dgl_graph(
-#                 edge_list=np.int64(section_geodata.edge_list).transpose(),
-#                 node_feat=section_geodata.node_feat,
-#                 edge_feat=section_geodata.edge_feat,
-#                 node_label=np.int64(section_geodata.grid_point_label),
-#                 self_loop=False, add_inverse_edge=True, normalize=True)
-#             # 将数据存入对象
-#             self.geodata.append(section_geodata)
-#             self.predict_graph.append(sectiona_graph)
-#             save_idx = len(self.predict_graph)
-#             self.update_graph_log(model_name=section_geodata.name,
-#                                   save_idx=save_idx, extern=section_geodata.sample_grid_extent,
-#                                   node_feat=self.dgl_graph_param[0], edge_feat=self.dgl_graph_param[1],
-#                                   is_pre_train=False)
-#             # 处理好图
-#             if torch.is_tensor(self.predict_num_classes['labels']):
-#                 self.predict_num_classes['labels'] = self.predict_num_classes['labels'].numpy().tolist()
-#             if model_idx < len(self.graph):
-#                 if torch.is_tensor(self.num_classes['labels']):
-#                     self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
-#                 label_num = self.num_classes['labels'][model_idx]
-#             else:
-#                 label_num = self.predict_num_classes['labels'][model_idx - len(self.graph)]
-#             self.predict_num_classes['labels'].append(label_num)
-#             self.predict_num_classes = {'labels': torch.tensor(self.predict_num_classes['labels']).to(torch.long)}
-#             if is_save:
-#                 print('Saving...')
-#                 save_graphs(self.processed_predict_graph_path, self.predict_graph, self.predict_num_classes)
-#                 self.predict_graph, self.predict_num_classes = load_graphs(self.processed_predict_graph_path)
-#                 self.save_graph_log()
-#                 self.save_geodata()
-#                 self.geodata = self.load_geodata()
-#                 self.graph_log = self.load_graph_log()
-
-# 修改训练集比例
-# def change_train_idx_pro(self, model_index, sample_operator, replace=False, **kwargs):
-#     graph_num = len(self.graph)
-#     if model_index < graph_num:
-#         x = np.arange(len(self.geodata[model_index].grid_points))
-#         known_proportion = self.geodata[model_index].train_data_proportion
-#         print('Changing Graph Data train_data proportion ...')
-#         print('The previous train data proportion is {}.'.format(known_proportion))
-#         self.geodata[model_index].set_virtual_geo_sample(sample_operator=sample_operator, **kwargs)
-#         # 替换并存储
-#         if replace:
-#             self.save_geodata()
-#             self.geodata = self.load_geodata()

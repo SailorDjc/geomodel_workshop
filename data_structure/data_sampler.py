@@ -19,7 +19,7 @@ random.seed(1)
 
 # 网格采样类基类
 class GeoDataSampler(object):
-    def __init__(self, grid=None):
+    def __init__(self, grid=None, default_value=-1):
         self._base_grid = grid
         self._base_grid_points = None
         self._base_grid_labels = None
@@ -39,7 +39,7 @@ class GeoDataSampler(object):
         self.sample_data_list = []  # 采样数据
         self.sample_operator = []
         self.map_flag = False
-        self.default_value = -1
+        self.default_value = default_value
         # 设置验证集和训练集
         self.val_ratio = None  # 为None则不设置验证集，值在0和1之间
         # 钻孔、剖面或散点  {sid: {'train':[], 'val': []}}  sid对应的是self.sample_data_list中的数据索引

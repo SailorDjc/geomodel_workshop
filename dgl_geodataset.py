@@ -27,6 +27,9 @@ class DglGeoDataset(DGLDataset):
             self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
         self.grid_data = []
         grid_data_num = len(self.dataset.geograph)
+        self.labels_count_map = []
+        for i in range(grid_data_num):
+            self.labels_count_map.append(self.dataset.geograph[i].get_labels_count_map())
         self.processed_path = self.dataset.processed_dir
         self.grid_data_path = None
         if grid_data_num > 0:

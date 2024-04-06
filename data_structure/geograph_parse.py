@@ -24,7 +24,7 @@ import pytetgen
 
 class GeoMeshGraphParse(object):
     def __init__(self, mesh: Grid = None, input_sample_data: GeodataSet = None, grid_dims=None, name=None
-                 , is_normalize=False, dir_path=None, default_value=-1):  # , pre_train=True
+                 , is_normalize=False, dir_path=None):  # , pre_train=True
         self.name = name
         self.is_normalize = is_normalize  # 坐标是否归一化
         self.data = mesh
@@ -47,20 +47,12 @@ class GeoMeshGraphParse(object):
         self.sample_operator = []
         self.grid_dims = grid_dims
         self.sample_data = []
-        self.default_value = default_value
         # 图特征  下面两个变量用来装数据
         self.node_feat = None  # 图节点特征    np.float32
         self.edge_feat = None  # 图边特征      np.float32
 
         self.dir_path = dir_path
         self.tmp_dump_str = 'tmp' + str(int(time.time()))
-
-    def get_labels_count_map(self):
-        labels_count_map = {}
-        for ll in np.unique(self.grid_points_series):
-            if ll != -1:
-                labels_count_map[ll] = np.sum(self.grid_points_series == ll)
-        return labels_count_map
 
     def execute(self, sample_operator=None, edge_feat=None, node_feat=None, feat_normalize=False,
                 is_create_graph=True, ext_grid=None, val_ratio=None, **kwargs):
@@ -123,6 +115,8 @@ class GeoMeshGraphParse(object):
 
     # 修改验证集的切分比例
     def change_val_data_split(self, val_ratio):
+        # set_geo_sample_data(input_sample_data=self.input_sample_data, grid_dims=self.grid_dims
+        #                     , ext_grid=ext_grid, val_ratio=val_ratio, **kwargs)
         grid_sampler = GeoGridDataSampler(sample_operator=self.sample_operator)
         grid_sampler.set_val_boreholes_ratio(val_ratio=val_ratio)
         grid_sampler.sample_data_list = self.sample_data
@@ -136,16 +130,16 @@ class GeoMeshGraphParse(object):
                 in_val_data_idx = grid_sampler.geo_sample_data_val_map[sid]['val']
                 if isinstance(grid_sampler.sample_data_list[sid], BoreholeSet):
                     all_boreholes = grid_sampler.sample_data_list[sid]
-                    t_train_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
-                        sample_data=all_boreholes.get_boreholes(idx=in_train_data_idx))
-                    t_val_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
-                        sample_data=all_boreholes.get_boreholes(idx=in_val_data_idx))
+                    t_train_idx, _ = grid_sampler.set_map_boreholes_labels_to_base_grid(
+                        boreholes=all_boreholes.get_boreholes(idx=in_train_data_idx))
+                    t_val_idx, _ = grid_sampler.set_map_boreholes_labels_to_base_grid(
+                        boreholes=all_boreholes.get_boreholes(idx=in_val_data_idx))
                 else:
                     all_points_data = grid_sampler.sample_data_list[sid].get_points_data()
-                    t_train_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
-                        sample_data=all_points_data.get_points_data_by_ids(ids=in_train_data_idx))
-                    t_val_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
-                        sample_data=all_points_data.get_points_data_by_ids(ids=in_val_data_idx))
+                    t_train_idx, _ = grid_sampler.set_map_points_data_labels_to_base_grid(
+                        points_data=all_points_data.get_points_data_by_ids(ids=in_train_data_idx))
+                    t_val_idx, _ = grid_sampler.set_map_points_data_labels_to_base_grid(
+                        points_data=all_points_data.get_points_data_by_ids(ids=in_val_data_idx))
                 train_idx.extend(t_train_idx)
                 val_idx.extend(t_val_idx)
             else:
@@ -155,7 +149,6 @@ class GeoMeshGraphParse(object):
         val_idx = list(np.unique(val_idx))
         self.train_data_indexes = train_idx
         self.val_data_indexes = val_idx
-        self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
 
     # 要保证 edge_list 图中没有自环
     def create_dgl_graph(self, edge_list=None, node_feat=None, edge_feat=None, node_label=None,

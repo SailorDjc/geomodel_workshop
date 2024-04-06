@@ -18,7 +18,8 @@ from data_structure.geodata import load_object
 # import model_visual_kit as mvk
 from datetime import datetime
 from sklearn.metrics import mean_squared_error
-
+from sklearn import preprocessing
+from models.loss import FocalLoss, MultiClassFocalLossWithAlpha
 logger = logging.getLogger(__name__)
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
@@ -90,6 +91,7 @@ class GmeTrainer:
     # config: GmeTrainerConfig
 
     def __init__(self, model, gme_dataset, config: GmeTrainerConfig):
+        self.custom_loss = None
         self.model = model
         self.gme_dataset = gme_dataset
         self.train_dataset = None
@@ -100,7 +102,6 @@ class GmeTrainer:
         self.iter_record_path = None
         # take over whatever gpus are on the system
         self.device = config.device
-
         if 1 < config.gpu_num <= torch.cuda.current_device():
             self.model = torch.nn.DataParallel(self.model, device_ids=self.device).cuda()  #
         else:
@@ -173,6 +174,8 @@ class GmeTrainer:
                 pred[output_nodes] = y.to(graph.device)
             # scalars = np.argmax(pred.cpu().numpy(), axis=1)
             grid_data = load_object(data.grid_data_path)
+            pred_tensor_path = os.path.join(os.path.dirname(self.config.ckpt_path), 'pred.txt')
+            torch.save(pred, pred_tensor_path)
             mvk.visual_predicted_values_model(grid_data.vtk_data, pred, is_show=is_show, save_path=save_path)
 
             if has_test_label:
@@ -182,9 +185,28 @@ class GmeTrainer:
                 accuracy = MF.accuracy(pred_test, label_test, task='multiclass'
                                        , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
                 return accuracy.item()
-            return 0
+            else:
+                val_idx = data.val_idx[idx]
+                pred_val = pred[val_idx]
+                label_val = graph.ndata['label'][val_idx].to(pred_val.device)
+                accuracy = MF.accuracy(pred_val, label_val, task='multiclass'
+                                       , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
+                return accuracy.item()
 
     def train(self, data_split_idx=0, has_test_label=True):
+
+        labels_count_map = self.gme_dataset.labels_count_map[data_split_idx]
+        key_num = len(labels_count_map)
+        if self.gme_dataset.num_classes['labels'][data_split_idx] != key_num:
+            raise ValueError('Data type error.')
+        alpha_list = np.array([labels_count_map[a] for a in range(key_num)])
+        item_sum = np.sum(alpha_list)
+        alpha_list = item_sum / alpha_list
+        min_max_scaler = preprocessing.MinMaxScaler()
+        alpha_list = min_max_scaler.fit_transform(alpha_list.reshape(-1, 1))
+        alpha_list = torch.tensor(alpha_list).to(self.device)
+        self.custom_loss = FocalLoss(class_num=key_num)
+
         model, config = self.model, self.config
         raw_model = self.load_checkpoint()
         lr = config.learning_rate
@@ -216,7 +238,8 @@ class GmeTrainer:
                     y = blocks[-1].dstdata['label']
                     y_hat = model(blocks, x)
                     # ignore_index=-1, 计算跳过填充值-1
-                    loss = F.cross_entropy(y_hat, y, ignore_index=-1)
+                    # loss = F.cross_entropy(y_hat, y, ignore_index=-1)
+                    loss = self.custom_loss(y_hat, y)
                     losses.append(loss.item())
                     # 计算epoch 的总体 accuracy
                     ys.append(y)

@@ -70,13 +70,13 @@ if __name__ == "__main__":
     # plot.show()
     #
     # 由钻孔顶部点生成地形
-    top_points = geod.geodata_list[1].get_top_points()
-    terr = TerrainData()
-    bot_points = geod.geodata_list[1].get_bottom_points()
-    # 范围约束，按照剖面线缓冲，生成线状建模区域
-    terr.set_boundary_from_line_buffer(trajectory_line_xy=top_points, buffer_dist=30)
-    terr.set_control_points(top_points)
-    terr.execute()
+    # top_points = geod.geodata_list[1].get_top_points()
+    # terr = TerrainData()
+    # bot_points = geod.geodata_list[1].get_bottom_points()
+    # # 范围约束，按照剖面线缓冲，生成线状建模区域
+    # terr.set_boundary_from_line_buffer(trajectory_line_xy=top_points, buffer_dist=30)
+    # terr.set_control_points(top_points)
+    # terr.execute()
     # 为钻孔添加基底层
     geod.geodata_list[1].add_base_layer_for_each_borehole()
     # 设置钻孔控制半径范围
@@ -86,9 +86,11 @@ if __name__ == "__main__":
     gme_models = GmeModelGraphList('gme_model', root=root_path,
                                    input_sample_data=geod,  # ,  geod
                                    add_inverse_edge=True,
-                                   terrain_data=terr,  # terr
+                                   terrain_data=None,  # terr
                                    grid_cell_density=[2, 2, 0.5],
                                    val_ratio=0.2)  #
+    # gme_models.change_val_indexes(val_ratio=0.4)
+
     dataset = DglGeoDataset(gme_models)
     import gc
 
@@ -96,7 +98,7 @@ if __name__ == "__main__":
     gc.collect()
     # initialize a trainer instance and kick off training
     # 模型训练相关参数    初始训练参数的设置
-    trainer_config = GmeTrainerConfig(max_epochs=120, batch_size=512, num_workers=4, learning_rate=1e-4,
+    trainer_config = GmeTrainerConfig(max_epochs=130, batch_size=512, num_workers=4, learning_rate=1e-4,
                                       ckpt_path=os.path.join(root_path, 'processed', 'latest_tran.pth'),
                                       output_dir=os.path.join(root_path, 'output'),
                                       out_put_grid_file_name='vtk_sec_model.vtk',
