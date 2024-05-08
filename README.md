@@ -13,7 +13,8 @@
 * pytest
 * pynoddy
 * imageio
-* rdp <br />
+* rdp
+* openpyxl<br />
 
 注1：本项目使用的是python3.8环境，cuda11.6，
 1. pytorch安装命令为：conda install pytorch==1.13.1 torchvision==0.14.1 torchaudio==0.13.1 pytorch-cuda=11.6 -c pytorch -c nvidia <br />
@@ -34,7 +35,7 @@ pip install pytetgen
 注3：项目添加了地形曲面约束的模块，允许输入DEM的tiff文件生成地形面，因此需要引入rasterio库。
 * 安装rasterio [optional]
 依次安装 * pyproj Shapely GDAL Fiona geopandas rasterio 
-其中GDAL,Fiona,rasterio不可以用pip install安装，需要下载whl安装包进行离线安装，下载网址 https://www.lfd.uci.edu/~gohlke/pythonlibs/
+其中GDAL,Fiona,rasterio不可以用pip install安装，需要下载whl安装包进行离线安装，下载网址 https://www.lfd.uci.edu/~gohlke/pythonlibs/ 或 https://www.cgohlke.com/
 在选择whl包时，建议选择指定python的最高版本库，且注意包后缀为cp，意为使用的CPython实现，例如GDAL-3.4.3-cp38-cp38-win_amd64.whl。
 ## 代码运行说明
 
