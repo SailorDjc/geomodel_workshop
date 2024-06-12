@@ -12,18 +12,13 @@ from data_structure.data_sampler import GeoGridDataSampler
 from utils.plot_utils import control_visibility_with_layer_label
 import pandas as pd
 
+# 本实例给出了一个完整的地质数据训练并最终生成地质模型的过程
+# 实例使用从钻孔文件中读取的钻孔数据
 if __name__ == '__main__':
     # load and preprocess dataset
     print('Loading data')
 
     root_path = os.path.abspath('..')
-    # grid_model = Grid(grid_vtk_path=os.path.join(os.path.join(root_path, 'processed'), 'vtk_model.vtk'), label_map=False)
-    # plotter = control_visibility_with_layer_label([grid_model])
-    # plotter.show()
-    # grid_sample = GeoGridDataSampler(grid=grid_model)
-    # section = grid_sample.sample_with_sections_along_axis(sample_axis='x', section_num=1)
-    # section.show()
-
     # file_path = os.path.join(root_path, 'data', 'origin_borehole_data.dat')
     # #
     # xm_file_path = os.path.join(root_path, 'data', '厦门数据集', '三级编码', 'sample_drills_big.dat')

@@ -112,6 +112,19 @@ class Section(object):
         self.scalar_grad = None
         self.scalar_grad_norm = None
 
+    # 根据范围筛选数据，返回PointSet对象
+    def search_by_rect2d(self, rect2d):
+        cur_points_data = self.get_points_data()
+        return cur_points_data.search_by_rect2d(rect2d=rect2d)
+
+    # 恢复初始标签
+    def restore_labels(self):
+        if self.label_dict is not None and self.series is not None:
+            label_dict = {}
+            for k, v in self.label_dict.items():
+                label_dict[v] = k
+            self.series = np.vectorize(label_dict.get)(np.array(self.series))
+
     def get_points_data(self):
         points_data = PointSet(points=self.points, point_labels=self.series)
         if self.scalars is not None:
@@ -308,7 +321,7 @@ class Section(object):
         probe_volume.SetInputData(surf)
         probe_volume.Update()
         out = probe_volume.GetOutput()
-        arr = out.GetPointData().GetArray("Scalar Field")
+        arr = out.GetPointData().GetArray("stratum")
         out.GetPointData().SetScalars(arr)
         out = pv.wrap(out)
         self.vtk_data = out
@@ -367,15 +380,7 @@ class SectionSet(object):
         self.dir_path = dir_path
         self.tmp_dump_str = 'tmp_secs' + str(int(time.time()))
         self.vtk_data = None
-
-    def save_object(self, dir_path=None):
-        file_path = os.path.join(dir_path, self.tmp_dump_str)
-        out_put = open(file_path, 'wb')
-        self.save(dir_path=dir_path)
-        out_str = pickle.dumps(self)
-        out_put.write(out_str)
-        out_put.close()
-        return self.__class__.__name__, file_path
+        self.label_dict = None
 
     def append(self, section: Section):
         self.sections.append(section)
@@ -388,6 +393,16 @@ class SectionSet(object):
         if len(points_data_list) > 0:
             points_data_list = PointSet.points_data_merge(points_data_list=points_data_list)
         return points_data_list
+
+    # 恢复初始标签
+    def restore_labels(self):
+        for si in range(len(self.sections)):
+            self.sections[si].restore_labels()
+
+    # 根据范围筛选数据，返回PointSet对象
+    def search_by_rect2d(self, rect2d):
+        cur_points_data = self.get_points_data()
+        return cur_points_data.search_by_rect2d(rect2d=rect2d)
 
     def get_points_num(self):
         points_data_list = self.get_points_data()
@@ -417,16 +432,27 @@ class SectionSet(object):
     def __getitem__(self, idx):
         return self.get_section(idx)
 
-    def save(self, dir_path: str):
+    def save(self, dir_path: str, out_name: str = None):
         self.dir_path = dir_path
-        for s_id in np.arange(len(self.sections)):
-            self.sections[s_id].save(dir_path=dir_path)
-            self.sections[s_id] = 'dumped'
+        if not os.path.exists(self.dir_path):
+            os.makedirs(self.dir_path)
+        if self.vtk_data is not None:
+            for s_id in np.arange(len(self.sections)):
+                self.sections[s_id].save(dir_path=dir_path)
+                self.sections[s_id] = 'dumped'
+        file_name = self.tmp_dump_str
+        if out_name is not None:
+            file_name = out_name
+        file_path = os.path.join(dir_path, file_name)
+        out_put = open(file_path, 'wb')
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
-    def load(self, dir_path: str):
-        self.dir_path = dir_path
+    def load(self):
         for s_id in np.arange(len(self.sections)):
-            self.sections[s_id].load(dir_path=dir_path)
+            self.sections[s_id].load()
 
 
 if __name__ == "__main__":

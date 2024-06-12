@@ -243,7 +243,7 @@ def create_vtk_grid_by_rect_bounds(dim: np.ndarray = None, bounds: np.ndarray = 
 
 
 # 在规则格网的基础上，通过一个2d凸包范围切割格网
-def create_vtk_grid_by_unregular_bounds(dims: np.ndarray, bounds: np.ndarray
+def create_vtk_grid_by_boundary(dims: np.ndarray, bounds: np.ndarray
                                         , convexhull_2d: np.ndarray, cell_density: np.ndarray = None):
     convex_surface, grid_outline = create_closed_surface_by_convexhull_2d(bounds=bounds
                                                                           , convexhull_2d=convexhull_2d)
@@ -263,7 +263,7 @@ def create_vtk_grid_by_unregular_bounds(dims: np.ndarray, bounds: np.ndarray
 # xy_buffer z_buffer 为大于0的浮点数，是包围盒的缓冲距离
 def get_bounds_from_coords(coords: np.ndarray, xy_buffer=0, z_buffer=0):
     assert coords.ndim == 2, "input coords array is not 2D array"
-    assert coords.shape[1] == 3, "input coords are not 3D"
+    # assert coords.shape[1] == 3, "input coords are not 3D"
 
     coord_min = coords.min(axis=0)
     coord_max = coords.max(axis=0)
@@ -272,8 +272,12 @@ def get_bounds_from_coords(coords: np.ndarray, xy_buffer=0, z_buffer=0):
     x_max = coord_max[0]
     y_min = coord_min[1]
     y_max = coord_max[1]
-    z_min = coord_min[2]
-    z_max = coord_max[2]
+    if coords.shape[1] == 3:
+        z_min = coord_min[2]
+        z_max = coord_max[2]
+    else:
+        z_min = 0
+        z_max = 0
     bounds = np.array([x_min, x_max, y_min, y_max, z_min, z_max])
     if xy_buffer != 0 or z_buffer != 0:
         if xy_buffer == 0:
@@ -391,16 +395,17 @@ def add_np_property_to_vtk_object(vtk_object, prop_name, prop_arr, continuous=Tr
         add_vtk_data_array_to_vtk_object(vtk_object, create_discrete_property_vtk_array(prop_name, prop_arr))
 
 
-# 垂直方向拉伸
-def vertically_exaggerate_vtk_object(vtk_object, vertical_exaggeration):
+# 水平和垂直方向拉伸  # vertically_ # horizontal_ 比例变换
+def exaggerate_vtk_object(vtk_object, horizontal_x_exaggeration=1, horizontal_y_exaggeration=1
+                                     , vertical_exaggeration=1):
     transform = vtkTransform()
-    transform.Scale(1, 1, vertical_exaggeration)
+    transform.Scale(horizontal_x_exaggeration, horizontal_y_exaggeration, vertical_exaggeration)
     transform.Update()
     transformFilter = vtkTransformFilter()
     transformFilter.SetTransform(transform)
     transformFilter.SetInputData(vtk_object)
     transformFilter.Update()
-    return transformFilter.GetOutput()
+    return pv.wrap(transformFilter.GetOutput())
 
 
 def get_resultant_bounds_from_vtk_objects(*vtk_objects, xy_buffer=0, z_buffer=0):

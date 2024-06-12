@@ -1,3 +1,5 @@
+import math
+
 from data_structure.grids import Grid
 from data_structure.sections import SectionSet, Section
 from data_structure.boreholes import BoreholeSet, Borehole
@@ -9,7 +11,7 @@ import copy
 import scipy.spatial as spt
 import pyvista as pv
 from utils.vtk_utils import vtk_polydata_to_vtk_unstructured_grid, create_vtk_grid_by_rect_bounds, \
-    create_vtk_grid_by_unregular_bounds, get_bounds_from_coords, create_closed_cylinder_surface
+    create_vtk_grid_by_boundary, get_bounds_from_coords, create_closed_cylinder_surface
 from utils.math_libs import remove_repeated_elements_with_lists
 from data_structure.terrain import TerrainData
 from sklearn.model_selection import train_test_split
@@ -88,7 +90,7 @@ class GeoDataSampler(object):
                     borehole_num = self.sample_data_list[sid].borehole_num
                     all_sample_points = self.sample_data_list[sid].get_points_data().points
                     da, all_pid = ckt.query(all_sample_points)
-                    all_idx = list(sorted(np.unique(all_pid)))
+                    all_idx = list(sorted(set(all_pid)))
                     train_idx = all_pid
                     # 涉及到钻孔，数据集切分需要以钻孔为单位
                     if self.val_ratio is not None:
@@ -98,7 +100,7 @@ class GeoDataSampler(object):
                         val_boreholes = self.sample_data_list[sid].get_boreholes(idx=val_borehole_idx)
                         val_sample_points = val_boreholes.get_points_data().points
                         dv, val_pid = ckt.query(val_sample_points)
-                        val_idx = list(sorted(np.unique(val_pid)))
+                        val_idx = list(sorted(set(val_pid)))
                         train_idx = list(set(all_idx) - set(val_idx))
                 else:
                     raise ValueError('Not support.')
@@ -206,14 +208,17 @@ class GeoDataSampler(object):
             # points = horizon_slice.cell_centers().points.tolist()
             points = None
             x_min, x_max, y_min, y_max, _, _ = self._bounds
-            xn = (x_max - x_min) // sparse_dist
-            yn = (y_max - y_min) // sparse_dist
+            xn = math.floor((x_max - x_min) // sparse_dist)
+            yn = math.floor((y_max - y_min) // sparse_dist)
             xx = np.linspace(start=x_min, stop=x_max, num=xn)
             yy = np.linspace(start=y_min, stop=y_max, num=yn)
             zz = 0
             points_x, points_y, points_z = np.meshgrid(xx, yy, zz)
-            points = np.concatenate((points_x[:, :, None], points_y[:, :, None], points_z[:, :, None]), axis=1)
-            drill_pos = random.sample(points, drill_num)
+            points_x = points_x.flatten()
+            points_y = points_y.flatten()
+            points_z = points_z.flatten()
+            points = np.concatenate((points_x[:, None], points_y[:, None], points_z[:, None]), axis=-1)
+            drill_pos = random.sample(list(points), drill_num)
         borehole_list = BoreholeSet()
         for it, drill_id in enumerate(np.arange(drill_num)):
             pos = drill_pos[drill_id]
@@ -414,8 +419,8 @@ class GeoDataSampler(object):
             train_indexes = np.hstack(train_indexes)
         if len(val_indexes) > 0:
             val_indexes = np.hstack(val_indexes)
-        val_indexes = list(sorted(np.unique(val_indexes)))
-        train_indexes = list(sorted(np.unique(train_indexes)))
+        val_indexes = list(sorted(set(np.unique(val_indexes))))
+        train_indexes = list(sorted(set(np.unique(train_indexes))))
         del_indexes = []
         for v_id in val_indexes:
             if v_id in train_indexes:
@@ -522,7 +527,9 @@ class GeoGridDataSampler(GeoDataSampler):
                             drill_num = self.kwargs['drill_num']
                         if drill_pos is None and drill_num is None:
                             raise ValueError('Need to input parameter drill_pos or drill_num.')
-                        borehole_list = self.random_sample_grid_for_boreholes(drill_pos=drill_pos, drill_num=drill_num)
+                        sparse_dist = (self._base_grid.dims[0] + self._base_grid.dims[1]) / 2
+                        borehole_list = self.random_sample_grid_for_boreholes(drill_pos=drill_pos, drill_num=drill_num
+                                                                              , sparse_dist=sparse_dist)
                         self.sample_data_list.append(borehole_list)
                     if sample_op == 'axis_sections':
                         sample_axis = None
@@ -554,10 +561,10 @@ class GeoGridDataSampler(GeoDataSampler):
             raise ValueError('The grid data is empty.')
 
     # 混合数据集, 目前支持钻孔和散点
-    # 当数据为钻孔时，支持地表约束，方式为将地表约束网格作为external_grid外部传入
+    # 当数据为钻孔时，支持地表约束，方式为将地表约束网格作为external_grid_vtk外部传入
     def set_base_grid_by_geodataset(self, geodataset: GeodataSet, dims: np.ndarray, bounds: np.ndarray = None
-                                    , cell_resolution: np.ndarray = None, is_regular=True, use_terrain=False
-                                    , external_grid=None):
+                                    , cell_resolution: np.ndarray = None, is_regular=True
+                                    , external_grid_vtk=None, check_convexhell=False):
         if bounds is None:
             bounds = geodataset.bounds
         grid = Grid(name='gme_base_grid')
@@ -568,18 +575,22 @@ class GeoGridDataSampler(GeoDataSampler):
                 raise ValueError("Cell resolution array should be triple element data.")
             dims = np.divide(np.array([bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4]]),
                              cell_resolution)
-        if external_grid is None:
+        # 外部传入网格优先，若没有外部网格，则内部构建，先判断是否有范围和地形约束，然后判断是否是规则网格
+        # 这里的规则网格是指规则体素栅格的中心点构成的网格
+        # 不规则网格指的是有荻洛妮四面体生成算法内插出的顶点，这些顶点在空间中散布，以此构图，虽然最后三维可视化仍然是规则体素，但这些
+        # 体素的属性是根据最近邻算法插值得到的。
+        if external_grid_vtk is None:
             if dims is None:
                 raise ValueError('Need to specify the size of the grid.')
-            if is_regular:
+            if not check_convexhell:
                 sample_grid = create_vtk_grid_by_rect_bounds(dim=dims, bounds=bounds)
             else:
                 convexhull_2d = geodataset.get_points_data().get_convexhull_2d()
-                sample_grid = create_vtk_grid_by_unregular_bounds(dims=dims, bounds=bounds
-                                                                  , convexhull_2d=convexhull_2d
-                                                                  , cell_density=cell_resolution)
-            external_grid = sample_grid
-        grid.set_vtk_grid(grid_vtk=external_grid)
+                sample_grid = create_vtk_grid_by_boundary(dims=dims, bounds=bounds
+                                                          , convexhull_2d=convexhull_2d
+                                                          , cell_density=cell_resolution)
+            external_grid_vtk = sample_grid
+        grid.set_vtk_grid(grid_vtk=external_grid_vtk)
         self.grid = grid
         if self.sample_operator is None:
             self.sample_operator = []
@@ -594,7 +605,8 @@ class GeoGridDataSampler(GeoDataSampler):
 
     # 已知部分钻孔，根据给定范围创建规则网格，钻孔控制范围内的网格点赋予标签，范围外的网格点无标签。
     def set_base_grid_by_boreholes(self, boreholes: BoreholeSet, dims: np.ndarray, bounds: np.ndarray = None
-                                   , cell_resolution: np.ndarray = None, is_regular=True, external_grid=None):
+                                   , cell_resolution: np.ndarray = None, is_regular=True
+                                   , check_convexhell=False, external_grid_vtk=None):
         if bounds is None:
             bounds = boreholes.bounds
         if dims.shape[0] != 3:
@@ -607,17 +619,17 @@ class GeoGridDataSampler(GeoDataSampler):
         # 设置钻孔控制缓冲半径
         boreholes.set_boreholes_control_buffer_dist_xy(radius=float(1.5 * (cell_resolution[0] + cell_resolution[1])))
         grid = Grid(name='gme_base_grid')
-        if external_grid is None:
-            if is_regular:
+        if external_grid_vtk is None:
+            if not check_convexhell:
                 sample_grid = create_vtk_grid_by_rect_bounds(dim=dims, bounds=bounds)
             else:
                 convexhull_2d = boreholes.get_points_data().get_convexhull_2d()
-                sample_grid, grid_outline = create_vtk_grid_by_unregular_bounds(dims=dims, bounds=bounds
-                                                                                , convexhull_2d=convexhull_2d
-                                                                                , cell_density=cell_resolution)
-            external_grid = sample_grid
+                sample_grid, grid_outline = create_vtk_grid_by_boundary(dims=dims, bounds=bounds
+                                                                        , convexhull_2d=convexhull_2d
+                                                                        , cell_density=cell_resolution)
+            external_grid_vtk = sample_grid
         # 将钻孔点标签映射到格网上，未知标签的格网点值默认为-1
-        grid.set_vtk_grid(grid_vtk=external_grid)
+        grid.set_vtk_grid(grid_vtk=external_grid_vtk)
         self.grid = grid
         if self.sample_operator is None:
             self.sample_operator = ['None']
@@ -627,7 +639,8 @@ class GeoGridDataSampler(GeoDataSampler):
 
     #
     def set_base_grid_by_points_data(self, points_data: PointSet, dims: np.ndarray = None, bounds: np.ndarray = None
-                                     , cell_resolution: np.ndarray = None, external_grid=None, is_regular=True):
+                                     , cell_resolution: np.ndarray = None, external_grid_vtk=None
+                                     , is_regular=True, check_convexhell=False):
         if bounds is None:
             bounds = points_data.bounds
         grid = Grid(name='gme_base_grid')
@@ -638,18 +651,18 @@ class GeoGridDataSampler(GeoDataSampler):
                 raise ValueError("Cell resolution array should be triple element data.")
             dims = np.divide(np.array([bounds[1] - bounds[0], bounds[3] - bounds[2], bounds[5] - bounds[4]]),
                              cell_resolution)
-        if external_grid is None:
+        if external_grid_vtk is None:
             if dims is None:
                 raise ValueError('Need to specify the size of the grid.')
-            if is_regular:
+            if not check_convexhell:
                 sample_grid = create_vtk_grid_by_rect_bounds(dim=dims, bounds=bounds)
             else:
                 convexhull_2d = points_data.get_convexhull_2d()
-                sample_grid = create_vtk_grid_by_unregular_bounds(dims=dims, bounds=bounds
-                                                                  , convexhull_2d=convexhull_2d
-                                                                  , cell_density=cell_resolution)
-            external_grid = sample_grid
-        grid.set_vtk_grid(grid_vtk=external_grid)
+                sample_grid = create_vtk_grid_by_boundary(dims=dims, bounds=bounds
+                                                          , convexhull_2d=convexhull_2d
+                                                          , cell_density=cell_resolution)
+            external_grid_vtk = sample_grid
+        grid.set_vtk_grid(grid_vtk=external_grid_vtk)
         self.grid = grid
         if self.sample_operator is None:
             self.sample_operator = ['None']

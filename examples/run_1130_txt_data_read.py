@@ -4,6 +4,7 @@ import os.path
 import numpy as np
 from data_structure.reader import ReadExportFile
 
+# 本实例演示了如何通过ReadExportFile类读取钻孔文件，并展示钻孔模型。
 if __name__ == '__main__':
     borehole_file = r"E:\drills_data_0110.txt"
     reader_0 = ReadExportFile()
@@ -21,5 +22,6 @@ if __name__ == '__main__':
     reader = ReadExportFile()
     boreholes = reader.read_boreholes_data_from_text_file(dat_file_path=file_path)
     boreholes.show(borehole_radius=10, is_tube=True)
+    # 以下接口使用了use_cols参数，是因为点数据文件中 x,y,z,label字段在第1，2，3，4列。
     points_data = reader.read_points_data_from_text_file(dat_file_path=file_path, use_cols=[1, 2, 3, 4])
     points_data.show()

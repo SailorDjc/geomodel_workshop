@@ -254,6 +254,7 @@ class BoreholeSet(object):
 
         self._classes = None
         self._classes_num = 0
+        self.label_dict = None
 
         self.vtk_data = None
 
@@ -300,17 +301,35 @@ class BoreholeSet(object):
             for borehole_id in range(len(self.boreholes_list)):
                 if self.boreholes_list[borehole_id].points is None:
                     self.boreholes_list[borehole_id].update_borehole_data_by_holelayers()
-                self.boreholes_list[borehole_id].points = np.subtract( self.boreholes_list[borehole_id].points, center)
+                self.boreholes_list[borehole_id].points = np.subtract(self.boreholes_list[borehole_id].points, center)
                 self.boreholes_list[borehole_id].update_holelayer_list()
 
     def search_by_rect2d(self, rect2d):
         x_min, x_max, y_min, y_max = rect2d[0], rect2d[1], rect2d[2], rect2d[3]
         search_boreholes_list = BoreholeSet()
+        search_boreholes_list.label_dict = self.label_dict
         for one_borehole in self.boreholes_list:
             pos_2d = one_borehole.top_pos[0:2]
             if x_min <= pos_2d[0] <= x_max and y_min <= pos_2d[1] <= y_max:
                 search_boreholes_list.append(one_borehole=one_borehole)
         return search_boreholes_list
+
+    # 恢复初始标签
+    def restore_labels(self):
+        if self.label_dict is not None and self.series is not None:
+            label_dict = {}
+            for k, v in self.label_dict.items():
+                label_dict[v] = k
+            self.series = np.vectorize(label_dict.get)(np.array(self.series))
+            # 遍历钻孔
+            for idx in np.arange(len(self.boreholes_list)):
+                self.boreholes_list[idx].series = (
+                    np.vectorize(label_dict.get)(np.array(self.boreholes_list[idx].series)))
+                for l_id in np.arange(len(self.boreholes_list[idx].holelayer_list)):
+                    self.boreholes_list[idx].holelayer_list[l_id].layer_label = (
+                        label_dict)[self.boreholes_list[idx].holelayer_list[l_id].layer_label]
+
+
 
     @property
     def classes(self):
@@ -378,6 +397,7 @@ class BoreholeSet(object):
             self.points_num = self.points.shape[0]
             _ = self.get_classes()
 
+    # 设置钻孔的控制半径
     def set_boreholes_control_buffer_dist_xy(self, radius: float):
         for hole_id in range(len(self.boreholes_list)):
             self.boreholes_list[hole_id].buffer_dist_xy = radius
@@ -433,6 +453,7 @@ class BoreholeSet(object):
             return self.__getitem__(idx=idx)
         elif isinstance(idx, (list, np.ndarray)):
             borehole_list = BoreholeSet()
+            borehole_list.label_dict = self.label_dict
             for bid in idx:
                 borehole_list.append(self.__getitem__(idx=bid))
             return borehole_list
@@ -459,8 +480,6 @@ class BoreholeSet(object):
         bottom_points = np.array(bottom_points)
         return bottom_points
 
-
-
     def get_top_points_data(self):
         top_points = []
         top_labels = []
@@ -470,6 +489,7 @@ class BoreholeSet(object):
             top_labels.append(one_borehole.holelayer_list[0].layer_label)
         top_points = np.array(top_points)
         top_points_data = PointSet(points=top_points, point_labels=np.array(top_labels))
+        top_points_data.label_dict = self.label_dict
         return top_points_data
 
     def get_points_data(self, only_interface=False):
@@ -482,7 +502,8 @@ class BoreholeSet(object):
         point_arr = np.concatenate(points, axis=0)
         label_arr = np.concatenate(labels, axis=0)
         points_data = PointSet(points=point_arr, point_labels=label_arr)
-        return points_data
+        points_data.label_dict = self.label_dict
+        return copy.deepcopy(points_data)
 
     # 按标签拆分，返回每一类标签所属的cell
     def detach_vtk_component_with_label(self):
@@ -694,7 +715,7 @@ class BoreholeSet(object):
         file_name = self.tmp_dump_str
         if out_name is not None:
             file_name = out_name
-        file_path = os.path.join(dir_path, file_name)
+        file_path = os.path.join(dir_path, file_name, '.d')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)
         out_put.write(out_str)

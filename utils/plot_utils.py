@@ -28,13 +28,26 @@ def visual_predicted_values_model(grid_data, cell_values, is_show=True, save_pat
         scalars = np.argmax(cell_values, axis=1)
     else:
         scalars = np.float32(cell_values)
-    gen_mesh = copy.deepcopy(grid_data)
+    if isinstance(grid_data, (Grid, Section)):
+        gen_mesh = copy.deepcopy(grid_data.vtk_data)
+    else:
+        gen_mesh = copy.deepcopy(grid_data)
     gen_mesh.cell_data['stratum'] = scalars
     gen_mesh.set_active_scalars(name='stratum')
     if is_show:
         visual_multiple_model([grid_data, gen_mesh])
     if save_path is not None:
-        gen_mesh.save(filename=save_path)
+        if isinstance(grid_data, (Grid, Section)):
+            dir_path, file_name = os.path.split(save_path)
+            export_grid = Grid(grid_vtk=gen_mesh)
+            export_grid.label_dict = grid_data.label_dict
+            print('save predicted model {} to {}.'.format(file_name, dir_path))
+            export_grid.save(dir_path=dir_path, out_name=file_name)
+        else:
+            filename, extension = os.path.splitext(save_path)
+            if extension != '.vtk':
+                save_path += '.vtk'
+            gen_mesh.save(filename=save_path)
         print('Geodata has been saved to {}.'.format(save_path))
     return gen_mesh
 
@@ -98,7 +111,10 @@ class SaveGraphicCallBack:
 # 控制每个地层的可见性， 可以展示钻孔与地质格网模型：
 # geo_object_list:  list
 # 输入参数为列表，[BoreholeSet, Grid]， 目前支持BoreholeSet和Grid两种类型的数据
-def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None, grid_smooth=False, show_edge=False):
+# font_file 字体文件的路径，传入字体文件ttf，支持中文显示
+def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
+                                        , is_detach=True, grid_smooth=False, show_edge=False
+                                        , labels_info=None, text_info=None, font_file=None):
     if not isinstance(geo_object_list, list):
         raise ValueError('Input must be list.')
     plotter = pv.Plotter()
@@ -110,6 +126,8 @@ def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
     size = 20
     classes_list = [list(item.get_classes()) for item in geo_object_list]
     classes_list = sum(classes_list, [])
+    if -1 in classes_list:
+        classes_list.remove(-1)
     max_value = max(classes_list)
     min_value = min(classes_list)
     if lookup_table is None:
@@ -144,32 +162,63 @@ def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
             grid_flag = False
             if isinstance(geo_object, Grid):
                 grid_flag = True
-            vtk_data_dict = geo_object.detach_vtk_component_with_label()
-            for label in sorted(vtk_data_dict):
-                if isinstance(vtk_data_dict[label], pv.UnstructuredGrid) and grid_smooth:
-                    vtk_data_dict[label] = vtk_data_dict[label].extract_geometry().smooth(boundary_smoothing=False
-                                                                                          , n_iter=100
-                                                                                          , relaxation_factor=0.1
-                                                                                          , edge_angle=120)
-                actor = plotter.add_mesh(vtk_data_dict[label], color=lookup_table.map_value(label)
-                                         , show_edges=show_edge)
+            if is_detach:
+                vtk_data_dict = geo_object.detach_vtk_component_with_label()
+                for label in sorted(vtk_data_dict):
+                    if isinstance(vtk_data_dict[label], pv.UnstructuredGrid) and grid_smooth:
+                        vtk_data_dict[label] = vtk_data_dict[label].extract_geometry().smooth(boundary_smoothing=False
+                                                                                              , n_iter=100
+                                                                                              , relaxation_factor=0.1
+                                                                                              , edge_angle=120)
+                    if label == -1:
+                        color = 'black'
+                    else:
+                        color = lookup_table.map_value(label)
+
+                    actor = plotter.add_mesh(vtk_data_dict[label], color=color
+                                             , show_edges=show_edge)
+                    if grid_flag:
+                        _actor_list.append(actor)
+                    # 按钮点击事件-可见性
+                    callback = SetVisibilityCallback(actor)
+                    plotter.add_checkbox_button_widget(callback, value=True, position=(start_pos_x, start_pos_y),
+                                                       size=size,
+                                                       border_size=1, color_on=lookup_table.map_value(label)
+                                                       , color_off='grey', background_color='grey')
+                    text = str(label)
+                    if labels_info is not None:
+                        if label in labels_info.keys():
+                            text = str(labels_info[label])
+                            if text_info is not None:
+                                text += text_info[labels_info[label]]
+                    plotter.add_text(text=text, position=(start_pos_x + size + 1, start_pos_y), font_size=10
+                                     , font_file=font_file)
+                    start_pos_y = start_pos_y + size + (size // 10)
+                if geo_object.name is None:
+                    geo_name = geo_object.__class__.__name__
+                else:
+                    geo_name = geo_object.__class__.__name__ + '_' + geo_object.name
+                plotter.add_text(text=geo_name
+                                 , position=(start_pos_x, start_pos_y), font_size=12)
+                start_pos_y = start_pos_y + size + (size // 10) + 2
+            else:
+                if isinstance(geo_object, BoreholeSet):
+                    if geo_object.vtk_data is None:
+                        geo_object.generate_vtk_data_as_tube()
+                actor = plotter.add_mesh(geo_object.vtk_data, show_edges=show_edge)
                 if grid_flag:
                     _actor_list.append(actor)
                 # 按钮点击事件-可见性
                 callback = SetVisibilityCallback(actor)
-                plotter.add_checkbox_button_widget(callback, value=True, position=(start_pos_x, start_pos_y), size=size,
-                                                   border_size=1, color_on=lookup_table.map_value(label)
+                plotter.add_checkbox_button_widget(callback, value=True, position=(start_pos_x, start_pos_y),
+                                                   size=size, border_size=1, color_on='red'
                                                    , color_off='grey', background_color='grey')
-
-                plotter.add_text(text=str(label), position=(start_pos_x + size + 1, start_pos_y), font_size=12)
+                if geo_object.name is None:
+                    geo_name = geo_object.__class__.__name__
+                else:
+                    geo_name = geo_object.__class__.__name__ + '_' + geo_object.name
+                plotter.add_text(text=geo_name, position=(start_pos_x + size + 1, start_pos_y), font_size=12)
                 start_pos_y = start_pos_y + size + (size // 10)
-            if geo_object.name is None:
-                geo_name = geo_object.__class__.__name__
-            else:
-                geo_name = geo_object.__class__.__name__ + '_' + geo_object.name
-            plotter.add_text(text=geo_name
-                             , position=(start_pos_x, start_pos_y), font_size=12)
-            start_pos_y = start_pos_y + size + (size // 10) + 2
     if len(_actor_list) > 0:
         callbace_opacity = SetOpacityCallback(actor_list=_actor_list)
         plotter.add_slider_widget(callbace_opacity, value=1, rng=(0, 1), title='Opacity Of Grid'
@@ -375,7 +424,7 @@ def plot_auc_curve(y_true_list, y_pred_list, labels, title=None, colors=None, le
         auc_list.append(auc)
     for i in range(len(auc_list)):
         legend_items[i] += '(AUC = %0.4F)'
-    line_width = 1              # 线宽
+    line_width = 1  # 线宽
     plt.figure(figsize=(8, 5))  # 图大小
     for i in range(len(auc_list)):
         plt.plot(fpr_list[i], tpr_list[i], lw=line_width, label=legend_items[i] % auc_list[i], color=colors[i])
@@ -420,11 +469,11 @@ def visual_acc_picture(train_acc, test_acc, title=None, x_label='epoch', y_label
     plt.ylabel(y_label)
     plt.legend()
     max_train_acc_value = max(train_acc)  # 求列表最大值
-    max_train_acc_idx = train_acc.index(max_train_acc_value)  # 求最大值对应索引
+    # max_train_acc_idx = train_acc.index(max_train_acc_value)  # 求最大值对应索引
     max_test_acc_value = max(test_acc)
-    max_test_acc_idx = test_acc.index(max_test_acc_value)
-    print('The {}th epoch, train acc reached the highest value: {}.'.format(max_train_acc_idx, max_train_acc_value))
-    print('The {}th epoch, test acc reached the highest value: {}.'.format(max_test_acc_idx, max_test_acc_value))
+    # max_test_acc_idx = test_acc.index(max_test_acc_value)
+    # print('The {}th epoch, train acc reached the highest value: {}.'.format(max_train_acc_idx, max_train_acc_value))
+    # print('The {}th epoch, test acc reached the highest value: {}.'.format(max_test_acc_idx, max_test_acc_value))
     if title is not None:
         plt.title(title)
     if is_show:

@@ -45,11 +45,14 @@ def concat_coords_from_datasets(*datasets):
 
 
 class PointSet(object):
-    def __init__(self, points: np.ndarray = None, point_labels: np.ndarray = None, vectors: np.ndarray = None
+    def __init__(self, points: np.ndarray = None, point_labels: np.ndarray = None
+                 , label_codes=None
+                 , vectors: np.ndarray = None
                  , name=None, dir_path=None):  # dir_path 数据默认保存文件夹
         self.name = name
-        self.points = points
-        self.labels = point_labels
+        self.points = points  # 点集
+        self.labels = point_labels  # 训练类别标签
+        self.label_code = label_codes  # 类别编码
         self.points_num = 0
         self.bounds = None
         self.nidm = None
@@ -80,10 +83,12 @@ class PointSet(object):
 
         self._classes = None
         self._classes_num = 0
+        self.label_dict = None
 
     # 数据筛选，通过索引进行筛选
     def get_points_data_by_ids(self, ids):
         new_points_data = PointSet()
+        new_points_data.label_dict = self.label_dict
         cur_points = self.get_points()
         if cur_points is not None and len(ids) > 0:
             select_points = cur_points[ids]
@@ -105,6 +110,32 @@ class PointSet(object):
                     new_points_data.set_scalars(scalar_name=key, scalars=select_scalars)
         return new_points_data
 
+    # 根据平面范围筛选数据
+    def search_by_rect2d(self, rect2d):
+        x_min, x_max, y_min, y_max = rect2d[0], rect2d[1], rect2d[2], rect2d[3]
+        cur_points = self.get_points()
+        selected_ids = np.argwhere((cur_points[:, 0] > x_min) & (cur_points[:, 0] <= x_max) &
+                                   (cur_points[:, 1] > y_min) & (cur_points[:, 1] <= y_max))
+        selected_ids = selected_ids.flatten()
+        return self.get_points_data_by_ids(ids=selected_ids)
+
+    def search_by_rect3d(self, rect3d):
+        x_min, x_max, y_min, y_max, z_min, z_max = rect3d[0], rect3d[1], rect3d[2], rect3d[3], rect3d[4], rect3d[5]
+        cur_points = self.get_points()
+        selected_ids = np.argwhere((cur_points[:, 0] > x_min) & (cur_points[:, 0] <= x_max) &
+                                   (cur_points[:, 1] > y_min) & (cur_points[:, 1] <= y_max) &
+                                   (cur_points[:, 2] > z_min) & (cur_points[:, 2] <= z_max))
+        selected_ids = selected_ids.flatten()
+        return self.get_points_data_by_ids(ids=selected_ids)
+
+    # 恢复初始标签
+    def restore_labels(self):
+        if self.label_dict is not None and self.labels is not None:
+            label_dict = {}
+            for k, v in self.label_dict.items():
+                label_dict[v] = k
+            self.labels = np.vectorize(label_dict.get)(np.array(self.labels))
+
     def get_points_data(self):
         return self
 
@@ -123,6 +154,7 @@ class PointSet(object):
         else:
             return None
 
+    # 判断点集数据是否为空
     def is_empty(self, check_labels=False):
         if self.points is None:
             return True

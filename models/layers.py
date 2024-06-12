@@ -11,6 +11,7 @@ from dgl.base import DGLError
 from dgl.utils import expand_as_pair, check_eq_shape, dgl_warning
 import numpy as np
 from dgl.nn.pytorch.utils import Identity
+import dgl.nn.pytorch.conv.gcn2conv
 
 
 # 原始SpacialConv

@@ -1,3 +1,4 @@
+import copy
 import os
 import math
 import logging
@@ -7,7 +8,7 @@ import dgl
 import pyvista
 from tqdm import tqdm
 import numpy as np
-from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler, DistNodeDataLoader
+from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
 import torch
 import torch.nn.functional as F
 import torchmetrics.functional as MF
@@ -19,7 +20,8 @@ from data_structure.geodata import load_object
 from datetime import datetime
 from sklearn.metrics import mean_squared_error
 from sklearn import preprocessing
-from models.loss import FocalLoss, MultiClassFocalLossWithAlpha
+from models.loss import FocalLoss
+
 logger = logging.getLogger(__name__)
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
@@ -94,6 +96,10 @@ class GmeTrainer:
         self.custom_loss = None
         self.model = model
         self.gme_dataset = gme_dataset
+        self.label_dict = None
+        # 处理标签
+        self.labels_count_map = None
+        self.preprocess_labels()
         self.train_dataset = None
         self.val_dataset = None
         self.config = config
@@ -107,14 +113,44 @@ class GmeTrainer:
         else:
             self.model = self.model.to(self.device)
 
+    def preprocess_labels(self, default_value=-1):
+        labels = self.gme_dataset[0].ndata['label']
+
+        unique_labels = torch.unique(labels, sorted=True)
+        self.label_dict = {}
+        idx = 0
+        for item in unique_labels:
+            if item == default_value:  # 对于默认未知值则不改变
+                continue
+            self.label_dict[item] = idx
+            idx += 1
+        labels_count_map = self.gme_dataset.labels_count_map
+        if labels_count_map is not None:
+            new_labels_count_map = {}
+            for k, v in self.label_dict.items():
+                kk = k.item()
+                new_labels_count_map[v] = labels_count_map[kk]
+            self.labels_count_map = copy.deepcopy(new_labels_count_map)
+        self.gme_dataset[0].ndata['label'] = self.updata_labels_by_dict(labels=labels, label_dict=self.label_dict)
+
+    @staticmethod
+    def updata_labels_by_dict(labels, label_dict):
+        indices_dict = {}
+        for k, v in label_dict.items():
+            indices = torch.nonzero(torch.eq(labels, k))
+            indices_dict[k] = torch.flatten(indices)
+        for k, v in label_dict.items():
+            labels.index_fill_(0, indices_dict[k], v)
+        return labels
+
     def preprocess_input(self, data, idx):
-        if idx >= data.__len__():
-            raise ValueError("索引超出范围")
-        g = data[idx]
+        # if idx >= data.__len__():
+        #     raise ValueError("索引超出范围")
+        g = data[0]
         g = g.to(self.device)
         # 获取 训练集与验证集的 节点索引
-        train_idx = data.train_idx[idx].to(self.device)
-        val_idx = data.val_idx[idx].to(self.device)
+        train_idx = data.train_idx[0].to(self.device)
+        val_idx = data.val_idx[0].to(self.device)
         # 采样器
         sampler = NeighborSampler(self.sample_neigh,  # fanout for [layer-0, layer-1, layer-2]
                                   prefetch_node_feats=['feat'],
@@ -154,7 +190,7 @@ class GmeTrainer:
     def inference(self, data, idx, has_test_label=True, is_show=False, save_path=None):
         model = self.model.module if hasattr(self.model, "module") else self.model
 
-        graph = data[idx].to(self.device)
+        graph = data[0].to(self.device)
         # geograph = data.dataset.geograph[idx]
         nodes = torch.arange(graph.number_of_nodes())
         sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.config.gnn_n_layer,
@@ -174,9 +210,10 @@ class GmeTrainer:
                 pred[output_nodes] = y.to(graph.device)
             # scalars = np.argmax(pred.cpu().numpy(), axis=1)
             grid_data = load_object(data.grid_data_path)
+            grid_data.label_dict = self.label_dict
             pred_tensor_path = os.path.join(os.path.dirname(self.config.ckpt_path), 'pred.txt')
             torch.save(pred, pred_tensor_path)
-            mvk.visual_predicted_values_model(grid_data.vtk_data, pred, is_show=is_show, save_path=save_path)
+            mvk.visual_predicted_values_model(grid_data, pred, is_show=is_show, save_path=save_path)
 
             if has_test_label:
                 test_idx = data.test_idx[idx]
@@ -186,26 +223,22 @@ class GmeTrainer:
                                        , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
                 return accuracy.item()
             else:
-                val_idx = data.val_idx[idx]
+                val_idx = data.val_idx[0]
                 pred_val = pred[val_idx]
                 label_val = graph.ndata['label'][val_idx].to(pred_val.device)
                 accuracy = MF.accuracy(pred_val, label_val, task='multiclass'
                                        , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
                 return accuracy.item()
 
-    def train(self, data_split_idx=0, has_test_label=True):
-
-        labels_count_map = self.gme_dataset.labels_count_map[data_split_idx]
-        key_num = len(labels_count_map)
+    def train(self, data_split_idx=0, has_test_label=False):
+        labels_count_map = self.labels_count_map
+        key_num = self.gme_dataset.num_classes['labels'][data_split_idx]
         if self.gme_dataset.num_classes['labels'][data_split_idx] != key_num:
             raise ValueError('Data type error.')
         alpha_list = np.array([labels_count_map[a] for a in range(key_num)])
         item_sum = np.sum(alpha_list)
-        alpha_list = item_sum / alpha_list
-        min_max_scaler = preprocessing.MinMaxScaler()
-        alpha_list = min_max_scaler.fit_transform(alpha_list.reshape(-1, 1))
-        alpha_list = torch.tensor(alpha_list).to(self.device)
-        self.custom_loss = FocalLoss(class_num=key_num)
+        alpha_list = alpha_list / item_sum
+        self.custom_loss = FocalLoss(class_num=key_num, items_ratio=alpha_list)
 
         model, config = self.model, self.config
         raw_model = self.load_checkpoint()
@@ -239,6 +272,7 @@ class GmeTrainer:
                     y_hat = model(blocks, x)
                     # ignore_index=-1, 计算跳过填充值-1
                     # loss = F.cross_entropy(y_hat, y, ignore_index=-1)
+                    uq = torch.unique(y)
                     loss = self.custom_loss(y_hat, y)
                     losses.append(loss.item())
                     # 计算epoch 的总体 accuracy

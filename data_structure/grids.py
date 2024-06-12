@@ -3,7 +3,8 @@ from torch.utils.data import Dataset
 import numpy as np
 from vtkmodules.all import vtkStructuredGrid, vtkImageData, vtkPoints, vtkCellCenters
 from vtkmodules.util import numpy_support
-from utils.vtk_utils import add_np_property_to_vtk_object, create_closed_surface_by_convexhull_2d, create_vtk_grid_by_rect_bounds
+from utils.vtk_utils import add_np_property_to_vtk_object, create_closed_surface_by_convexhull_2d, \
+    create_vtk_grid_by_rect_bounds
 import pyvista as pv
 import scipy.spatial as spt
 from data_structure.points import PointSet, get_bounds_from_coords
@@ -92,7 +93,8 @@ class Grid(object):
      points: a matrix containing all 3D grid points [x, y, z]"""
 
     def __init__(self, name=None, grid_vtk=None, grid_vtk_path=None, grid_points: np.ndarray = None, series=None
-                 , dir_path=None, label_map=True):
+                 , dir_path=None, label_map=False):
+        self.is_regular = True
         self.bounds = None
         self._center = None
         self.name = name
@@ -103,8 +105,8 @@ class Grid(object):
         # -1表示待预测值
         self.scalar_series = None  # dict 每个地层一个标量场, key: value  key-地层名， value-标量场值
 
-        self.scalar_grad = None  # 梯度  dict
-        self.scalar_grad_norm = None  # 正则化梯度  dict
+        # self.scalar_grad = None  # 梯度  dict
+        # self.scalar_grad_norm = None  # 正则化梯度  dict
 
         self.label_dict = None  # 标签映射字典
         self._classes_num = 0  #
@@ -124,10 +126,32 @@ class Grid(object):
                 self.vtk_data = pv.read(grid_vtk_path)
                 if name is None:
                     self.name = os.path.basename(grid_vtk_path).split('.')[0]
-            if isinstance(self.vtk_data, (pv.RectilinearGrid, pv.StructuredGrid, pv.UnstructuredGrid)):
-                self.set_vtk_grid(grid_vtk=self.vtk_data, labels_standardize=label_map)
+            if self.vtk_data is not None:
+                self.set_vtk_grid(grid_vtk=self.vtk_data, labels_standardize=label_map, is_regular=self.is_regular)
         # 对象拷贝
         self.dir_path = dir_path
+
+    def uniform_labels(self, label_dict):
+        repeated_keys = []
+        unrepeated_keys = []
+        for o_k, o_v in self.label_dict.items():
+            if o_k in label_dict.keys():
+                repeated_keys.append(o_k)
+            else:
+                unrepeated_keys.append(o_k)
+        change_labels = {}
+        new_label_dict = {}
+        for ck in repeated_keys:
+            change_labels[self.label_dict[ck]] = label_dict[ck]
+            new_label_dict[ck] = label_dict[ck]
+        for u_id, uk in enumerate(unrepeated_keys):
+            change_labels[self.label_dict[uk]] = len(label_dict) + u_id
+            new_label_dict[uk] = len(label_dict) + u_id
+        self.grid_points_series = np.vectorize(change_labels.get)(np.array(self.grid_points_series))
+        self.vtk_data['stratum'] = self.grid_points_series
+        self.label_dict = new_label_dict
+
+
 
     @property
     def classes(self):
@@ -216,21 +240,35 @@ class Grid(object):
             self.grid_points_series = old_label
         self.__add_properties_to_vtk_object_if_present(grid=self)
 
-    def set_vtk_grid(self, grid_vtk, labels_standardize=False):
-        if isinstance(grid_vtk, (pv.RectilinearGrid, vtkImageData, pv.StructuredGrid)):
-            self.dims = grid_vtk.GetDimensions()
-        else:
-            self.dims = None
-        self.bounds = np.array(grid_vtk.bounds)
-        self.grid_points = grid_vtk.cell_centers().points
-        self.grid_points_series = grid_vtk.active_scalars
-        if labels_standardize:
-            self.standardize_labels_from_vtk_data()
-        self.grid_points_num = self.grid_points.shape[0]
+    def set_vtk_grid(self, grid_vtk, labels_standardize=False, is_regular=True):
+        if is_regular:
+            if isinstance(grid_vtk, (pv.RectilinearGrid, vtkImageData, pv.StructuredGrid)):
+                self.dims = grid_vtk.GetDimensions()
+            else:
+                self.dims = None
+            self.bounds = np.array(grid_vtk.bounds)
+            self.grid_points = grid_vtk.cell_centers().points
+            self.grid_points_series = grid_vtk.active_scalars
+            if labels_standardize:
+                self.standardize_labels_from_vtk_data()
+            self.grid_points_num = self.grid_points.shape[0]
         self.vtk_data = grid_vtk
         self.scalar_series = None
-        self.scalar_grad = None
-        self.scalar_grad_norm = None
+        # self.scalar_grad = None
+        # self.scalar_grad_norm = None
+
+    def get_points_data_from_vtk_data(self):
+        if self.vtk_data is None:
+            return None
+        grid_points = self.vtk_data.cell_centers().points
+        grid_points_series = self.vtk_data.active_scalars
+        points_data = PointSet(points=grid_points, point_labels=grid_points_series)
+        points_data.label_dict = self.label_dict
+        return points_data
+
+    #
+    def set_external_grid_points_data(self):
+        pass
 
     def detach_vtk_component_with_label(self):
         classes = self.get_classes()
@@ -239,6 +277,7 @@ class Grid(object):
             vtk_dict[item] = self.vtk_data.threshold(value=[item - 0.001, item + 0.001])
         return vtk_dict
 
+    # 分辨率重采样
     def resample_regular_grid(self, dim: np.ndarray, is_replace=True):
         if self.vtk_data is None:
             raise ValueError('The original grid is empty.')
@@ -256,12 +295,12 @@ class Grid(object):
                 if self.scalar_series is not None and isinstance(self.scalar_series, dict):
                     for key, value in self.scalar_series.keys():
                         self.scalar_series[key] = value[pid]
-                if self.scalar_grad is not None and isinstance(self.scalar_grad, dict):
-                    for key, value in self.scalar_grad.keys():
-                        self.scalar_grad[key] = value[pid]
-                if self.scalar_grad_norm is not None and isinstance(self.scalar_grad, dict):
-                    for key, value in self.scalar_grad_norm.keys():
-                        self.scalar_grad_norm[key] = value[pid]
+                # if self.scalar_grad is not None and isinstance(self.scalar_grad, dict):
+                #     for key, value in self.scalar_grad.keys():
+                #         self.scalar_grad[key] = value[pid]
+                # if self.scalar_grad_norm is not None and isinstance(self.scalar_grad, dict):
+                #     for key, value in self.scalar_grad_norm.keys():
+                #         self.scalar_grad_norm[key] = value[pid]
                 self.vtk_data = new_vtk_grid
                 self.dims = new_vtk_grid.GetDimensions()
                 self.bounds = np.array(new_vtk_grid.bounds)
@@ -273,13 +312,13 @@ class Grid(object):
                 if self.scalar_series is not None and isinstance(self.scalar_series, dict):
                     for scalar_name, scalars_values in self.scalar_series.keys():
                         new_grid.set_scalar_pred(scalar_pred=scalars_values[pid], series_name=scalar_name)
-                if self.scalar_grad is not None and isinstance(self.scalar_grad, dict):
-                    for scalar_name, scalars_grad_values in self.scalar_grad.keys():
-                        new_grid.set_scalar_grad(scalar_grad_pred=scalars_grad_values[pid], series_name=scalar_name)
-                if self.scalar_grad_norm is not None and isinstance(self.scalar_grad, dict):
-                    for scalar_name, scalar_grad_norm_values in self.scalar_grad_norm.keys():
-                        new_grid.set_scalar_grad_norm(scalar_grad_norm_pred=scalar_grad_norm_values[pid]
-                                                      , series_name=scalar_name)
+                # if self.scalar_grad is not None and isinstance(self.scalar_grad, dict):
+                #     for scalar_name, scalars_grad_values in self.scalar_grad.keys():
+                #         new_grid.set_scalar_grad(scalar_grad_pred=scalars_grad_values[pid], series_name=scalar_name)
+                # if self.scalar_grad_norm is not None and isinstance(self.scalar_grad, dict):
+                #     for scalar_name, scalar_grad_norm_values in self.scalar_grad_norm.keys():
+                #         new_grid.set_scalar_grad_norm(scalar_grad_norm_pred=scalar_grad_norm_values[pid]
+                #                                       , series_name=scalar_name)
                 return self.__add_properties_to_vtk_object_if_present(grid=new_grid)
 
     def __len__(self):
@@ -288,21 +327,36 @@ class Grid(object):
     def __getitem__(self, idx):
         return self.grid_points[idx], self.grid_points_series[idx]
 
+    # 根据范围筛选数据，返回PointSet对象
+    def search_by_rect2d(self, rect2d):
+        cur_points_data = self.get_points_data()
+        return cur_points_data.search_by_rect2d(rect2d=rect2d)
+
+    # 恢复初始标签
+    def restore_labels(self):
+        if self.label_dict is not None and self.grid_points_series is not None:
+            label_dict = {}
+            for k, v in self.label_dict.items():
+                label_dict[v] = k
+            self.grid_points_series = np.vectorize(label_dict.get)(np.array(self.grid_points_series))
+
     def get_points_data(self):
         points_data = PointSet()
+        points_data.label_dict = self.label_dict
         if self.grid_points is not None:
             points_data.set_points(self.grid_points)
         if self.grid_points_series is not None:
+            # uq = np.unique(self.grid_points_series)
             points_data.set_labels(self.grid_points_series)
         if self.scalar_series is not None:
             for scalar_name, scalar_value in self.scalar_series.keys():
                 points_data.set_scalars(scalars=scalar_value, scalar_name=scalar_name)
-        if self.scalar_grad is not None:
-            for scalar_name, scalars_grad_value in self.scalar_grad.keys():
-                points_data.set_scalars_grad(scalars_grad=scalars_grad_value, scalar_name=scalar_name)
-        if self.scalar_grad_norm is not None:
-            for scalar_name, scalars_grad_norm_value in self.scalar_grad_norm.keys():
-                points_data.set_scalars_grad_norm(scalars_grad_norm=scalars_grad_norm_value, scalar_name=scalar_name)
+        # if self.scalar_grad is not None:
+        #     for scalar_name, scalars_grad_value in self.scalar_grad.keys():
+        #         points_data.set_scalars_grad(scalars_grad=scalars_grad_value, scalar_name=scalar_name)
+        # if self.scalar_grad_norm is not None:
+        #     for scalar_name, scalars_grad_norm_value in self.scalar_grad_norm.keys():
+        #         points_data.set_scalars_grad_norm(scalars_grad_norm=scalars_grad_norm_value, scalar_name=scalar_name)
         return points_data
 
     def get_points_num(self):
@@ -340,21 +394,21 @@ class Grid(object):
             self.scalar_series = {}
         self.scalar_series[scalar_name] = scalar_pred
 
-    def set_scalar_grad(self, scalar_grad_pred, series_id: int = None, series_name: str = None):
-        scalar_name = series_name
-        if series_id is not None:
-            scalar_name = "Scalar Gradient" + str(series_id)
-        if self.scalar_grad is None:
-            self.scalar_grad = {}
-        self.scalar_grad[scalar_name] = scalar_grad_pred
+    # def set_scalar_grad(self, scalar_grad_pred, series_id: int = None, series_name: str = None):
+    #     scalar_name = series_name
+    #     if series_id is not None:
+    #         scalar_name = "Scalar Gradient" + str(series_id)
+    #     if self.scalar_grad is None:
+    #         self.scalar_grad = {}
+    #     self.scalar_grad[scalar_name] = scalar_grad_pred
 
-    def set_scalar_grad_norm(self, scalar_grad_norm_pred, series_id: int = None, series_name: str = None):
-        scalar_name = series_name
-        if series_id is not None:
-            scalar_name = "Scalar Gradient Norm" + str(series_id)
-        if self.scalar_grad_norm is None:
-            self.scalar_grad_norm = {}
-        self.scalar_grad_norm[scalar_name] = scalar_grad_norm_pred
+    # def set_scalar_grad_norm(self, scalar_grad_norm_pred, series_id: int = None, series_name: str = None):
+    #     scalar_name = series_name
+    #     if series_id is not None:
+    #         scalar_name = "Scalar Gradient Norm" + str(series_id)
+    #     if self.scalar_grad_norm is None:
+    #         self.scalar_grad_norm = {}
+    #     self.scalar_grad_norm[scalar_name] = scalar_grad_norm_pred
 
     @staticmethod
     def __add_properties_to_vtk_object_if_present(grid):
@@ -365,12 +419,12 @@ class Grid(object):
         if grid.scalar_series is not None and isinstance(grid.scalar_series, dict):
             for scalar_name, scalars_values in grid.scalar_series.keys():  # series_name = "Scalar Field" + str(i)
                 add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_values)
-        if grid.scalar_grad is not None and isinstance(grid.scalar_grad, dict):
-            for scalar_name, scalars_grad_values in grid.scalar_grad.keys():  # "Scalar Gradient" + str(i)
-                add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_grad_values)
-        if grid.scalar_grad_norm is not None and isinstance(grid.scalar_grad, dict):
-            for scalar_name, scalars_grad_norm_values in grid.scalar_grad_norm.keys():  # "Scalar Gradient Norm"+str(i)
-                add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_grad_norm_values)
+        # if grid.scalar_grad is not None and isinstance(grid.scalar_grad, dict):
+        #     for scalar_name, scalars_grad_values in grid.scalar_grad.keys():  # "Scalar Gradient" + str(i)
+        #         add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_grad_values)
+        # if grid.scalar_grad_norm is not None and isinstance(grid.scalar_grad, dict):
+        #     for scalar_name, scalars_grad_norm_values in grid.scalar_grad_norm.keys(): # "Scalar Gradient Norm"+str(i)
+        #         add_np_property_to_vtk_object(grid.vtk_data, scalar_name, scalars_grad_norm_values)
         return grid
 
     def process_model_outputs(self, map_to_original_class_ids=None):
@@ -392,14 +446,14 @@ class Grid(object):
                 if self.scalar_series is not None:
                     for scalar_name, scalars_value in self.scalar_series.keys():
                         self.scalar_series[scalar_name] = scalars_value[pid]
-                self.scalar_grad = external_points_data.scalars_grad
-                if self.scalar_grad is not None:
-                    for scalar_name, scalars_grad_value in self.scalar_grad.keys():
-                        self.scalar_grad[scalar_name] = scalars_grad_value[pid]
-                self.scalar_grad_norm = external_points_data.scalars_grad_norm
-                if self.scalar_grad_norm is not None:
-                    for scalar_name, scalars_grad_norm_value in self.scalar_grad_norm.keys():
-                        self.scalar_grad_norm[scalar_name] = scalars_grad_norm_value[pid]
+                # self.scalar_grad = external_points_data.scalars_grad
+                # if self.scalar_grad is not None:
+                #     for scalar_name, scalars_grad_value in self.scalar_grad.keys():
+                #         self.scalar_grad[scalar_name] = scalars_grad_value[pid]
+                # self.scalar_grad_norm = external_points_data.scalars_grad_norm
+                # if self.scalar_grad_norm is not None:
+                #     for scalar_name, scalars_grad_norm_value in self.scalar_grad_norm.keys():
+                #         self.scalar_grad_norm[scalar_name] = scalars_grad_norm_value[pid]
         else:
             raise ValueError('Please input an object of Grid class.')
 

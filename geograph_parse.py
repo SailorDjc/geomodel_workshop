@@ -1,7 +1,8 @@
 from sklearn import preprocessing
 import numpy as np
 import scipy.spatial as spt
-
+import subprocess
+import global_parameters
 import networkx as nx
 import random
 import dgl
@@ -12,11 +13,14 @@ import pandas as pd
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from sklearn import svm
-from sklearn.ensemble import RandomForestClassifier
+from data_structure.reader import ReadExportFile
 from data_structure.geodata import load_object, GeodataSet, Grid, BoreholeSet, Borehole, PointSet, Section, SectionSet
 from data_structure.data_sampler import GeoGridDataSampler, GeodataSet
+from utils.math_libs import remove_repeated_elements_with_lists
 import time
 import pytetgen
+import os
+import pickle
 
 
 # import tetgen
@@ -24,10 +28,11 @@ import pytetgen
 
 class GeoMeshGraphParse(object):
     def __init__(self, mesh: Grid = None, input_sample_data: GeodataSet = None, grid_dims=None, name=None
-                 , is_normalize=False, dir_path=None, default_value=-1):  # , pre_train=True
+                 , is_normalize=False, dir_path=None, default_value=-1, is_regular=True):  # , pre_train=True
         self.name = name
         self.is_normalize = is_normalize  # 坐标是否归一化
         self.data = mesh
+        self.is_regular = is_regular
         if mesh is not None:
             self.center = mesh.center  # 输入mesh的中心点坐标
             # ori 即输入的原始地质格网数据, 原始模型数据均不做更改，坐标、标签变换在 sample数据中进行
@@ -108,11 +113,17 @@ class GeoMeshGraphParse(object):
         geo_borehole_sample = GeoGridDataSampler(**kwargs)
         geo_borehole_sample.set_val_boreholes_ratio(val_ratio=val_ratio)
         geo_borehole_sample.set_base_grid_by_geodataset(geodataset=input_sample_data, dims=grid_dims
-                                                        , external_grid=ext_grid)
+                                                        , external_grid_vtk=ext_grid)
         geo_borehole_sample.execute()
         self.sample_data = self.input_sample_data.geodata_list
         self.sample_operator = geo_borehole_sample.sample_operator
         self.data = geo_borehole_sample.grid
+
+        from utils.plot_utils import control_visibility_with_layer_label
+        # pp = control_visibility_with_layer_label(geo_object_list=[self.data])
+        # pp.show()
+
+        self.data.label_dict = self.input_sample_data.label_dict
         self.grid_points = self.data.grid_points
         self.grid_points_series = self.data.grid_points_series
         self.classes_num = self.data.classes_num  # np.array
@@ -156,6 +167,26 @@ class GeoMeshGraphParse(object):
         self.train_data_indexes = train_idx
         self.val_data_indexes = val_idx
         self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
+
+    # 添加硬数据约束
+    def append_rigid_restriction(self, points_data: PointSet):
+        selected_points_data = points_data.search_by_rect3d(rect3d=self.data.bounds)
+        if self.is_regular:
+            ckt = spt.cKDTree(self.grid_points)
+            rigid_points = selected_points_data.points
+            rigid_labels = selected_points_data.labels
+            d, pid = ckt.query(rigid_points)
+            s_ids, s_labels = remove_repeated_elements_with_lists(list_item_1=pid, list_item_2=rigid_labels)
+            self.data.grid_points_series[s_ids] = s_labels
+            self.grid_points_series = self.data.grid_points_series
+            uq = np.unique(self.grid_points_series)
+            self.train_data_indexes.extend(list(s_ids))
+            self.train_data_indexes = list(sorted(set(self.train_data_indexes)))
+            self.val_data_indexes = list(set(self.val_data_indexes) - set(self.train_data_indexes))
+            labels = self.grid_points_series[self.train_data_indexes]
+            uq_0 = np.unique(labels)
+            labels_1 = self.grid_points_series[self.val_data_indexes]
+            uq_1 = np.unique(labels_1)
 
     # 要保证 edge_list 图中没有自环
     def create_dgl_graph(self, edge_list=None, node_feat=None, edge_feat=None, node_label=None,
@@ -251,7 +282,7 @@ class GeoMeshGraphParse(object):
         else:
             tri = spt.Delaunay(vertex)
             tet_list = tri.simplices
-        pbar = tqdm(enumerate(tet_list), total=len(tet_list))
+        pbar = tqdm(enumerate(tet_list), total=len(tet_list), position=0)
         # 将四面体处理成三角网的边集
         for it, tet in pbar:
             for n_i in np.arange(len(tet)):
@@ -335,8 +366,9 @@ class GeoMeshGraphParse(object):
         return node_feat_data
 
     def save(self, dir_path):
-        # save self.sample_data
-        # save self.data
+        self.dir_path = dir_path
+        if not os.path.exists(self.dir_path):
+            os.makedirs(self.dir_path)
         if self.data is not None and isinstance(self.data, Grid):
             self.data = self.data.save(dir_path=dir_path)
         if self.sample_data is not None:
@@ -345,14 +377,21 @@ class GeoMeshGraphParse(object):
                     self.sample_data[s_i] = self.sample_data[s_i].save(dir_path=dir_path)
                 else:
                     raise ValueError("The data type is not supported.")
+        file_name = self.tmp_dump_str
+        file_path = os.path.join(dir_path, file_name)
+        out_put = open(file_path, 'wb')
+        out_str = pickle.dumps(self)
+        out_put.write(out_str)
+        out_put.close()
+        return self.__class__.__name__, file_path
 
     def load(self, dir_path=None):
         self.dir_path = dir_path
         if self.data is not None:
             self.data = load_object(gtype=self.data[0], file_path=self.data[1])
-        if self.sample_data is not None:
-            for s_i in np.arange(len(self.sample_data)):
-                self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=self.sample_data[s_i][1])
+        # if self.sample_data is not None:
+        #     for s_i in np.arange(len(self.sample_data)):
+        #         self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=self.sample_data[s_i][1])
 
     # 钻孔数据增强
     def drill_data_augmentation(self):
@@ -390,3 +429,15 @@ class GeoMeshGraphParse(object):
     #                 sample_grid.cell_data['stratum'] = predict_test_y
     #         return sample_grid, grid_outline
     #
+
+
+def tetgen(sample_points):
+    cpp_tetgen_path = os.path.join(global_parameters.global_root_path, 'utils', 'tetgen.exe')
+    data_path = os.path.join(global_parameters.global_root_path, 'utils', 'example.poly')
+    r = subprocess.run([cpp_tetgen_path, '-p', data_path], capture_output=True, text=True)
+    print('returncode: ', r.returncode)
+    print('stdout: ', r.stdout)
+
+
+if __name__ == "__main__":
+    tetgen()

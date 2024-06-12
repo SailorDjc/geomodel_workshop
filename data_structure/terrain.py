@@ -18,6 +18,8 @@ from scipy.interpolate import LinearNDInterpolator, RegularGridInterpolator, Rbf
 import scipy.spatial as spt
 from importlib import util
 from utils.math_libs import simplify_polyline_2d, remove_duplicate_points
+import random
+random.seed(1)
 from matplotlib.path import Path
 from vtkmodules.all import vtkPolyDataReader, vtkPolyDataMapper, vtkProperty, vtkRenderer, \
     vtkBooleanOperationPolyDataFilter
@@ -89,6 +91,8 @@ def create_struct_mesh_from_bounds(bounds, resolution_xy):
 
 
 # 包围盒转点
+# 由于目前很多python插值算法只能插值凸包范围内的点，
+# 故通过内部点集iner_points计算bounds角点高程，取最近邻3个点的高程均值
 def bounds_to_corners_2d(bounds, inner_points=None):
     x_min, x_max, y_min, y_max, z_min, z_max = bounds
     z_value = (z_min + z_max) / 2
@@ -98,8 +102,7 @@ def bounds_to_corners_2d(bounds, inner_points=None):
     p_d = [x_max, y_max, z_value]
     corners_list = [p_a, p_b, p_c, p_d]
     if inner_points is not None:
-        # 由于目前很多python插值算法只能插值凸包范围内的点，
-        # 故通过内部点集计算bounds角点高程，取最近邻3个点的高程均值
+
         ckt = spt.cKDTree(inner_points)
         for p_i, pt in enumerate(corners_list):
             d, pid = ckt.query(pt, k=[1, 2])
@@ -156,6 +159,7 @@ class TerrainData(object):
         self._src_crs = None  # 原始投影
         self._tiff_dims = None  # 数字高程栅格维度
         self.src_tiff_bounds = None  # tiff数据范围
+        self.surface_offset = 0
         # 高程控制点
         self.control_points = control_points
         self.buffer_dist = 20
@@ -176,6 +180,15 @@ class TerrainData(object):
         self.tmp_dump_str = 'tmp_terrain' + str(int(time.time()))
         if self.tiff_path is not None:
             self.set_input_tiff_file(self.tiff_path)
+        self.interp = None
+
+    def is_empty(self):
+        empty_flag = True
+        if self.control_points is not None:
+            empty_flag = False
+        if self.tiff_path is not None:
+            empty_flag = False
+        return empty_flag
 
     # 数据输入接口
     def set_control_points(self, control_points, buffer_dist=20):
@@ -233,7 +246,9 @@ class TerrainData(object):
         if self.check_crs_change():
             self.reproject_tiff(self.tiff_path)
 
-    def execute(self, is_rtc=False):
+    def execute(self, is_rtc=False, clip_reconstruct=False, simplify=None, top_surf_offset=None):
+        if top_surf_offset is not None:
+            self.surface_offset = top_surf_offset
         if self.tiff_path is not None:
             self.read_tiff_data_from_file(file_path=self.tiff_path)
         if self.control_points is not None:
@@ -241,7 +256,7 @@ class TerrainData(object):
         if is_rtc:
             self.compute_relative_points()
         self.create_terrain_surface_from_points(PointSet(points=self.grid_points))
-        self.clip_terrain_surface_by_boundary_points()
+        self.clip_terrain_surface_by_boundary_points(clip_reconstruct=clip_reconstruct, simplify=simplify)
 
     @property
     def bounds(self):
@@ -373,6 +388,7 @@ class TerrainData(object):
                 if self._src_crs.is_projected:
                     self.dst_crs = crs.CRS().from_epsg(code=4326)
 
+    # 生成地形曲面
     def create_terrain_surface_from_points(self, points_data: PointSet, resolution_xy=5):
         tmp_bounds = points_data.bounds
         result_bounds = bounds_merge(self.bounds, tmp_bounds)
@@ -400,24 +416,25 @@ class TerrainData(object):
         y = known_points[:, 1]
         z = known_points[:, 2]
         print('Terrain is being built...')
-        interp = RBFInterpolator(list(zip(x, y, )), z)  #
+        self.interp = RBFInterpolator(list(zip(x, y, )), z)  #
+
         # interp = LinearNDInterpolator(list(zip(x, y)), z)
         cell_points = terrain_surface.points
         pred_x = cell_points[:, 0]
         pred_y = cell_points[:, 1]
-        pred_z = interp(list(zip(pred_x, pred_y)))
+        pred_z = self.interp(list(zip(pred_x, pred_y)))
         terrain_surface['Elevation'] = pred_z
         terrain_surface = terrain_surface.warp_by_scalar()
         terrain_surface = vtk_unstructured_grid_to_vtk_polydata(terrain_surface)
         self.grid_points = terrain_surface.cell_centers().points
         self.vtk_data = terrain_surface
 
-    def clip_terrain_surface_by_boundary_points(self):
+    def clip_terrain_surface_by_boundary_points(self, clip_reconstruct=False, simplify=None):
         if self.vtk_data is None:
             raise ValueError('The vtk surface is None.')
         max_z = self.bounds[5]
         min_z = self.bounds[4]
-        z_max = max_z + 5
+        z_max = max_z + 5 + self.surface_offset
         z_min = min_z - 5
         if self.boundary_type == 0 or self.boundary_type == 3:
             return self.vtk_data
@@ -433,7 +450,6 @@ class TerrainData(object):
         points_3d = copy.deepcopy(boundary_points)
         points_3d, rids = remove_duplicate_points(points_3d, tolerance=10, is_remove=True)
         polygon = create_polygon_with_sorted_points_3d(points_3d=points_3d)
-
         # N = len(points_3d)
         # face = [N + 1] + list(range(N)) + [0]
 
@@ -446,27 +462,74 @@ class TerrainData(object):
         polygon = polygon.subdivide_adaptive(max_n_passes=2)  # max_edge_len=resolytion_xy
 
         side_surf = polygon.extrude((0, 0, z_min - z_max), capping=True)
-
         # 筛选出在边界范围内的网格点索引
         grid_points = pv.PolyData(self.grid_points)
         selected = grid_points.select_enclosed_points(side_surf, tolerance=0.000000001)
         cell_indices = selected.point_data['SelectedPoints']
-        delete_cell_indices = np.argwhere(cell_indices <= 0).flatten()
-        self.vtk_data = self.vtk_data.remove_cells(delete_cell_indices)
+        if clip_reconstruct:
+            if self.interp is None:
+                raise ValueError('Error, cannot capture boundary points.')
+            pred_x = points_3d[:, 0]
+            pred_y = points_3d[:, 1]
+            pred_z = self.interp(list(zip(pred_x, pred_y)))
+            points_3d[:, 2] = pred_z
+            insert_cell_indices = np.argwhere(cell_indices > 0).flatten()
+            if simplify is not None:
+                points_num = len(insert_cell_indices)
+                sample_num = int(points_num * simplify)
+                if sample_num > 50:
+                    pid = random.sample(list(np.arange(points_num)), sample_num)
+                    insert_cell_indices = insert_cell_indices[pid]
+            insert_points = self.grid_points[insert_cell_indices]
+            surface_points = np.vstack((points_3d, insert_points))
+            if self.surface_offset != 0:
+                surface_points[:, 2] += self.surface_offset
+            self.vtk_data = pv.PolyData(surface_points).delaunay_2d()
+            # self.vtk_data.plot(show_edges=True)
+        else:
+            delete_cell_indices = np.argwhere(cell_indices <= 0).flatten()
+            self.vtk_data = self.vtk_data.remove_cells(delete_cell_indices)
         return self.vtk_data
+
+    # 分段裁剪, 按轴向裁剪
+    def clip_segment_by_axis(self, mask_bounds, seg_axis='x'):
+        if self.vtk_data is None:
+            return None
+        axis_labels = ['x', 'y']
+        label_to_index = {label: index for index, label in enumerate(axis_labels)}
+        #
+        origin_bounds = get_bounds_from_coords(coords=self.boundary_points)
+        if seg_axis.lower() in axis_labels:
+            axis_index = label_to_index[seg_axis.lower()]
+            l_0 = mask_bounds[2 * axis_index]
+            l_1 = mask_bounds[2 * axis_index + 1]
+
+            grid_points = self.vtk_data.cell_centers().points
+            del_inds = np.argwhere((grid_points[:, axis_index] < l_0)
+                                   | (grid_points[:, axis_index] > l_1)).flatten()
+            if len(del_inds) > 0:
+                vtk_data = self.vtk_data.remove_cells(del_inds)
+                return vtk_data
+            else:
+                return self.vtk_data
 
     # 通过地表曲面，构建延展到指定深度的建模网格
     def create_grid_from_terrain_surface(self, z_min=-100, boundary_2d=None, bounds=None, cell_density=None
-                                         , is_smooth=False):
+                                         , is_smooth=False, external_surface=None, only_closed_poly_surface=False):
         if boundary_2d is not None:
             self.set_boundary(boundary_2d=boundary_2d, mask_bounds=bounds)
-        if self.vtk_data is None:
+        vtk_data = self.vtk_data
+        if external_surface is not None:
+            vtk_data = external_surface
+        if vtk_data is None:
             raise ValueError('The vtk surface is None.')
         size_x = self.bounds[1] - self.bounds[0] + 5
         size_y = self.bounds[3] - self.bounds[2] + 5
-        plane = pv.Plane(center=(self.vtk_data.center[0], self.vtk_data.center[1], z_min), direction=(0, 0, -1)
+        plane = pv.Plane(center=(vtk_data.center[0], vtk_data.center[1], z_min), direction=(0, 0, -1)
                          , i_size=size_x, j_size=size_y)
-        grid_extrude_trim = self.vtk_data.extrude_trim((0, 0, z_min), trim_surface=plane)
+        grid_extrude_trim = vtk_data.extrude_trim((0, 0, z_min), trim_surface=plane).clean()
+        if only_closed_poly_surface:
+            return grid_extrude_trim
         if cell_density is None:
             raise ValueError('cell_density can not be None.')
         print('voxelize...')

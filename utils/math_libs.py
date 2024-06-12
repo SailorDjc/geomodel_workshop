@@ -89,23 +89,12 @@ def compute_entropy_normalization(prob_data):
 
 # 列表元素去重，以list_item_1为判断依据，若有list_item_2，则list_item_2与list_item_1等长，删去list_item_1相同位置的元素
 def remove_repeated_elements_with_lists(list_item_1, list_item_2=None):
-    unique, counts = np.unique(list_item_1, return_counts=True)
-    repeated_indexes = np.where(counts > 1)[0]
-    dinds = []
-    rinds = []
-    if len(repeated_indexes) > 0:
-        for rid in repeated_indexes:
-            if list_item_1[rid] not in rinds:
-                rinds.extend(rid)
-            else:
-                dinds.extend(rid)
-        list_item_1 = np.delete(list_item_1, dinds, axis=0)
-        if list_item_2 is not None:
-            list_item_2 = np.delete(list_item_2, dinds, axis=0)
+    unique, indexes = np.unique(list_item_1, return_index=True)
     if list_item_2 is not None:
-        return list_item_1, list_item_2
+        list_item_2 = list_item_2[indexes]
+        return unique, list_item_2
     else:
-        return list_item_1
+        return unique
 
 
 

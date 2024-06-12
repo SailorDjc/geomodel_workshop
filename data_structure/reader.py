@@ -142,11 +142,13 @@ class ReadExportFile(object):
             new_edge_list[e_i] = np.array(edge)
         return np.array(new_edge_list)
 
+    # 读取自定义的地质数据结构(Grid, BoreholeSet,SectionSet, Section等)
     @staticmethod
     def read_geodata(file_path: str):
         geo_object = load_object(file_path=file_path)
         return geo_object
 
+    # 读取vtk模型文件
     @staticmethod
     def read_vtk_data(file_path: str):
         path, filename = os.path.split(file_path)
@@ -155,8 +157,9 @@ class ReadExportFile(object):
             model = reader_xml_polydata_file(pd_filename=file_path)
             model = pv.wrap(model)
         elif suffix == '.vtk':
-            model = reader_unstructured_mesh_file(mesh_filename=file_path)
-            model = pv.wrap(model)
+            # model = reader_unstructured_mesh_file(mesh_filename=file_path)
+            # model = pv.wrap(model)
+            model = pv.read(filename=file_path)
         elif suffix == '.vtm':
             model = pv.read(filename=file_path)
         else:
@@ -291,82 +294,102 @@ class ReadExportFile(object):
         return loaded_tensor
 
 
-class BoreholeSetManager(object):
+class WriteExportFile(object):
     def __init__(self):
-        self.reader = ReadExportFile()
-        self.borehole_data = []
-        self.labels_map = None
-        self.col_names = ['label', 'code', 'name']
-
-    def get_labels(self, ind=0):
-        # if self.labels_map is None:
-        #     # labels
-        #     for borehole_data in self.borehole_data:
-        #         labels = self.borehole_data.get_classes()
-        #     return labels
-        # labels = [l_item.get(self.col_names[ind]) for l_item in self.labels_map]
-        # return np.trunc(labels)
         pass
 
-    def append_boreholes_dataset_from_txt_file(self, dat_file_path, **kwargs):
-        borehole_data = self.reader.read_boreholes_data_from_text_file(dat_file_path=dat_file_path, **kwargs)
-        self.borehole_data.append(borehole_data)
+    @staticmethod
+    def write_nodes(points_data: PointSet, file_path, out_label=False, add_index=True, index_start_number=1):
+        points_num = points_data.points_num
+        coords = points_data.get_points()
+        indexes = None
+        out_data = coords
+        if add_index:
+            indexes = np.arange(index_start_number, points_num+index_start_number)
+        if indexes is not None:
+            out_data = np.column_stack((indexes, coords))
+        out_data = pd.DataFrame(out_data)
+        if indexes is not None:
+            out_data.columns = ['a', 'b', 'c', 'd']
+            out_data = out_data.astype({'a': int})
+        out_data.to_csv(file_path, index=False, header=False, sep='\t')
 
-    def read_labels_map(self, map_file_path, col_names=None, **kwargs):
-        if col_names is not None:
-            self.col_names = col_names
-        self.labels_map = self.reader.read_labels_map(map_file_path=map_file_path, col_names=col_names, **kwargs)
-
-    # 标准化标签，标签是从0开始的连续自然数
-    def standardize_labels(self, label_dict: dict = None, default_value=-1):
-        series_labels = self.get_labels()
-        if series_labels is None:
-            raise ValueError('The input data has not scalar values.')
-        sorted_label = sorted(series_labels)
-        if label_dict is not None:
-            # 判断label_dict 是否符合要求
-            # 默认值不映射
-            if default_value in label_dict.keys():
-                raise ValueError('The input label_dict is invalid.')
-            for idx, item in enumerate(sorted_label):
-                # 所有标签都包含
-                if item == default_value:
-                    continue
-                if item not in label_dict.keys():
-                    raise ValueError('The input label_dict is invalid.')
-                # 不连续
-                if idx + 1 < len(sorted_label) and item + 1 != label_dict[idx + 1]:
-                    raise ValueError('The input label_dict is invalid.')
-        else:
-            label_dict = {}
-            for idx, item in enumerate(sorted_label):
-                if item == default_value:  # 对于默认未知值则不改变
-                    continue
-                label_dict[item] = idx
-        # 更新标签
-        for sample_data in self.borehole_data:
-            sample_data.classes = sorted(label_dict.values())
-            if isinstance(sample_data, BoreholeSet):
-                sample_data.series = np.vectorize(label_dict.get)(np.array(sample_data.series))
-                # 遍历钻孔
-                for idx in np.arange(len(sample_data.boreholes_list)):
-                    sample_data.boreholes_list[idx].series = (
-                        np.vectorize(label_dict.get)(np.array(sample_data.boreholes_list[idx].series)))
-                    for l_id in np.arange(len(sample_data.boreholes_list[idx].holelayer_list)):
-                        sample_data.boreholes_list[idx].holelayer_list[l_id].layer_label = (
-                            label_dict)[sample_data.boreholes_list[idx].holelayer_list[l_id].layer_label]
-            else:
-                raise ValueError('The Input data is not BoreholeSet.')
-        if self.labels_map is not None:
-            for r_i in range(len(self.labels_map)):
-                self.labels_map[r_i][self.col_names[0]] = label_dict[self.labels_map[r_i][self.col_names[0]]]
-
-    # 去除特殊地质体
-    def delete_special_geologic_body(self, del_labels_list):
-        pass
-
-    # 获取钻孔地层序列
-    def get_boreholes_labels_sequence(self, is_align_bott=False, is_align_top=False):
-        label_sequence = []
-        for one_borehole in self.borehole_data:
-            pass
+# class BoreholeSetManager(object):
+#     def __init__(self):
+#         self.reader = ReadExportFile()
+#         self.borehole_data = []
+#         self.labels_map = None
+#         self.col_names = ['label', 'code', 'name']
+#
+#     def get_labels(self, ind=0):
+#         # if self.labels_map is None:
+#         #     # labels
+#         #     for borehole_data in self.borehole_data:
+#         #         labels = self.borehole_data.get_classes()
+#         #     return labels
+#         # labels = [l_item.get(self.col_names[ind]) for l_item in self.labels_map]
+#         # return np.trunc(labels)
+#         pass
+#
+#     def append_boreholes_dataset_from_txt_file(self, dat_file_path, **kwargs):
+#         borehole_data = self.reader.read_boreholes_data_from_text_file(dat_file_path=dat_file_path, **kwargs)
+#         self.borehole_data.append(borehole_data)
+#
+#     def read_labels_map(self, map_file_path, col_names=None, **kwargs):
+#         if col_names is not None:
+#             self.col_names = col_names
+#         self.labels_map = self.reader.read_labels_map(map_file_path=map_file_path, col_names=col_names, **kwargs)
+#
+#     # 标准化标签，标签是从0开始的连续自然数
+#     def standardize_labels(self, label_dict: dict = None, default_value=-1):
+#         series_labels = self.get_labels()
+#         if series_labels is None:
+#             raise ValueError('The input data has not scalar values.')
+#         sorted_label = sorted(series_labels)
+#         if label_dict is not None:
+#             # 判断label_dict 是否符合要求
+#             # 默认值不映射
+#             if default_value in label_dict.keys():
+#                 raise ValueError('The input label_dict is invalid.')
+#             for idx, item in enumerate(sorted_label):
+#                 # 所有标签都包含
+#                 if item == default_value:
+#                     continue
+#                 if item not in label_dict.keys():
+#                     raise ValueError('The input label_dict is invalid.')
+#                 # 不连续
+#                 if idx + 1 < len(sorted_label) and item + 1 != label_dict[idx + 1]:
+#                     raise ValueError('The input label_dict is invalid.')
+#         else:
+#             label_dict = {}
+#             for idx, item in enumerate(sorted_label):
+#                 if item == default_value:  # 对于默认未知值则不改变
+#                     continue
+#                 label_dict[item] = idx
+#         # 更新标签
+#         for sample_data in self.borehole_data:
+#             sample_data.classes = sorted(label_dict.values())
+#             if isinstance(sample_data, BoreholeSet):
+#                 sample_data.series = np.vectorize(label_dict.get)(np.array(sample_data.series))
+#                 # 遍历钻孔
+#                 for idx in np.arange(len(sample_data.boreholes_list)):
+#                     sample_data.boreholes_list[idx].series = (
+#                         np.vectorize(label_dict.get)(np.array(sample_data.boreholes_list[idx].series)))
+#                     for l_id in np.arange(len(sample_data.boreholes_list[idx].holelayer_list)):
+#                         sample_data.boreholes_list[idx].holelayer_list[l_id].layer_label = (
+#                             label_dict)[sample_data.boreholes_list[idx].holelayer_list[l_id].layer_label]
+#             else:
+#                 raise ValueError('The Input data is not BoreholeSet.')
+#         if self.labels_map is not None:
+#             for r_i in range(len(self.labels_map)):
+#                 self.labels_map[r_i][self.col_names[0]] = label_dict[self.labels_map[r_i][self.col_names[0]]]
+#
+#     # 去除特殊地质体
+#     def delete_special_geologic_body(self, del_labels_list):
+#         pass
+#
+#     # 获取钻孔地层序列
+#     def get_boreholes_labels_sequence(self, is_align_bott=False, is_align_top=False):
+#         label_sequence = []
+#         for one_borehole in self.borehole_data:
+#             pass
