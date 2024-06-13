@@ -18,6 +18,14 @@ from utils.plot_utils import visual_edge_list
 # 建模结果与建模钻孔联合可视化
 def plot_text_data(boreholes=None):
     reader_0 = ReadExportFile()
+    root_path = os.path.abspath('..')
+    model_path = os.path.join(root_path, 'output', 'vtk_sec_model_0.vtk')
+    model = reader_0.read_vtk_data(file_path=model_path)
+    model.plot()
+    plot = control_visibility_with_layer_label(geo_object_list=[model])
+    plot.show()
+
+
     # log_path = r"E:\11-22-GeoSci\geomodel_workshop-main\processed\train_loss_log.txt"
     # a, b, c, d, e, f, h = reader_0.read_train_loss_log(txt_file_path=log_path, sep=',')
     # visual_acc_picture(train_acc=b, test_acc=e, title='Accuracy')

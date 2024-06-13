@@ -20,6 +20,34 @@ def check_list_item_instance(x: list) -> bool:
     return True
 
 
+# 钻孔点去重, sorted=True 默认按高程从大到小排序
+def borehole_points_duplicate_remova_and_sort(points, labels, sorted=True):
+    if points.shape[0] == labels.shape[0] and points.ndim == 2:
+        unique_points, counts = np.unique(points, return_counts=True, axis=0)
+        repeated_indexes = np.where(counts > 1)[0]
+        unique_points_labels = []
+        for p_id in np.arange(len(unique_points)):
+            check_label = None
+            for p_j, one_point in enumerate(points):
+                if np.allclose(one_point, unique_points[p_id], atol=1e-8):
+                    if check_label is None:
+                        check_label = labels[p_j]
+                        unique_points_labels.append(check_label)
+                        if p_id not in repeated_indexes:
+                            continue
+                    else:
+                        if check_label != labels[p_j]:
+                            raise ValueError('Borehole points do not match labels.')
+        if sorted is True:
+            sorted_indices = np.argsort(unique_points[:, 2])
+            unique_points = unique_points[sorted_indices[::-1]]
+            unique_points_labels = np.array(unique_points_labels)[sorted_indices[::-1]]
+        return unique_points, unique_points_labels
+
+    else:
+        raise ValueError('Borehole points do not match labels.')
+
+
 # 钻孔结构
 class Borehole(object):
     def __init__(self, points: np.ndarray = None, series: np.ndarray = None, is_vertical=True, is_virtual=False
@@ -30,17 +58,17 @@ class Borehole(object):
         self.is_vertical = is_vertical  # 是否为垂直钻孔
         self.is_virtual = is_virtual  # 是否为虚拟钻孔
         self.classes = None
-        if self.points is not None and self.series is not None:
-            self.points_num = points.shape[0]
-            self.classes = sorted(np.unique(series))
+        if points is not None and series is not None:
+            # 去除重复坐标点，并按高程从高到低排序
+            self.points, self.series = borehole_points_duplicate_remova_and_sort(points=points, labels=series)
+            self.points_num = self.points.shape[0]
+            self.classes = sorted(np.unique(self.series))
         self.scalar = {}  # {scalar_name: value} 与self.coords一一对应
         self.sub_att_scalar_pnt = {}  # 附加属性点，在钻孔勘测范围内，不一定是分层点
         self.radius = radius  # 孔径， 用于可视化
         self.buffer_dist_xy = buffer_dist_xy  # 缓冲大小，距离钻孔中心一定缓冲范围内，属于该钻孔控制范围
         self.borehole_id = borehole_id  # 钻孔唯一标识  如 well_0
-
         self.vtk_data = None
-
         self.holelayer_list = []  # 地层分层
         self.holelayer_num = 0
         self.default_base = default_base  # 基底，若为None，则尚未指定基底
@@ -103,6 +131,7 @@ class Borehole(object):
             self.series = np.array(tmp_labels)
             self.points_num = len(self.holelayer_list) + 1
 
+    # 只保留层位点
     # 遍历钻孔地层序列点，获取界面点 is_delete=False, 中间点不删除，True则删除
     def remove_duplicates_series(self, is_delete=False):
         if self.series is None:
@@ -251,7 +280,7 @@ class BoreholeSet(object):
         self.boreholes_list = []  # 存储Borehole的列表
         self.bounds = None
         self.radius = radius
-
+        self._center = None
         self._classes = None
         self._classes_num = 0
         self.label_dict = None
@@ -294,6 +323,17 @@ class BoreholeSet(object):
     def points(self, points):
         self._points = points
 
+    @property
+    def center(self):
+        if self.bounds is not None:
+            center_x = (self.bounds[0] + self.bounds[1]) * 0.5
+            center_y = (self.bounds[2] + self.bounds[3]) * 0.5
+            center_z = (self.bounds[4] + self.bounds[5]) * 0.5
+            self._center = np.array([center_x, center_y, center_z])
+            return self._center
+        else:
+            raise ValueError('This boreholeset data is empty.')
+
     def compute_relative_points(self, center):
         if not self.is_rtc:
             self.is_rtc = True
@@ -328,8 +368,6 @@ class BoreholeSet(object):
                 for l_id in np.arange(len(self.boreholes_list[idx].holelayer_list)):
                     self.boreholes_list[idx].holelayer_list[l_id].layer_label = (
                         label_dict)[self.boreholes_list[idx].holelayer_list[l_id].layer_label]
-
-
 
     @property
     def classes(self):
@@ -715,7 +753,7 @@ class BoreholeSet(object):
         file_name = self.tmp_dump_str
         if out_name is not None:
             file_name = out_name
-        file_path = os.path.join(dir_path, file_name, '.d')
+        file_path = os.path.join(dir_path, file_name + '.d')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)
         out_put.write(out_str)

@@ -9,6 +9,7 @@ import os
 import numpy as np
 from utils.vtk_utils import bounds_merge, compute_bounds_center
 import copy
+from utils.math_libs import points_trans_scale
 
 
 def load_object(file_path, gtype=None):
@@ -39,6 +40,8 @@ class GeodataSet(object):
         self.classes_num = 0
         self.classes = None
         self.label_dict = None
+        self._center = None
+        self._bounds = None
 
     def append(self, data):
         if not isinstance(data, (PointSet, Borehole, BoreholeSet, SectionSet, Section, Grid)):
@@ -73,13 +76,44 @@ class GeodataSet(object):
                 b = data_bounds[2 * axis_index] + (i + 1) * seg_length + overlap_ratio * seg_length
                 cur_bounds[2 * axis_index] = a
                 cur_bounds[2 * axis_index + 1] = b
-                if i == seg_num-1:
+                if i == seg_num - 1:
                     cur_bounds[2 * axis_index + 1] += 1  # 增加一定的缓冲，防止漏选
                 geo_data_list.append(self.search_by_rect2d(rect2d=cur_bounds))
         return geo_data_list
 
+    @property
+    def center(self):
+        if self.bounds is not None:
+            center_x = (self.bounds[0] + self.bounds[1]) * 0.5
+            center_y = (self.bounds[2] + self.bounds[3]) * 0.5
+            center_z = (self.bounds[4] + self.bounds[5]) * 0.5
+            self._center = np.array([center_x, center_y, center_z])
+            return self._center
+        else:
+            raise ValueError('This geodata data is empty.')
+
+    @property
+    def bounds(self):
+        for g_data in self.geodata_list:
+            points_data = g_data.get_points_data()
+            if self._bounds is None:
+                self._bounds = get_bounds_from_coords(points_data.points)
+            else:
+                new_bounds = get_bounds_from_coords(points_data.points)
+                self._bounds = bounds_merge(self._bounds, new_bounds)
+        return self._bounds
+
     def set_class_dict(self, label_dict=None):
         pass
+
+    # 三维空间坐标按比例缩放
+    def points_trans_scale(self, scale, center=None):
+        if center is None:
+            center = self.center
+        for g_id, g_data in enumerate(self.geodata_list):
+            points_data = g_data.get_points_data()
+            self.geodata_list[g_id].points = points_trans_scale(points=points_data.points, center=center, sx=scale[0]
+                                                                , sy=scale[1], sz=scale[2])
 
     # 获取钻孔顶部点坐标
     def get_terrain_points(self):
@@ -140,7 +174,8 @@ class GeodataSet(object):
                         sample_data.boreholes_list[idx].holelayer_list[l_id].layer_label = (
                             n_label_dict)[sample_data.boreholes_list[idx].holelayer_list[l_id].layer_label]
             if isinstance(sample_data, Grid):
-                sample_data.grid_points_series = np.vectorize(n_label_dict.get)(np.array(sample_data.grid_points_series))
+                sample_data.grid_points_series = np.vectorize(n_label_dict.get)(
+                    np.array(sample_data.grid_points_series))
             if isinstance(sample_data, Section):
                 sample_data.series = np.vectorize(n_label_dict.get)(np.array(sample_data.series))
             if isinstance(sample_data, SectionSet):
@@ -193,7 +228,7 @@ class GeodataSet(object):
                         continuous_flag = True  # 标签不连续
                         break
         else:
-            if arr_type.kind in 'SU':
+            if arr_type.kind in 'SUO':
                 raise ValueError('The labels must be numeric, should input label_dict.')
         # 数值型标签 或 输入标签映射表不连续
         if (n_label_dict is None and arr_type.kind in 'biuf') or continuous_flag is True:

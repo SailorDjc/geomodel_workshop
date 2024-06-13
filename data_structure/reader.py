@@ -38,18 +38,22 @@ class ReadExportFile(object):
             raise ValueError('File data should be [id x y z label].')
         # 清理空值
         df.dropna()
-        points_data = np.array(df.loc[:, ['x', 'y', 'z', 'label']])
+        points_data = np.float32(df.loc[:, ['x', 'y', 'z']])  # , 'label'
+        points_label = np.array(df.loc[:, 'label'])
+
         borehole_ids = list(df.loc[:, 'borehole_id'])
         borehole_map = {}
         for id, borehole_id in enumerate(borehole_ids):
             if borehole_id not in borehole_map.keys():
-                borehole_map[borehole_id] = []
-            borehole_map[borehole_id].append(points_data[id])
+                borehole_map[borehole_id] = {}
+                borehole_map[borehole_id]['points'] = []
+                borehole_map[borehole_id]['label'] = []
+            borehole_map[borehole_id]['points'].append(points_data[id])
+            borehole_map[borehole_id]['label'].append(points_label[id])
         borehole_list = BoreholeSet()
         for k in borehole_map.keys():
-            borehole_map[k] = np.row_stack(borehole_map[k])
-            borehole_points = np.array(borehole_map[k])[:, 0:3]
-            borehole_series = np.array(borehole_map[k])[:, 3]
+            borehole_points = np.vstack(borehole_map[k]['points'])
+            borehole_series = np.array(borehole_map[k]['label'])
             one_borehole = Borehole(points=borehole_points, series=borehole_series, borehole_id=k)
             borehole_list.append(one_borehole=one_borehole)
         return borehole_list

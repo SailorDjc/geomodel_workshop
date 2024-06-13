@@ -27,7 +27,8 @@ if __name__ == '__main__':
 
     ###
     boreholes_data_2 = reader.read_boreholes_data_from_text_file(
-        dat_file_path=os.path.join(root_path, 'data', 'new_data.dat'))
+        dat_file_path=os.path.join(root_path, 'data', 'all_sampling_results.dat'))
+    boreholes_data_2.show()
     ###
     # boreholes_data_0 = reader.read_boreholes_data_from_text_file(dat_file_path=xm_file_path)
     # boreholes_data_1 = reader.read_boreholes_data_from_text_file(dat_file_path=file_path)

@@ -424,7 +424,7 @@ class GeoDataSampler(object):
         del_indexes = []
         for v_id in val_indexes:
             if v_id in train_indexes:
-                del_indexes.append(v_id)
+                del_indexes.append(train_indexes.index(v_id))
         if len(del_indexes) > 0:
             train_indexes = np.delete(train_indexes, del_indexes, axis=0)
         return train_indexes, val_indexes

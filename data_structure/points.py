@@ -18,6 +18,7 @@ def compute_nearest_neighbor_dist_from_pts(coords: np.ndarray):
     return neigh_dist
 
 
+# bounds包围盒求并集
 def merge_bounds(bounds_a, bounds_b):  # : np.ndarray
     assert len(bounds_a) == 6, "bounds size should be 6"
     assert len(bounds_b) == 6, "bounds size should be 6"
@@ -42,6 +43,13 @@ def concat_coords_from_datasets(*datasets):
 
     all_coords = np.vstack(coords_list)
     return all_coords
+
+
+class GeometryObj(object):
+    def __init__(self):
+        self._center = None
+        self._bounds = None
+        self._points = None
 
 
 class PointSet(object):
@@ -81,6 +89,7 @@ class PointSet(object):
         # 对象拷贝
         self.dir_path = dir_path
 
+        self._center = None
         self._classes = None
         self._classes_num = 0
         self.label_dict = None
@@ -192,6 +201,17 @@ class PointSet(object):
             if ignore_label in self._classes:
                 self._classes_num -= 1
         return self._classes
+
+    @property
+    def center(self):
+        if self.bounds is not None:
+            center_x = (self.bounds[0] + self.bounds[1]) * 0.5
+            center_y = (self.bounds[2] + self.bounds[3]) * 0.5
+            center_z = (self.bounds[4] + self.bounds[5]) * 0.5
+            self._center = np.array([center_x, center_y, center_z])
+            return self._center
+        else:
+            raise ValueError('This grid data is empty.')
 
     # 使用append方法，合并Pointset，会导致scalars和vectors丢失
     def append(self, item):

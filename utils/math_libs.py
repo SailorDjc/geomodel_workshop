@@ -7,6 +7,50 @@ from rdp import rdp
 import copy
 
 
+def points_trans_translate(points, tx, ty, tz):
+    trans_points_list = []
+    for one_point in points:
+        trans_point = trans_translate(one_point[0], one_point[0], one_point[0], tx, ty, tz)
+        trans_points_list.append(trans_point)
+    trans_points = np.vstack(trans_points_list)
+    return trans_points
+
+
+def points_trans_scale(points, center, sx, sy, sz):
+    scale_points_list = []
+    for one_point in points:
+        scale_point = trans_scale(one_point[0], one_point[1], one_point[2], center[0], center[1], center[2],
+                                  sx, sy, sz)
+        scale_points_list.append(scale_point)
+    scale_points = np.vstack(scale_points_list)
+    return scale_points
+
+
+# 在三维空间中，点(x, y, z) 平移(tx, ty, tz)
+def trans_translate(x, y, z, tx, ty, tz):
+    T = [[1, 0, 0, tx],
+         [0, 1, 0, ty],
+         [0, 0, 1, tz],
+         [0, 0, 0, 1]]
+    T = np.array(T)
+    P = np.array([x, y, z, [1] * x.size])
+    x_, y_, z_, _ = np.dot(T, P)
+    return np.float32([x_, y_, z_])
+
+
+# 在三维空间中，点(x, y, z)相对于另一点(px,py,pz)进行缩放操作,(sx, sy, sz)是缩放因子。
+def trans_scale(x, y, z, px, py, pz, sx, sy, sz):
+    T = [[sx, 0, 0, px * (1 - sx)],
+         [0, sy, 0, py * (1 - sy)],
+         [0, 0, sz, pz * (1 - sz)],
+         [0, 0, 0, 1]]
+    T = np.array(T)
+    P = np.array([x, y, z, 1])  # [1] * x.size
+    x_, y_, z_, _ = np.dot(T, P)
+    return np.float32([x_, y_, z_])
+
+
+# 去除重复坐标点
 def remove_duplicate_points(points_3d, tolerance=0.000001, is_remove=False):
     ckt = spt.cKDTree(points_3d)
     remove_point_ids = []
@@ -22,6 +66,7 @@ def remove_duplicate_points(points_3d, tolerance=0.000001, is_remove=False):
     return points_3d, remove_point_ids
 
 
+# 简化二维折线，折角小于指定角度的拐点删除
 def simplify_polyline_2d(polyline_points, principal_axis, eps=1):
     axis_labels = ['x', 'y']
     label_to_index = {label: index for index, label in enumerate(axis_labels)}
@@ -95,7 +140,3 @@ def remove_repeated_elements_with_lists(list_item_1, list_item_2=None):
         return unique, list_item_2
     else:
         return unique
-
-
-
-

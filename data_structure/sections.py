@@ -45,6 +45,7 @@ class Section(object):
         self.resolution = None
         self.vtk_data = None
 
+        self._center = None
         self.classes = None
         self.classes_num = 0
         self.label_dict = None
@@ -176,6 +177,17 @@ class Section(object):
         self.classes = np.array(list(label_dict.values()))
         self.series = new_label
         self.__add_properties_to_vtk_object_if_present(grid=self)
+
+    @property
+    def center(self):
+        if self.bounds is not None:
+            center_x = (self.bounds[0] + self.bounds[1]) * 0.5
+            center_y = (self.bounds[2] + self.bounds[3]) * 0.5
+            center_z = (self.bounds[4] + self.bounds[5]) * 0.5
+            self._center = np.array([center_x, center_y, center_z])
+            return self._center
+        else:
+            raise ValueError('This section data is empty.')
 
     @staticmethod
     def __add_properties_to_vtk_object_if_present(grid):
@@ -381,6 +393,7 @@ class SectionSet(object):
         self.tmp_dump_str = 'tmp_secs' + str(int(time.time()))
         self.vtk_data = None
         self.label_dict = None
+        self._center = None
 
     def append(self, section: Section):
         self.sections.append(section)
@@ -425,6 +438,21 @@ class SectionSet(object):
         if idx < 0 or idx >= len(self.sections):
             raise ValueError('The input index is out of range.')
         return self.sections[idx]
+
+    @property
+    def center(self):
+        if self.sections_num > 0:
+            for sec in self.sections:
+                if self._center is None:
+                    self._center = sec.center
+                elif sec.center is not None:
+                    self._center = (self._center + sec.center) * 0.5
+            if self._center is not None:
+                return self._center
+            else:
+                raise ValueError('This sections data is empty.')
+        else:
+            raise ValueError('This sections data is empty.')
 
     def __len__(self):
         return len(self.sections)

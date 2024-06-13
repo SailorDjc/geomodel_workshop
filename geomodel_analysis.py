@@ -214,7 +214,8 @@ class GmeModelGraphList(object):
                         # surface = self.terrain_data.clip_segment_by_axis(mask_bounds=build_bounds, seg_axis='x')
                         # build_bounds[4]
                         external_grid = self.terrain_data.create_grid_from_terrain_surface(
-                            z_min=450, cell_density=self.grid_cell_density, is_smooth=False)
+                            z_min=-133, cell_density=self.grid_cell_density, is_smooth=False)
+                        external_grid.plot()
                     dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
                                                 feat_normalize=True, ext_grid=external_grid, val_ratio=self.val_ratio
                                                 , **self.kwargs)
