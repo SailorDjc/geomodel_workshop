@@ -86,7 +86,7 @@ class GmeModelGraphList(object):
     def __init__(self, name, root, graph_id=0, grid_data: list = None, input_sample_data=None, val_ratio=None,
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
                  dgl_graph_param=None, update_graph=False, grid_dims=None, terrain_data=None,
-                 grid_cell_density=None, is_regular=True, **kwargs):
+                 grid_cell_density=None, model_depth=None, is_regular=True, **kwargs):
         # 因为内存受限，只能取一个graph数据，其余graph存成文件
         self.graph_id = graph_id
         # 注：.dat文件格式与Voxler软件一致
@@ -113,6 +113,7 @@ class GmeModelGraphList(object):
         self.num_classes = None  # 数据集分类数目
         self.terrain_data = terrain_data  # 地形数据
         self.grid_cell_density = grid_cell_density
+        self.model_depth = model_depth
         # 文件存储路径，在processed文件夹下共存储3个数据文件，两个模型训练checkpoint存储文件
         processed_dir = os.path.join(self.root, 'processed')  # 存储
 
@@ -210,11 +211,17 @@ class GmeModelGraphList(object):
                                 top_points = sample_data.get_terrain_points()
                                 self.terrain_data.set_control_points(control_points=top_points)
                             self.terrain_data.execute()
+                            # 测试
+                            self.terrain_data.vtk_data.plot()
+                            ##
                         # 分段裁剪
                         # surface = self.terrain_data.clip_segment_by_axis(mask_bounds=build_bounds, seg_axis='x')
                         # build_bounds[4]
+                        z_min = self.terrain_data.bounds[4] - 2 * self.grid_cell_density[2]
+                        if self.model_depth is not None:
+                            z_min = self.model_depth
                         external_grid = self.terrain_data.create_grid_from_terrain_surface(
-                            z_min=-133, cell_density=self.grid_cell_density, is_smooth=False)
+                            z_min=z_min, cell_density=self.grid_cell_density, is_smooth=False)
                         external_grid.plot()
                     dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
                                                 feat_normalize=True, ext_grid=external_grid, val_ratio=self.val_ratio

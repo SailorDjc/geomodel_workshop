@@ -525,6 +525,8 @@ class TerrainData(object):
             raise ValueError('The vtk surface is None.')
         size_x = self.bounds[1] - self.bounds[0] + 5
         size_y = self.bounds[3] - self.bounds[2] + 5
+        if z_min > self.bounds[4]:
+            raise ValueError('Model depth must be less than the minimum height of top surface.')
         plane = pv.Plane(center=(vtk_data.center[0], vtk_data.center[1], z_min), direction=(0, 0, -1)
                          , i_size=size_x, j_size=size_y)
         grid_extrude_trim = vtk_data.extrude_trim((0, 0, z_min), trim_surface=plane).clean()

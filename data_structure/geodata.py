@@ -9,7 +9,6 @@ import os
 import numpy as np
 from utils.vtk_utils import bounds_merge, compute_bounds_center
 import copy
-from utils.math_libs import points_trans_scale
 
 
 def load_object(file_path, gtype=None):
@@ -106,14 +105,13 @@ class GeodataSet(object):
     def set_class_dict(self, label_dict=None):
         pass
 
-    # 三维空间坐标按比例缩放
-    def points_trans_scale(self, scale, center=None):
+    # 三维空间坐标按比例缩放  # 平移 或 缩放 或 坐标转换
+    def points_transform(self, modefunc, factor, center=None):
         if center is None:
             center = self.center
         for g_id, g_data in enumerate(self.geodata_list):
-            points_data = g_data.get_points_data()
-            self.geodata_list[g_id].points = points_trans_scale(points=points_data.points, center=center, sx=scale[0]
-                                                                , sy=scale[1], sz=scale[2])
+            self.geodata_list[g_id].points_transform(modefunc=modefunc, factor=factor, center=center)
+
 
     # 获取钻孔顶部点坐标
     def get_terrain_points(self):

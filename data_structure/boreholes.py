@@ -48,6 +48,8 @@ def borehole_points_duplicate_remova_and_sort(points, labels, sorted=True):
         raise ValueError('Borehole points do not match labels.')
 
 
+# _points 点坐标更新 保持一致性
+
 # 钻孔结构
 class Borehole(object):
     def __init__(self, points: np.ndarray = None, series: np.ndarray = None, is_vertical=True, is_virtual=False
@@ -290,7 +292,7 @@ class BoreholeSet(object):
         self.tmp_dump_str = 'tmp_hole' + str(int(time.time()))
 
         # 通过坐标数组和标签数组，初始化钻孔
-        if self.points is not None and self.series is not None and self.boreholes_index is not None:
+        if self._points is not None and self.series is not None and self.boreholes_index is not None:
             # 遍历钻孔集合，需要遍历索引集合self.boreholes_index，从而将顺序存储的点集匹配到每个钻孔
             self.points_num = self.points.shape[0]
             start_iter = 0
@@ -333,6 +335,17 @@ class BoreholeSet(object):
             return self._center
         else:
             raise ValueError('This boreholeset data is empty.')
+
+    def points_transform(self, modefunc, factor, center=None):
+        if center is None:
+            center = self.center
+        self.points = modefunc(self.points, factor, center)
+        for borehole_id in range(len(self.boreholes_list)):
+            if self.boreholes_list[borehole_id].points is None:
+                self.boreholes_list[borehole_id].update_borehole_data_by_holelayers()
+            self.boreholes_list[borehole_id].points = modefunc(self.boreholes_list[borehole_id].points, factor, center)
+            self.boreholes_list[borehole_id].update_holelayer_list()
+        self.bounds = get_bounds_from_coords(self.points)
 
     def compute_relative_points(self, center):
         if not self.is_rtc:

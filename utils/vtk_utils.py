@@ -18,6 +18,7 @@ import collections.abc
 def voxelize(mesh, density=None, check_surface=True, tolerance=0.000000001):
     if not pv.is_pyvista_dataset(mesh):
         mesh = pv.wrap(mesh)
+    mesh.plot()
     if density is None:
         density = mesh.length / 100
     if isinstance(density, (int, float, np.number)):
@@ -29,6 +30,9 @@ def voxelize(mesh, density=None, check_surface=True, tolerance=0.000000001):
 
     # check and pre-process input mesh
     surface = mesh.extract_geometry()  # filter preserves topology
+
+    surface.plot()
+
     if not surface.faces.size:
         # we have a point cloud or an empty mesh
         raise ValueError('Input mesh must have faces for voxelization.')
@@ -49,6 +53,7 @@ def voxelize(mesh, density=None, check_surface=True, tolerance=0.000000001):
     ugrid = pv.UnstructuredGrid(grid)
 
     # get part of the mesh within the mesh's bounding surface.
+    ugrid.plot()
     selection = ugrid.select_enclosed_points(surface, tolerance=tolerance, check_surface=check_surface)
     mask = selection.point_data['SelectedPoints'].view(np.bool_)
 

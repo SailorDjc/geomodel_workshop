@@ -7,20 +7,20 @@ from rdp import rdp
 import copy
 
 
-def points_trans_translate(points, tx, ty, tz):
+def points_trans_translate(points, t_factor, center=None):
     trans_points_list = []
     for one_point in points:
-        trans_point = trans_translate(one_point[0], one_point[0], one_point[0], tx, ty, tz)
+        trans_point = trans_translate(one_point[0], one_point[0], one_point[0], t_factor[0], t_factor[1], t_factor[2])
         trans_points_list.append(trans_point)
     trans_points = np.vstack(trans_points_list)
     return trans_points
 
 
-def points_trans_scale(points, center, sx, sy, sz):
+def points_trans_scale(points, s_factor, center):
     scale_points_list = []
     for one_point in points:
         scale_point = trans_scale(one_point[0], one_point[1], one_point[2], center[0], center[1], center[2],
-                                  sx, sy, sz)
+                                  s_factor[0], s_factor[1], s_factor[2])
         scale_points_list.append(scale_point)
     scale_points = np.vstack(scale_points_list)
     return scale_points

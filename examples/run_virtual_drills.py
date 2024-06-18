@@ -9,10 +9,11 @@ import numpy as np
 import os
 from utils.plot_utils import control_visibility_with_layer_label, visual_multiple_model
 from utils.plot_utils import visual_edge_list
+from utils.math_libs import points_trans_scale
 
 root_path = os.path.abspath('..')
 reader = ReadExportFile()
-file_drill_path = os.path.join(root_path, 'data', 'all_sampling_results.dat')
+file_drill_path = os.path.join(root_path, 'data', 'no_duplicates_sampling_results.dat')
 # 获取钻孔数据
 boreholes = reader.read_boreholes_data_from_text_file(dat_file_path=file_drill_path)
 print('sec_bounds:', boreholes.bounds)
@@ -20,21 +21,28 @@ print('sec_bounds:', boreholes.bounds)
 geodataset = GeodataSet()
 geodataset.append(boreholes)
 # 坐标缩放
-geodataset.points_trans_scale(scale=[0.005, 0.005, 0.01])
+geodataset.points_transform(points_trans_scale, factor=[0.005, 0.005, 0.01])
+print('sec_bounds:', geodataset.geodata_list[0].bounds)
+# 建模到达多少米的深度
+model_depth = geodataset.geodata_list[0].bounds[4]
 
 # 设置钻孔控制半径范围
-geodataset.geodata_list[0].set_boreholes_control_buffer_dist_xy(radius=10)
+geodataset.geodata_list[0].set_boreholes_control_buffer_dist_xy(radius=3)
 label_dict = {"1_Base_Tommy": 0, "2_Base_Isa": 1, "3_Base_Soldiers_Cap": 2, "4_Base_Calvert": 3, "5_Base_Quilalar": 4
               , "7_Base_Bulonga": 5, "8_Base_Leichhardt": 6, "9_Base_L_Volcs": 7, "Williams_Naraku_Granites": 8}
 geodataset.standardize_labels(label_dict=label_dict)
 
 pl = control_visibility_with_layer_label(geo_object_list=[geodataset.geodata_list[0]])
 pl.show()
-geodataset.geodata_list[0].show()
+# geodataset.geodata_list[0].show()
 if __name__ == "__main__":
     model_idx = 0
 
+    # 这里的top_points是获取每根钻孔的顶点，由于钻孔有些问题，需要筛选一下，确保所选钻孔顶点可以表示地形
     top_points_seg = geodataset.geodata_list[0].get_top_points()
+    top_ins = np.argwhere(top_points_seg[:, 2] > -6630).flatten()
+
+    top_points_seg = top_points_seg[top_ins]
     terr_seg = TerrainData()
     # 范围约束，按照剖面线缓冲，生成线状建模区域
     terr_seg.set_control_points(top_points_seg)
@@ -44,7 +52,8 @@ if __name__ == "__main__":
                                    input_sample_data=geodataset,  #
                                    add_inverse_edge=True,
                                    terrain_data=terr_seg,
-                                   grid_cell_density=[1, 1, 2],
+                                   model_depth=model_depth,
+                                   grid_cell_density=[2, 2, 1],
                                    val_ratio=0.2,
                                    is_regular=True,
                                    update_graph=False)  # 不规则网格
