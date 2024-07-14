@@ -83,7 +83,7 @@ def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None,
 
 
 class GmeModelGraphList(object):
-    def __init__(self, name, root, graph_id=0, grid_data: list = None, input_sample_data=None, val_ratio=None,
+    def __init__(self, name, root, graph_id=0, grid_data: list = None, input_sample_data=None, val_ratio=0.2,
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
                  dgl_graph_param=None, update_graph=False, grid_dims=None, terrain_data=None,
                  grid_cell_density=None, model_depth=None, is_regular=True, **kwargs):
@@ -180,7 +180,7 @@ class GmeModelGraphList(object):
                 labels_num_list.append(label_num)
                 # 已存储数据集
                 pre_save_graph_num = len(self.graph)
-                is_connected = geodata.is_connected_graph()
+                # is_connected = geodata.is_connected_graph()
                 # print('is_connected:', is_connected)
                 print('Saving geograph...')
                 self.geograph.append(geodata.save(dir_path=self.processed_dir))
@@ -202,6 +202,8 @@ class GmeModelGraphList(object):
                 for it, sample_data in pbar:
                     geodata = GeoMeshGraphParse(input_sample_data=sample_data, name='boreholes_model'
                                                 , grid_dims=self.grid_dims, is_regular=self.is_regular)
+                    sample_data_bounds = sample_data.bounds
+
                     external_grid = None
                     # 以带地形的体素网格作为建模框架, 若分段，terrain_data传入一个整体，通过每一段范围进行裁剪
                     build_bounds = sample_data.bounds
@@ -212,17 +214,24 @@ class GmeModelGraphList(object):
                                 self.terrain_data.set_control_points(control_points=top_points)
                             self.terrain_data.execute()
                             # 测试
-                            self.terrain_data.vtk_data.plot()
+                            # self.terrain_data.vtk_data.plot()
                             ##
                         # 分段裁剪
                         # surface = self.terrain_data.clip_segment_by_axis(mask_bounds=build_bounds, seg_axis='x')
                         # build_bounds[4]
-                        z_min = self.terrain_data.bounds[4] - 2 * self.grid_cell_density[2]
+                        if self.grid_cell_density is None:
+                            xl = sample_data_bounds[1] - sample_data_bounds[0]
+                            yl = sample_data_bounds[3] - sample_data_bounds[2]
+                            zl = sample_data_bounds[5] - sample_data_bounds[4]
+                            self.grid_cell_density = [xl / self.grid_dims[0], yl / self.grid_dims[1],
+                                                      zl / self.grid_dims[2]]
+                        # z_min = self.terrain_data.bounds[4] - 2 * self.grid_cell_density[2]
+                        z_min = sample_data_bounds[4]
                         if self.model_depth is not None:
                             z_min = self.model_depth
                         external_grid = self.terrain_data.create_grid_from_terrain_surface(
                             z_min=z_min, cell_density=self.grid_cell_density, is_smooth=False)
-                        external_grid.plot()
+                        # external_grid.plot()
                     dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
                                                 feat_normalize=True, ext_grid=external_grid, val_ratio=self.val_ratio
                                                 , **self.kwargs)
@@ -327,6 +336,7 @@ class GmeModelGraphList(object):
     def update_graph_log(self, key_name=None, values=None):
         self.graph_log[key_name] = values
 
+    # 将图数据从文件加载到内存
     def load_dglgraph(self, graph_id=0):
         if graph_id < len(self.graph):
             dgl_path = self.graph[graph_id]
@@ -335,6 +345,7 @@ class GmeModelGraphList(object):
                 self.graph[graph_id] = load_graphs(filename=dgl_path)
         return self.graph
 
+    # 将建模地质数据从文件加载到内存
     def load_geograph(self, graph_id=0):
         if graph_id < len(self.geograph):
             geograph_path = self.geograph[graph_id]

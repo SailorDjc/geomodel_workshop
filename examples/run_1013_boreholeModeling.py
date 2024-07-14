@@ -25,10 +25,12 @@ if __name__ == '__main__':
     # # 从外部数据文本中加载钻孔数据
     reader = ReadExportFile()
 
+    boreholes_data = reader.read_geodata(
+        file_path=r"E:\gitHouse_new\geomodel_workshop\processed\tmp_hole1720966258\tmp_hole1720966258.dat")
     ###
-    boreholes_data_2 = reader.read_boreholes_data_from_text_file(
-        dat_file_path=os.path.join(root_path, 'data', 'all_sampling_results.dat'))
-    boreholes_data_2.show()
+    # boreholes_data = reader.read_boreholes_data_from_text_file(
+    #     dat_file_path=os.path.join(root_path, 'data', 'all_sampling_results.dat'))
+    # boreholes_data.plot()
     ###
     # boreholes_data_0 = reader.read_boreholes_data_from_text_file(dat_file_path=xm_file_path)
     # boreholes_data_1 = reader.read_boreholes_data_from_text_file(dat_file_path=file_path)
@@ -55,7 +57,7 @@ if __name__ == '__main__':
     # 地质数据的容器, 使用钻孔或散点或剖面建模，将数据都加入到容器中，容器中的数据会联合约束地质模型的构建
 
     gd = GeodataSet()
-    gd.append(boreholes_data_2)
+    gd.append(boreholes_data)
     model_idx = 0
     gd.standardize_labels()
     # 将三维模型规则网格数据构建为图网格数据
@@ -65,8 +67,8 @@ if __name__ == '__main__':
     gme_models = GmeModelGraphList('gme_model', root=root_path,
                                    input_sample_data=gd,
                                    add_inverse_edge=True,
-                                   terrain_data=terrain_data)
-
+                                   terrain_data=None)
+    gme_models.load_geograph(graph_id=model_idx)
     # 训练已经结束，结果保存到  os.path.join(gme_models.processed_dir, 'vtk_model.vtk') 路径下
     from utils.plot_utils import control_visibility_with_layer_label
 

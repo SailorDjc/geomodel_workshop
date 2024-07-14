@@ -58,7 +58,7 @@ class GeoMeshGraphParse(object):
         self.edge_feat = None  # 图边特征      np.float32
 
         self.dir_path = dir_path
-        self.tmp_dump_str = 'tmp' + str(int(time.time()))
+        self.tmp_dump_str = 'tmp_graph' + str(int(time.time()))
 
     def get_labels_count_map(self):
         labels_count_map = {}
@@ -366,19 +366,23 @@ class GeoMeshGraphParse(object):
         return node_feat_data
 
     def save(self, dir_path):
+        self.tmp_dump_str = 'tmp_graph' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
+        save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
         if self.data is not None and isinstance(self.data, Grid):
-            self.data = self.data.save(dir_path=dir_path)
+            self.data = self.data.save(dir_path=save_dir)
         if self.sample_data is not None:
             for s_i in np.arange(len(self.sample_data)):
                 if isinstance(self.sample_data[s_i], (Grid, BoreholeSet, SectionSet, Section, PointSet)):
-                    self.sample_data[s_i] = self.sample_data[s_i].save(dir_path=dir_path)
+                    self.sample_data[s_i] = self.sample_data[s_i].save(dir_path=save_dir)
                 else:
                     raise ValueError("The data type is not supported.")
         file_name = self.tmp_dump_str
-        file_path = os.path.join(dir_path, file_name)
+        file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)
         out_put.write(out_str)
@@ -389,9 +393,9 @@ class GeoMeshGraphParse(object):
         self.dir_path = dir_path
         if self.data is not None:
             self.data = load_object(gtype=self.data[0], file_path=self.data[1])
-        # if self.sample_data is not None:
-        #     for s_i in np.arange(len(self.sample_data)):
-        #         self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=self.sample_data[s_i][1])
+        if self.sample_data is not None:
+            for s_i in np.arange(len(self.sample_data)):
+                self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=self.sample_data[s_i][1])
 
     # 钻孔数据增强
     def drill_data_augmentation(self):

@@ -595,18 +595,22 @@ class TerrainData(object):
                 self.is_rtc = False
 
     def save(self, dir_path: str, out_name: str = None):
+        self.tmp_dump_str = 'tmp_terrain' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
+        save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
         if self.vtk_data is not None and isinstance(self.vtk_data, (pv.RectilinearGrid, pv.UnstructuredGrid
                                                                     , pv.StructuredGrid)):
-            save_path = os.path.join(dir_path, self.tmp_dump_str + '.vtk')
+            save_path = os.path.join(save_dir, self.tmp_dump_str + '.vtk')
             self.vtk_data.save(filename=save_path)
             self.vtk_data = 'dumped'
         file_name = self.tmp_dump_str
         if out_name is not None:
             file_name = out_name
-        file_path = os.path.join(self.dir_path, file_name)
+        file_path = os.path.join(save_dir, file_name + '.dat')
         with open(file_path, 'wb') as out_put:
             out_str = pickle.dumps(self)
             out_put.write(out_str)

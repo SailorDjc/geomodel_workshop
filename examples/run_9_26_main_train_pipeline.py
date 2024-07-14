@@ -19,6 +19,7 @@ from models.model import GraphTransfomer
 from data.retrieve_noddy_files import NoddyModelData
 from data_structure.grids import Grid
 from data_structure.geodata import load_object
+from utils.plot_utils import control_visibility_with_layer_label
 
 # from geograph_parse import GeoMeshGraphParse
 # from data_structure.data_sampler import GeoGridDataSampler
@@ -31,9 +32,9 @@ if __name__ == '__main__':
     # load and preprocess dataset
     print('Loading data')
     path_1 = os.path.abspath('../..')
-    root_path = os.path.join(path_1, 'geomodel_workshop-main')
+    root_path = os.path.join(path_1, 'geomodel_workshop')
 
-    noddyData = NoddyModelData(root=r'E:\NoddyDataset', dataset_list=['FOLD_FOLD_FOLD'], max_model_num=10,
+    noddyData = NoddyModelData(root=r'F:\djc\NoddyDataset', dataset_list=['FOLD_FOLD_FOLD'], max_model_num=10,
                                update_grid=False)
     noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0])  # 1 6
     grid_list = []
@@ -49,8 +50,15 @@ if __name__ == '__main__':
                                    grid_data=grid_list,
                                    sample_operator=['rand_drills'],
                                    add_inverse_edge=True,
-                                   drill_num=25)
-    #
+                                   drill_num=50)
+    # 节约存储空间，多余模型不加载
+    gme_models.load_geograph(graph_id=0)
+    boreholes = gme_models.geograph[0].sample_data[0]
+    gg_dd = gme_models.geograph[0].data
+
+    plotter_1 = control_visibility_with_layer_label(geo_object_list=[boreholes, gg_dd], grid_smooth=False
+                                                    , show_edge=False)
+    plotter_1.show()
 
     dataset = DglGeoDataset(gme_models)
 
@@ -59,7 +67,7 @@ if __name__ == '__main__':
     trainer_config = GmeTrainerConfig(max_epochs=200, batch_size=512, num_workers=4, learning_rate=1e-4,
                                       ckpt_path=os.path.join(root_path, 'processed', 'latest_tran.pth'),
                                       output_dir=os.path.join(root_path, 'output'),
-                                      out_put_grid_file_name=os.path.join(gme_models.processed_dir, 'vtk_model.vtk'),
+                                      out_put_grid_file_name=os.path.join(gme_models.processed_dir, 'output_model'),
                                       sample_neigh=[10, 10, 15, 15])
     # 从图数据集中取出一张图
     g = dataset[model_idx]
@@ -86,8 +94,6 @@ if __name__ == '__main__':
     print('Training...')
     # 开始训练
     trainer.train(data_split_idx=model_idx, has_test_label=True)
-
-    from utils.plot_utils import control_visibility_with_layer_label
 
     grid_model = Grid(grid_vtk_path=os.path.join(gme_models.processed_dir, 'vtk_model.vtk'))
     boreholes_data = gme_models.sample_data[0]  # boreholes_data,

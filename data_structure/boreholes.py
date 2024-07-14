@@ -484,10 +484,13 @@ class BoreholeSet(object):
         borehole_list = self.generate_vtk_data_as_tube(is_tube=False)
         return borehole_list
 
-    def show(self, is_tube=True, borehole_radius=1.0):
+    # clean_vtk = True 只有可视化时临时生成vtk，否则vtk数据置空
+    def plot(self, is_tube=True, borehole_radius=1.0, clean_vtk=False):
         self.generate_vtk_data_as_tube(is_tube=is_tube, borehole_radius=borehole_radius)
         if isinstance(self.vtk_data, pv.MultiBlock):
             self.vtk_data.plot()
+        if clean_vtk:
+            self.vtk_data = None
 
     def get_sample_vtk_data(self, block_id=None):
         if block_id is None:
@@ -753,20 +756,26 @@ class BoreholeSet(object):
     def __getitem__(self, idx):
         return self.boreholes_list[idx]
 
+    # dir_path是保存的文件夹
     def save(self, dir_path: str, out_name: str = None):
+        # 每次保存更新文件名
+        self.tmp_dump_str = 'tmp_hole' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
+        save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
         if self.vtk_data is not None and isinstance(self.vtk_data, pv.MultiBlock):
             num = self.vtk_data.n_blocks
             if num > 0:
-                save_path = os.path.join(dir_path, self.tmp_dump_str)
+                save_path = os.path.join(save_dir, self.tmp_dump_str)
                 self.vtk_data.save(filename=save_path + '.vtm')
                 self.vtk_data = 'dumped'
         file_name = self.tmp_dump_str
         if out_name is not None:
             file_name = out_name
-        file_path = os.path.join(dir_path, file_name + '.d')
+        file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)
         out_put.write(out_str)

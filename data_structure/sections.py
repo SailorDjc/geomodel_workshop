@@ -357,17 +357,21 @@ class Section(object):
         return self.points_num
 
     def save(self, dir_path: str, out_name: str = None):
+        self.tmp_dump_str = 'tmp_sec' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
+        save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
         if self.vtk_data is not None and isinstance(self.vtk_data, pv.PolyData):
-            save_path = os.path.join(dir_path, self.tmp_dump_str)
+            save_path = os.path.join(save_dir, self.tmp_dump_str)
             self.vtk_data.save(filename=save_path + '.vtk')
             self.vtk_data = 'dumped'
         file_name = self.tmp_dump_str
         if out_name is not None:
             file_name = out_name
-        file_path = os.path.join(dir_path, file_name)
+        file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)
         out_put.write(out_str)
@@ -421,7 +425,7 @@ class SectionSet(object):
         points_data_list = self.get_points_data()
         return len(points_data_list)
 
-    def show(self):
+    def plot(self):
         if len(self.sections) > 0:
             sec_list = []
             for sec in self.sections:
@@ -461,17 +465,21 @@ class SectionSet(object):
         return self.get_section(idx)
 
     def save(self, dir_path: str, out_name: str = None):
+        self.tmp_dump_str = 'tmp_secs' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
+        save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
         if self.vtk_data is not None:
             for s_id in np.arange(len(self.sections)):
-                self.sections[s_id].save(dir_path=dir_path)
+                self.sections[s_id].save(dir_path=save_dir)
                 self.sections[s_id] = 'dumped'
         file_name = self.tmp_dump_str
         if out_name is not None:
             file_name = out_name
-        file_path = os.path.join(dir_path, file_name)
+        file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)
         out_put.write(out_str)

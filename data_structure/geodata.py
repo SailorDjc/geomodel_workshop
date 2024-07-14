@@ -18,6 +18,8 @@ def load_object(file_path, gtype=None):
         object = pickle.loads(file.read())
         if isinstance(object, (PointSet, BoreholeSet, Grid, Section, SectionSet, GeodataSet
                                , TerrainData)):
+            dir_path = os.path.dirname(file_path)
+            object.dir_path = dir_path
             if gtype is not None:
                 if gtype != object.__class__.__name__:
                     raise ValueError('The data type is inconsistent.')
@@ -45,7 +47,7 @@ class GeodataSet(object):
     def append(self, data):
         if not isinstance(data, (PointSet, Borehole, BoreholeSet, SectionSet, Section, Grid)):
             raise ValueError("Input data type is not supported.")
-        self.geodata_list.append(copy.deepcopy(data))
+        self.geodata_list.append(data)
 
     # 根据水平范围筛选数据，返回一个GeodataSet对象
     def search_by_rect2d(self, rect2d):
@@ -111,7 +113,6 @@ class GeodataSet(object):
             center = self.center
         for g_id, g_data in enumerate(self.geodata_list):
             self.geodata_list[g_id].points_transform(modefunc=modefunc, factor=factor, center=center)
-
 
     # 获取钻孔顶部点坐标
     def get_terrain_points(self):
@@ -269,15 +270,19 @@ class GeodataSet(object):
         return len(self.geodata_list)
 
     def save(self, dir_path: str, out_name: str = None):
+        self.tmp_dump_str = 'tmp_geo' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
+        save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
         for s_id in np.arange(len(self.geodata_list)):
-            self.geodata_list[s_id] = self.geodata_list[s_id].save(dir_path=dir_path)
+            self.geodata_list[s_id] = self.geodata_list[s_id].save(dir_path=save_dir)
         file_name = self.tmp_dump_str
         if out_name is not None:
             file_name = out_name
-        file_path = os.path.join(dir_path, file_name)
+        file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)
         out_put.write(out_str)

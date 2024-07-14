@@ -13,7 +13,7 @@ class FocalLoss(nn.Module):
             alpha_values = torch.ones(class_num, 1)
             if items_ratio is not None:
                 avg_ratio = 1 / class_num.item()
-                r_idx = np.argwhere(items_ratio < (avg_ratio / 40))
+                r_idx = np.argwhere(items_ratio < (avg_ratio / 4))
                 r_idx = torch.tensor(r_idx)
                 alpha_values[r_idx] = 2
             self.alpha = Variable(alpha_values)
