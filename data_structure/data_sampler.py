@@ -96,7 +96,7 @@ class GeoDataSampler(object):
                     if self.val_ratio is not None:
                         val_sample_num = int(self.val_ratio * borehole_num)
                         all_borehole_idx = np.arange(borehole_num)
-                        val_borehole_idx = list(random.sample(all_borehole_idx, val_sample_num))
+                        val_borehole_idx = random.sample(list(all_borehole_idx), val_sample_num)
                         val_boreholes = self.sample_data_list[sid].get_boreholes(idx=val_borehole_idx)
                         val_sample_points = val_boreholes.get_points_data().points
                         dv, val_pid = ckt.query(val_sample_points)
@@ -148,7 +148,7 @@ class GeoDataSampler(object):
         if self._base_grid is None:
             raise ValueError('Need to input grid first.')
         sample_points_num = int(len(self._base_grid_points) * sample_ratio)
-        sample_pids = random.sample(np.arange(len(self._base_grid_points)), sample_points_num)
+        sample_pids = random.sample(list(np.arange(len(self._base_grid_points))), sample_points_num)
         sample_points = self._base_grid_points[sample_pids]
         sample_labels = self._base_grid_labels[sample_pids]
         points_data = PointSet(points=sample_points, point_labels=sample_labels)

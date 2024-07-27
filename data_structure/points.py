@@ -281,6 +281,15 @@ class PointSet(object):
                     points_data_merge.set_scalars(scalars=scalars_value, scalar_name=key)
             return points_data_merge
 
+    def detach_vtk_component_with_label(self):
+        classes = self.get_classes()
+        vtk_dict = {}
+        if classes is not None:
+            self.generate_vtk_data_for_points_as_sphere()
+            for item in classes:
+                vtk_dict[item] = self.vtk_point_data.threshold(value=[item - 0.001, item + 0.001])
+        return vtk_dict
+
     # 去除重复点， 距离小于阈值可以认为是重复点
     def remove_duplicate_points(self):
         clustering = DBSCAN(eps=self.epsilon, min_samples=1).fit(self.points)

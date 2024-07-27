@@ -41,7 +41,7 @@ if __name__ == '__main__':
     for noddy_grid in noddy_grid_list:
         # 数据重采样，三维模型的尺寸是[150, 150, 120]
         grid = Grid(grid_vtk=noddy_grid, name='GeoGrid')
-        grid.resample_regular_grid(dim=np.array([80, 80, 50]))
+        grid.resample_regular_grid(dim=np.array([120, 120, 50]))
         grid_list.append(grid)
     model_idx = 0
 
@@ -50,7 +50,7 @@ if __name__ == '__main__':
                                    grid_data=grid_list,
                                    sample_operator=['rand_drills'],
                                    add_inverse_edge=True,
-                                   drill_num=50)
+                                   drill_num=100)
     # 节约存储空间，多余模型不加载
     gme_models.load_geograph(graph_id=0)
     boreholes = gme_models.geograph[0].sample_data[0]

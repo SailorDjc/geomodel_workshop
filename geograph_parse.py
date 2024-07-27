@@ -262,7 +262,7 @@ class GeoMeshGraphParse(object):
         # 判断如果已经对网格坐标点进行了normalize操作，则直接返回网格坐标点
         if self.is_normalize is True:
             return self.grid_points
-        minmax_pnt = preprocessing.MinMaxScaler().fit_transform(self.grid_points)
+        minmax_pnt = preprocessing.MinMaxScaler(feature_range=(-1, 1)).fit_transform(self.grid_points)
         if normalize:
             self.grid_points = minmax_pnt
             self.is_normalize = normalize

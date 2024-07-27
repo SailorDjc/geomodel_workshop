@@ -270,6 +270,7 @@ class Grid(object):
     def set_external_grid_points_data(self):
         pass
 
+    # 将每一种标签类型的网格分开，单独构建体，对连续标量场无效
     def detach_vtk_component_with_label(self):
         classes = self.get_classes()
         vtk_dict = {}

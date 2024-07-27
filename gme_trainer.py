@@ -86,6 +86,26 @@ class GmeTrainerConfig:
         self.kwargs = kwargs
 
 
+# 早停
+class EarlyStopping:
+    def __init__(self, patience=25, delta=0):
+        self.patience = patience
+        self.counter = 0
+        self.best_loss = float('inf')
+        self.early_stop = False
+        self.delta = delta
+
+    def __call__(self, val_loss, model):
+        if val_loss < self.best_loss - self.delta:
+            self.best_loss = val_loss
+            self.counter = 0
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}.')
+
+
 class GmeTrainer:
 
     # gme_dataset: GeoDataset
@@ -271,9 +291,9 @@ class GmeTrainer:
                     y = blocks[-1].dstdata['label']
                     y_hat = model(blocks, x)
                     # ignore_index=-1, 计算跳过填充值-1
-                    # loss = F.cross_entropy(y_hat, y, ignore_index=-1)
+                    loss = F.cross_entropy(y_hat, y, ignore_index=-1)
                     uq = torch.unique(y)
-                    loss = self.custom_loss(y_hat, y)
+                    # loss = self.custom_loss(y_hat, y)
                     losses.append(loss.item())
                     # 计算epoch 的总体 accuracy
                     ys.append(y)
@@ -334,6 +354,8 @@ class GmeTrainer:
         var_acc_list = []
 
         start_time = datetime.now()
+        #
+        early_stopping = EarlyStopping(patience=50)
         for epoch in range(self.first_epoch - 1, config.max_epochs):
 
             train_loss, train_acc, train_rmse = run_epoch('train', data_split_idx)
@@ -348,7 +370,7 @@ class GmeTrainer:
             train_acc_list.append(train_acc)
             val_loss_list.append(val_loss)
             var_acc_list.append(val_acc)
-
+            early_stopping(train_loss)
             with open(self.log_name, "a") as log_file:
                 message_write = f"{epoch + 1},{train_loss},{train_acc},{train_rmse},{val_loss},{val_acc},{val_rmse}"
                 log_file.write('%s\n' % message_write)
@@ -360,6 +382,8 @@ class GmeTrainer:
             if self.config.ckpt_path is not None and good_model:
                 best_loss = val_loss
                 self.save_checkpoint()
+            if early_stopping.early_stop:
+                break
         vtk_file_path = None
         if 'out_put_grid_file_name' in self.config.kwargs.keys():
             vtk_file = self.config.kwargs['out_put_grid_file_name']

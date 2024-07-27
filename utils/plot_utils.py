@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib
 import pyvista as pv
 
-from data_structure.geodata import BoreholeSet, Borehole, Grid, Section
+from data_structure.geodata import *
 import sklearn
 import os
 import copy
@@ -112,6 +112,7 @@ class SaveGraphicCallBack:
 # geo_object_list:  list
 # 输入参数为列表，[BoreholeSet, Grid]， 目前支持BoreholeSet和Grid两种类型的数据
 # font_file 字体文件的路径，传入字体文件ttf，支持中文显示
+# is_detach = True 按地层标签分割模型，每个标签类别可以单独可视化
 def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
                                         , is_detach=True, grid_smooth=False, show_edge=False
                                         , labels_info=None, text_info=None, font_file=None):
@@ -156,7 +157,7 @@ def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
                 self.actor_list[a_i].GetProperty().SetOpacity(slider_val)
 
     for geo_object in geo_object_list:
-        if not isinstance(geo_object, (BoreholeSet, Grid, Section)):
+        if not isinstance(geo_object, (BoreholeSet, Grid, Section, PointSet)):
             raise ValueError('Input data type is not supported.')
         else:
             grid_flag = False
@@ -165,13 +166,14 @@ def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
             if is_detach:
                 vtk_data_dict = geo_object.detach_vtk_component_with_label()
                 for label in sorted(vtk_data_dict):
+                    # 边缘光滑
                     if isinstance(vtk_data_dict[label], pv.UnstructuredGrid) and grid_smooth:
                         vtk_data_dict[label] = vtk_data_dict[label].extract_geometry().smooth(boundary_smoothing=False
                                                                                               , n_iter=100
                                                                                               , relaxation_factor=0.1
                                                                                               , edge_angle=120)
                     if label == -1:
-                        color = 'black'
+                        color = 'gray'
                     else:
                         color = lookup_table.map_value(label)
 

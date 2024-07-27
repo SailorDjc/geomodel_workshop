@@ -78,18 +78,28 @@ if __name__ == '__main__':
     # plotter_2 = control_visibility_with_layer_label(geo_object_list=[grid_model, boreholes_data_1], grid_smooth=False
     #                                                 , show_edge=False)
     # plotter_2.show()
+    geodata = gme_models.geograph[model_idx]
+
+    # train_idx = gme_models.geograph[0].train_data_indexes
+    # grid_points = gme_models.geograph[0].grid_points
+    # points_labels = gme_models.geograph[0].grid_points_series
+    # from data_structure.geodata import *
+    # points_data = PointSet(points=grid_points[train_idx], point_labels=points_labels[train_idx])
+    # plot_0 = control_visibility_with_layer_label(geo_object_list=[geodata.data, boreholes_data])
+    # plot_0.show()
 
     dataset = DglGeoDataset(gme_models)
 
     # initialize a trainer instance and kick off training
     # 模型训练相关参数    初始训练参数的设置
-    trainer_config = GmeTrainerConfig(max_epochs=2510, batch_size=512, num_workers=4, learning_rate=1e-4,
+    trainer_config = GmeTrainerConfig(max_epochs=200, batch_size=256, num_workers=4, learning_rate=1e-5,
                                       ckpt_path=os.path.join(root_path, 'processed', 'latest_tran.pth'),
                                       output_dir=os.path.join(root_path, 'output'),
                                       out_put_grid_file_name=os.path.join(gme_models.processed_dir, 'vtk_model.vtk'),
                                       sample_neigh=[10, 10, 15, 15])
     # 从图数据集中取出一张图
     g = dataset[model_idx]
+
     # create GraphSAGE model
     in_size = g.ndata['feat'].shape[-1]
     print("in_size:", in_size)
@@ -98,8 +108,8 @@ if __name__ == '__main__':
     out_size = dataset.num_classes['labels'][model_idx]
 
     # 模型结构相关参数
-    model_config = GraphTransConfig(in_size=in_size, out_size=out_size, n_head=4, n_embd=512, gnn_layer_num=4,
-                                    gnn_n_head=3, n_layer=3)
+    model_config = GraphTransConfig(in_size=in_size, out_size=out_size, n_head=4, n_embd=512, gnn_layer_num=3,
+                                    gnn_n_head=4, n_layer=4)
     # 构建预测模型
     model = GraphTransfomer(model_config)
     trainer = GmeTrainer(model, dataset, trainer_config)
