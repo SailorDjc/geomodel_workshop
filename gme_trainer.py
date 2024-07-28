@@ -95,7 +95,7 @@ class EarlyStopping:
         self.early_stop = False
         self.delta = delta
 
-    def __call__(self, val_loss, model):
+    def __call__(self, val_loss):
         if val_loss < self.best_loss - self.delta:
             self.best_loss = val_loss
             self.counter = 0

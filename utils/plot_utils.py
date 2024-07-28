@@ -113,9 +113,10 @@ class SaveGraphicCallBack:
 # 输入参数为列表，[BoreholeSet, Grid]， 目前支持BoreholeSet和Grid两种类型的数据
 # font_file 字体文件的路径，传入字体文件ttf，支持中文显示
 # is_detach = True 按地层标签分割模型，每个标签类别可以单独可视化
+# base_layer int 指定一层为基底层，该层默认为灰色
 def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
                                         , is_detach=True, grid_smooth=False, show_edge=False
-                                        , labels_info=None, text_info=None, font_file=None):
+                                        , labels_info=None, text_info=None, font_file=None, base_layer=None):
     if not isinstance(geo_object_list, list):
         raise ValueError('Input must be list.')
     plotter = pv.Plotter()
@@ -173,10 +174,12 @@ def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
                                                                                               , relaxation_factor=0.1
                                                                                               , edge_angle=120)
                     if label == -1:
-                        color = 'gray'
+                        color = 'grey'
                     else:
                         color = lookup_table.map_value(label)
-
+                    # 基底层
+                    if base_layer is not None and label == base_layer:
+                        color = 'grey'
                     actor = plotter.add_mesh(vtk_data_dict[label], color=color
                                              , show_edges=show_edge)
                     if grid_flag:
@@ -185,8 +188,9 @@ def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
                     callback = SetVisibilityCallback(actor)
                     plotter.add_checkbox_button_widget(callback, value=True, position=(start_pos_x, start_pos_y),
                                                        size=size,
-                                                       border_size=1, color_on=lookup_table.map_value(label)
+                                                       border_size=1, color_on=color
                                                        , color_off='grey', background_color='grey')
+                    #  lookup_table.map_value(label)
                     text = str(label)
                     if labels_info is not None:
                         if label in labels_info.keys():

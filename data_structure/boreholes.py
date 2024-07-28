@@ -88,7 +88,7 @@ class Borehole(object):
             self.azimuth = azimuth  # 测斜数据(垂直孔不需要)
             self.dip = dip  # 倾角
             self.layer_label = layer_label  # 地层编号(编码)
-            self.layer_label_old = layer_label  # 作为老标签的备份，在标签标准化后，值不变
+            self.__layer_label_old = layer_label  # 作为老标签的备份，在标签标准化后，值不变
             self.layer_name = layer_name  # 层名称
             self.is_virtual = is_virtual  # 是否是虚拟地层
             self.buffer_dist_xy = buffer_dist_xy  # 钻孔控制范围
@@ -719,7 +719,29 @@ class BoreholeSet(object):
         pd_file.dropna(axis=0, how='any')
         pd_file.to_csv(out_path, index=False, header=False, sep='\t')
 
-    # 添加基底层
+    # 延展钻孔最底层（只有部分钻孔最底层是指定层才延展）
+    def extend_base_layer(self, base_label, min_z_value=None):
+        cur_labels = self.get_classes()
+        bottom_points = self.get_bottom_points()
+        min_z = np.min(bottom_points[:, 2])
+        if min_z_value is not None:
+            if min_z_value < min_z:
+                min_z = min_z_value
+        if base_label in cur_labels:
+            for idx, one_borehole in enumerate(self.boreholes_list):
+                if one_borehole.holelayer_list[-1].layer_label != base_label:
+                    continue
+                bot_pos = one_borehole.get_bottom_point()
+                if abs(bot_pos[2] - min_z) > 0.0001:  # 不相等
+                    one_layer = Borehole.Holelayer(coord_top=bot_pos
+                                                   , coord_bottom=np.array([bot_pos[0], bot_pos[1], min_z])
+                                                   , layer_label=base_label, borehole_id=one_borehole.borehole_id
+                                                   , is_virtual=True)
+                    one_borehole.holelayer_list.append(one_layer)
+                    one_borehole.update_borehole_data_by_holelayers()
+                self.boreholes_list[idx] = one_borehole
+
+    # 添加基底层 这里的基底层限制了建模范围
     # base_label = None, 则会自动寻找当前的所有标签，找到最大值标签，即最底层max_label， base_label=max_label+1
     def add_base_layer_for_each_borehole(self, base_label=None, min_z_value=None):
         cur_labels = self.get_classes()

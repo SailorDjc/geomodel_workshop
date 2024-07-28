@@ -477,8 +477,10 @@ class NoddyModelData(object):
 
 if __name__ == '__main__':
     noddyData = NoddyModelData(root=r'E:\NoddyDataset', update_grid=True, dataset_list=['FOLD_FOLD_FOLD'],
-                               max_model_num=10)
+                               max_model_num=50)
     meshe_names = noddyData.get_noddy_model_list_names(dataset='FOLD_FOLD_FOLD')
     print(len(meshe_names))
-    mesh = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[0])
-    mesh[0].plot()
+    mesh = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=list(np.arange(50)))  # 1 6 7
+    for i in list(np.arange(10)):
+        print(i + 40)
+        mesh[i + 40].plot()

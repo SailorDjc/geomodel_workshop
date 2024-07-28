@@ -246,7 +246,7 @@ class TerrainData(object):
         if self.check_crs_change():
             self.reproject_tiff(self.tiff_path)
 
-    def execute(self, is_rtc=False, clip_reconstruct=False, simplify=None, top_surf_offset=None):
+    def execute(self, is_rtc=False, clip_reconstruct=False, simplify=None, top_surf_offset=None, resolution_xy=5):
         if top_surf_offset is not None:
             self.surface_offset = top_surf_offset
         if self.tiff_path is not None:
@@ -255,7 +255,7 @@ class TerrainData(object):
             self.append_control_points(self.control_points)
         if is_rtc:
             self.compute_relative_points()
-        self.create_terrain_surface_from_points(PointSet(points=self.grid_points))
+        self.create_terrain_surface_from_points(PointSet(points=self.grid_points), resolution_xy=resolution_xy)
         self.clip_terrain_surface_by_boundary_points(clip_reconstruct=clip_reconstruct, simplify=simplify)
 
     @property
@@ -429,6 +429,7 @@ class TerrainData(object):
         self.grid_points = terrain_surface.cell_centers().points
         self.vtk_data = terrain_surface
 
+    # simplify: float 值在0-1之间，地形面三角形简化，降低地形面三角形数量
     def clip_terrain_surface_by_boundary_points(self, clip_reconstruct=False, simplify=None):
         if self.vtk_data is None:
             raise ValueError('The vtk surface is None.')
@@ -478,6 +479,7 @@ class TerrainData(object):
                 points_num = len(insert_cell_indices)
                 sample_num = int(points_num * simplify)
                 if sample_num > 50:
+                    # 随机筛选网格点
                     pid = random.sample(list(np.arange(points_num)), sample_num)
                     insert_cell_indices = insert_cell_indices[pid]
             insert_points = self.grid_points[insert_cell_indices]

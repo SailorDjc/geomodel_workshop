@@ -212,9 +212,9 @@ class GmeModelGraphList(object):
                             if self.terrain_data.is_empty():
                                 top_points = sample_data.get_terrain_points()
                                 self.terrain_data.set_control_points(control_points=top_points)
-                            self.terrain_data.execute()
+                            self.terrain_data.execute(resolution_xy=8)
                             # 测试
-                            # self.terrain_data.vtk_data.plot()
+                            self.terrain_data.vtk_data.plot()
                             ##
                         # 分段裁剪
                         # surface = self.terrain_data.clip_segment_by_axis(mask_bounds=build_bounds, seg_axis='x')
@@ -231,7 +231,7 @@ class GmeModelGraphList(object):
                             z_min = self.model_depth
                         external_grid = self.terrain_data.create_grid_from_terrain_surface(
                             z_min=z_min, cell_density=self.grid_cell_density, is_smooth=False)
-                        # external_grid.plot()
+                        external_grid.plot()
                     dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
                                                 feat_normalize=True, ext_grid=external_grid, val_ratio=self.val_ratio
                                                 , **self.kwargs)
@@ -359,16 +359,6 @@ class GmeModelGraphList(object):
                     self.geograph[graph_id] = object
         return self.geograph
 
-    # 释放内存
-    def release_cache(self):
-        for g_id in range(len(self.graph)):
-            if not isinstance(self.graph[g_id], str):
-                dgl_graph_path = self.processed_file_path + '_' + str(g_id)
-                save_graphs(dgl_graph_path, [self.graph[g_id]])
-                self.graph[g_id] = dgl_graph_path
-        for geo_id in range(len(self.geograph)):
-            if not isinstance(self.geograph[geo_id], str):
-                self.geograph[geo_id] = self.geograph[geo_id].save(dir_path=self.processed_dir)
 
     def save_graph_log(self):
         out_put = open(self.graph_log_data_path, 'wb')
@@ -545,3 +535,15 @@ class GeoGridInterpolator(object):
         if self.method is not None:
             self.method = self.method.lower()
         self.support_methods = ['rbf', 'idw']
+
+
+# # 释放内存
+# def release_cache(self):
+#     for g_id in range(len(self.graph)):
+#         if not isinstance(self.graph[g_id], str):
+#             dgl_graph_path = self.processed_file_path + '_' + str(g_id)
+#             save_graphs(dgl_graph_path, [self.graph[g_id]])
+#             self.graph[g_id] = dgl_graph_path
+#     for geo_id in range(len(self.geograph)):
+#         if not isinstance(self.geograph[geo_id], str):
+#             self.geograph[geo_id] = self.geograph[geo_id].save(dir_path=self.processed_dir)
