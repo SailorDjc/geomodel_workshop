@@ -21,23 +21,15 @@ if __name__ == '__main__':
     root_path = os.path.abspath('..')
     # xm_file_path = os.path.join(root_path, 'data', 'virtual_borehole_data.dat')
     # # # 从外部数据文本中加载钻孔数据
-    # reader = ReadExportFile()
+    reader = ReadExportFile()
+
     # boreholes_data = reader.read_boreholes_data_from_text_file(dat_file_path=xm_file_path)
     # bounds = boreholes_data.bounds
     # # 延展钻孔最底层
     # boreholes_data.extend_base_layer(base_label=41)
     # # 添加基底层
     # boreholes_data.add_base_layer_for_each_borehole()
-    # plotter_2 = control_visibility_with_layer_label(geo_object_list=[boreholes_data], grid_smooth=False
-    #                                                 , show_edge=False, base_layer=42)
-    # plotter_2.show()
 
-    # boreholes_data_2 = reader.read_labels_map(
-    #     map_file_path=os.path.join(root_path, 'data', 'sample_drills_0306.map'), encoding='ANSI')
-
-
-    # gd = GeodataSet()
-    # gd.append(boreholes_data)
     model_idx = 0
     # gd.standardize_labels()
     # 将三维模型规则网格数据构建为图网格数据
@@ -49,18 +41,12 @@ if __name__ == '__main__':
                                    add_inverse_edge=True,
                                    grid_dims=[120, 120, 120],
                                    terrain_data=terrain_data)
-    gme_models.load_geograph(graph_id=model_idx)
-    # 训练已经结束，结果保存到  os.path.join(gme_models.processed_dir, 'vtk_model.vtk') 路径下
-    from utils.plot_utils import control_visibility_with_layer_label
-
-    # label_map = False 不进行标签标准化处理
-
-    # boreholes_data_1 = gd.geodata_list[0]  # boreholes_data,
+    gme_models.load_geograph(graph_id=model_idx, dir_path=os.path.join(root_path, 'processed'))
+    plot = control_visibility_with_layer_label(geo_object_list=[gme_models.geograph[0].data
+        , gme_models.geograph[0].data])
+    plot.show()
     #
-    geodata = gme_models.geograph[model_idx]
-
-    # plot_0 = control_visibility_with_layer_label(geo_object_list=[geodata.data, boreholes_data])
-    # plot_0.show()
+    # geodata = gme_models.geograph[model_idx]
 
     dataset = DglGeoDataset(gme_models)
 

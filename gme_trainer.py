@@ -60,6 +60,8 @@ class Rmse(torchmetrics.Metric):
         return torch.sqrt(self.sum_squared_errors / self.n_observations)
 
 
+# ckpt_path: 模型训练参数的保存路径
+
 class GmeTrainerConfig:
     # optimization parameters
     device = 'cpu'
@@ -127,6 +129,7 @@ class GmeTrainer:
         self.config = config
         self.lr = self.config.learning_rate
         self.batch_size = self.config.batch_size
+
         self.ckpt_path = self.config.ckpt_path
         self.sample_neigh = config.sample_neigh
         self.weight_decay = config.weight_decay

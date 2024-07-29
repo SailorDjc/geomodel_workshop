@@ -804,9 +804,11 @@ class BoreholeSet(object):
         out_put.close()
         return self.__class__.__name__, file_path
 
-    def load(self):
+    def load(self, dir_path=None):
         if self.dir_path is not None:
             if self.vtk_data == 'dumped':
+                if dir_path is not None:
+                    self.dir_path = dir_path
                 save_path = os.path.join(self.dir_path, self.tmp_dump_str)
                 if os.path.exists(save_path + '.vtm'):
                     self.vtk_data = pv.read(filename=save_path + '.vtm')

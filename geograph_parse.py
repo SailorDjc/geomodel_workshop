@@ -390,12 +390,21 @@ class GeoMeshGraphParse(object):
         return self.__class__.__name__, file_path
 
     def load(self, dir_path=None):
-        self.dir_path = dir_path
         if self.data is not None:
-            self.data = load_object(gtype=self.data[0], file_path=self.data[1])
+            file_path = self.data[1]
+            if dir_path is not None:
+                rel_path = os.path.relpath(self.data[1], self.dir_path)
+                file_path = os.path.join(dir_path, rel_path)
+            self.data = load_object(gtype=self.data[0], file_path=file_path)
         if self.sample_data is not None:
             for s_i in np.arange(len(self.sample_data)):
-                self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=self.sample_data[s_i][1])
+                file_path = self.sample_data[s_i][1]
+                if dir_path is not None:
+                    rel_path = os.path.relpath(self.sample_data[s_i][1], self.dir_path)
+                    file_path = os.path.join(dir_path, rel_path)
+                self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=file_path)
+        if dir_path is not None:
+            self.dir_path = dir_path
 
     # 钻孔数据增强
     def drill_data_augmentation(self):

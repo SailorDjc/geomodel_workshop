@@ -116,7 +116,7 @@ class GmeModelGraphList(object):
         self.model_depth = model_depth
         # 文件存储路径，在processed文件夹下共存储3个数据文件，两个模型训练checkpoint存储文件
         processed_dir = os.path.join(self.root, 'processed')  # 存储
-
+        # 默认存储数据缓存的路径
         self.processed_dir = processed_dir
         if not os.path.exists(self.processed_dir):
             os.makedirs(self.processed_dir)
@@ -346,16 +346,22 @@ class GmeModelGraphList(object):
         return self.graph
 
     # 将建模地质数据从文件加载到内存
-    def load_geograph(self, graph_id=0):
+    def load_geograph(self, graph_id=0, dir_path=None):
         if graph_id < len(self.geograph):
             geograph_path = self.geograph[graph_id]
             if isinstance(geograph_path, tuple):
                 print('Loading {}th geograph'.format(graph_id))
-                if not os.path.exists(geograph_path[1]):
+                load_path = geograph_path[1]
+                if dir_path is not None:
+                    file_path = os.path.basename(geograph_path[1])
+                    dir_name = os.path.splitext(file_path)[0]
+                    rel_path = os.path.join(dir_path, dir_name, file_path)
+                    load_path = rel_path
+                if not os.path.exists(load_path):
                     raise ValueError('file is not exists.')
-                with open(geograph_path[1], 'rb') as file:
+                with open(load_path, 'rb') as file:
                     object = pickle.loads(file.read())
-                    object.load()
+                    object.load(dir_path=dir_path)
                     self.geograph[graph_id] = object
         return self.geograph
 

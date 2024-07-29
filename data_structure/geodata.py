@@ -19,11 +19,10 @@ def load_object(file_path, gtype=None):
         if isinstance(object, (PointSet, BoreholeSet, Grid, Section, SectionSet, GeodataSet
                                , TerrainData)):
             dir_path = os.path.dirname(file_path)
-            object.dir_path = dir_path
             if gtype is not None:
                 if gtype != object.__class__.__name__:
                     raise ValueError('The data type is inconsistent.')
-            object.load()
+            object.load(dir_path=dir_path)
         else:
             raise ValueError("Unsupported data type.")
         return object
@@ -289,7 +288,13 @@ class GeodataSet(object):
         out_put.close()
         return self.__class__.__name__, file_path
 
-    def load(self):
+    def load(self, dir_path=None):
         for s_id in np.arange(len(self.geodata_list)):
-            self.geodata_list[s_id] = load_object(file_path=self.geodata_list[s_id][1]
+            file_path = self.geodata_list[s_id][1]
+            if dir_path is not None:
+                rel_path = os.path.relpath(self.geodata_list[s_id][1], self.dir_path)
+                file_path = os.path.join(dir_path, rel_path)
+            self.geodata_list[s_id] = load_object(file_path=file_path
                                                   , gtype=self.geodata_list[s_id][0])
+        if dir_path is not None:
+            self.dir_path = dir_path
