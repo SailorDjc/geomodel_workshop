@@ -115,6 +115,7 @@ class GmeTrainer:
     def __init__(self, model, gme_dataset, config: GmeTrainerConfig):
         self.custom_loss = None
         self.model = model
+        self.optimizer = None
         self.gme_dataset = gme_dataset
         self.label_dict = None
         # 处理标签
@@ -122,14 +123,22 @@ class GmeTrainer:
         self.preprocess_labels()
         self.train_dataset = None
         self.val_dataset = None
+        # config param
         self.config = config
+        self.lr = self.config.learning_rate
+        self.batch_size = self.config.batch_size
+        self.ckpt_path = self.config.ckpt_path
         self.sample_neigh = config.sample_neigh
+        self.weight_decay = config.weight_decay
+        self.max_epochs = config.max_epochs
+        #
+        self.best_loss = float('inf')
         self.log_name = None
         self.iter_record_path = None
         # take over whatever gpus are on the system
         self.device = config.device
         if 1 < config.gpu_num <= torch.cuda.current_device():
-            self.model = torch.nn.DataParallel(self.model, device_ids=self.device).cuda()  #
+            self.model = torch.nn.DataParallel(self.model, device_ids=self.device).cuda()
         else:
             self.model = self.model.to(self.device)
 
@@ -188,30 +197,35 @@ class GmeTrainer:
 
     def load_checkpoint(self):
         raw_model = self.model.module if hasattr(self.model, "module") else self.model
+        optimizer = torch.optim.Adam(raw_model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         if os.path.exists(self.config.ckpt_path):
             pretrain_dict = torch.load(self.config.ckpt_path, map_location='cpu')
             # 当前网络模型参数
             model_dict = raw_model.state_dict()
             # 更新参数，保存的模型参数与当前网络参数有部分不同
-            pretrain_dict = {k: v for k, v in pretrain_dict.items() if (k in model_dict and 'p_layer' not in k)}
-
-            model_dict.update(pretrain_dict)
+            # pretrain_dict = {k: v for k, v in pretrain_dict.items() if (k in model_dict and 'p_layer' not in k)}
+            model_dict.update(pretrain_dict['model_state_dict'])
+            self.best_loss = pretrain_dict['best_loss']
             raw_model.load_state_dict(model_dict)
             print("loading ", self.config.ckpt_path)
-        return raw_model
+            optimizer.load_state_dict(pretrain_dict['optimizer_state_dict'])
+        return raw_model, optimizer
 
-    def save_checkpoint(self):
+    def save_checkpoint(self, optimizer):
         # DataParallel wrappers keep raw model object in .module attribute
         raw_model = self.model.module if hasattr(self.model, "module") else self.model
         print("saving ", self.config.ckpt_path)
-        torch.save(raw_model.state_dict(), self.config.ckpt_path)
+        torch.save({
+            'model_state_dict': raw_model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'best_loss': self.best_loss
+        }, self.config.ckpt_path)
 
     # data
     def inference(self, data, idx, has_test_label=True, is_show=False, save_path=None):
         model = self.model.module if hasattr(self.model, "module") else self.model
 
         graph = data[0].to(self.device)
-        # geograph = data.dataset.geograph[idx]
         nodes = torch.arange(graph.number_of_nodes())
         sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.config.gnn_n_layer,
                                                                 prefetch_node_feats=['feat'],
@@ -228,13 +242,9 @@ class GmeTrainer:
                 x = blocks[0].srcdata['feat']
                 y = model(blocks, x)
                 pred[output_nodes] = y.to(graph.device)
-            # scalars = np.argmax(pred.cpu().numpy(), axis=1)
             grid_data = load_object(data.grid_data_path)
             grid_data.label_dict = self.label_dict
-            pred_tensor_path = os.path.join(os.path.dirname(self.config.ckpt_path), 'pred.txt')
-            torch.save(pred, pred_tensor_path)
             mvk.visual_predicted_values_model(grid_data, pred, is_show=is_show, save_path=save_path)
-
             if has_test_label:
                 test_idx = data.test_idx[idx]
                 pred_test = pred[test_idx]
@@ -261,10 +271,7 @@ class GmeTrainer:
         self.custom_loss = FocalLoss(class_num=key_num, items_ratio=alpha_list)
 
         model, config = self.model, self.config
-        raw_model = self.load_checkpoint()
-        lr = config.learning_rate
-        optimizer = torch.optim.Adam(raw_model.parameters(), lr=lr, weight_decay=config.weight_decay)
-
+        raw_model, optimizer = self.load_checkpoint()
         # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.8)
         # torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=10, verbose=True,
         #                                            threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1e-8,
@@ -329,10 +336,9 @@ class GmeTrainer:
                 train_loss = float(np.mean(losses))
                 return train_loss, train_acc.item(), train_rms
 
-        best_loss = float('inf')
         self.tokens = 0  # counter used for learning rate decay
-        self.log_name = os.path.join(os.path.dirname(self.config.ckpt_path), 'train_loss_log.txt')
-        self.iter_record_path = os.path.join(os.path.dirname(self.config.ckpt_path), 'train_iter.txt')
+        self.log_name = os.path.join(os.path.dirname(self.ckpt_path), 'train_loss_log.txt')
+        self.iter_record_path = os.path.join(os.path.dirname(self.ckpt_path), 'train_iter.txt')
         with open(self.log_name, "a") as log_file:
             now = time.strftime("%c")
             log_file.write('# ================ Training Loss (%s) ================\n' % now)
@@ -355,8 +361,8 @@ class GmeTrainer:
 
         start_time = datetime.now()
         #
-        early_stopping = EarlyStopping(patience=50)
-        for epoch in range(self.first_epoch - 1, config.max_epochs):
+        early_stopping = EarlyStopping(patience=10)
+        for epoch in range(self.first_epoch - 1, self.max_epochs):
 
             train_loss, train_acc, train_rmse = run_epoch('train', data_split_idx)
             val_loss = 0
@@ -370,7 +376,7 @@ class GmeTrainer:
             train_acc_list.append(train_acc)
             val_loss_list.append(val_loss)
             var_acc_list.append(val_acc)
-            early_stopping(train_loss)
+            early_stopping(val_loss)
             with open(self.log_name, "a") as log_file:
                 message_write = f"{epoch + 1},{train_loss},{train_acc},{train_rmse},{val_loss},{val_acc},{val_rmse}"
                 log_file.write('%s\n' % message_write)
@@ -378,10 +384,10 @@ class GmeTrainer:
             np.savetxt(self.iter_record_path, (epoch + 1, self.tokens), delimiter=',', fmt='%d')
             # supports early stopping based on the test loss, or just save always if no test set is provided
             # good_model = self.val_dataset is None or val_loss < best_loss
-            good_model = self.train_dataset is None or train_loss < best_loss
-            if self.config.ckpt_path is not None and good_model:
-                best_loss = val_loss
-                self.save_checkpoint()
+            good_model = self.train_dataset is None or val_loss < self.best_loss
+            if self.ckpt_path is not None and good_model:
+                self.best_loss = val_loss
+                self.save_checkpoint(optimizer=optimizer)
             if early_stopping.early_stop:
                 break
         vtk_file_path = None

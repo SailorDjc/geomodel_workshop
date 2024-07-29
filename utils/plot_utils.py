@@ -16,7 +16,7 @@ from geograph_parse import GeoMeshGraphParse
 import imageio as iio
 from threading import Thread
 from utils.vtk_utils import CreateLUT
-
+from utils.math_libs import *
 matplotlib.use("TkAgg")
 
 
@@ -32,7 +32,9 @@ def visual_predicted_values_model(grid_data, cell_values, is_show=True, save_pat
         gen_mesh = copy.deepcopy(grid_data.vtk_data)
     else:
         gen_mesh = copy.deepcopy(grid_data)
+    entropy = compute_entropy_normalization(cell_values)
     gen_mesh.cell_data['stratum'] = scalars
+    gen_mesh.cell_data['entropy'] = entropy
     gen_mesh.set_active_scalars(name='stratum')
     if is_show:
         visual_multiple_model([grid_data, gen_mesh])

@@ -35,8 +35,8 @@ class DglGeoDataset(DGLDataset):
         self.grid_data_path = None
         if grid_data_num > self.graph_id:
             self.dataset.load_geograph(graph_id=self.graph_id)
-            self.grid_data_path = os.path.join(self.processed_path
-                                               , self.dataset.geograph[self.graph_id].data.tmp_dump_str)
+            self.grid_data_path = os.path.join(self.dataset.geograph[self.graph_id].data.dir_path
+                                               , self.dataset.geograph[self.graph_id].data.tmp_dump_str + '.dat')
         self.train_idx = []
         self.val_idx = []
         self.test_idx = []

@@ -119,17 +119,48 @@ def densify_line_xy_points_with_interp(line_points: np.ndarray, resolution_xy, i
     return line_points_new
 
 
-# 计算 熵归一化
+# 计算softmax值
+def softmax(data):
+    if isinstance(data, torch.Tensor):
+        data = data.cpu().numpy()
+    e_x = np.exp(data)
+    nn = np.sum(np.exp(data), axis=1, keepdims=True)
+    x = e_x / nn
+    return x
+
+
+def normalization(data):
+    if isinstance(data, torch.Tensor):
+        data = data.cpu().numpy()
+    _range = np.max(data, axis=0) - np.min(data, axis=0)
+    return (data - np.min(data, axis=0)) / _range
+
+
+def standardization(data):
+    if isinstance(data, torch.Tensor):
+        data = data.cpu().numpy()
+    mu = np.mean(data, axis=0)
+    sigma = np.std(data, axis=0)
+    return (data - mu) / sigma
+
+
+# 计算 归一化信息熵，默认返回numpy数组
+# H(x) = -sigma p(x)ln(p(x))/Smax， Smax=ln(n), n为属性个数
 def compute_entropy_normalization(prob_data):
     if isinstance(prob_data, torch.Tensor):
         prob_data = prob_data.cpu().numpy()
-        # 归一化
+        # 若数据不在(0, 1)范围内，则归一化处理, 默认按行归一化
         if torch.max(prob_data.view(-1)) > 1 or torch.min(prob_data.view(-1)) < 0:
-            prob_data = torch.nn.functional.normalize(prob_data, dim=1)
+            prob_data = softmax(prob_data)
     if prob_data.ndim > 1:
-        ent = torch.sum(torch.mul(prob_data, torch.log(prob_data)), dim=1)
-        ent = torch.divide(torch.mul(ent, -1), torch.log(prob_data.ndim))
-        return ent
+        sn = prob_data.shape[1]
+        entropy = softmax(prob_data)
+        a = - np.sum(np.multiply(entropy, np.log(entropy)), axis=1)
+        b = np.log(sn)
+        entropy = np.divide(a, b)
+        return entropy
+    else:
+        raise ValueError('Input prob data error.')
 
 
 # 列表元素去重，以list_item_1为判断依据，若有list_item_2，则list_item_2与list_item_1等长，删去list_item_1相同位置的元素
