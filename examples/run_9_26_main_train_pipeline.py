@@ -1,11 +1,8 @@
 import os.path
 
 import numpy as np
-# import torch
-# import torch.nn as nn
 # import torch.nn.functional as F
 # import torchmetrics.functional as MF
-# import dgl
 # import dgl.nn as dglnn
 # from dgl.data import AsNodePredDataset
 # from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
@@ -17,9 +14,8 @@ from geomodel_analysis import GmeModelGraphList
 from gme_trainer import GmeTrainer, GmeTrainerConfig, GraphTransConfig
 from models.model import GraphTransfomer
 from data.retrieve_noddy_files import NoddyModelData
-from data_structure.grids import Grid
-from data_structure.geodata import load_object
-from utils.plot_utils import control_visibility_with_layer_label
+from data_structure.reader import *
+from utils.plot_utils import *
 
 # from geograph_parse import GeoMeshGraphParse
 # from data_structure.data_sampler import GeoGridDataSampler
@@ -31,6 +27,7 @@ from utils.plot_utils import control_visibility_with_layer_label
 if __name__ == '__main__':
     # load and preprocess dataset
     print('Loading data')
+
     path_1 = os.path.abspath('../..')
     root_path = os.path.join(path_1, 'geomodel_workshop')
 
@@ -38,12 +35,18 @@ if __name__ == '__main__':
                                update_grid=False)
     noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[6])  # 1 6
     grid_list = []
+    reader = ReadExportFile()
+    grid_data = reader.read_geodata(file_path=os.path.join(root_path, 'data', 'out_model', 'out_model.dat'))
+    grid_data.plot(activate_scalars='stratum')
     for noddy_grid in noddy_grid_list:
         # 数据重采样，三维模型的尺寸是[150, 150, 120]
         grid = Grid(grid_vtk=noddy_grid, name='GeoGrid')
         grid.resample_regular_grid(dim=np.array([120, 120, 80]))
-        grid_list.append(grid)
+        grid_list.append(grid.vtk_data)
     model_idx = 0
+
+    grid_list.append(grid_data.vtk_data)
+    visual_multiple_model(grid_list[0], grid_list[1])
 
     # 将三维模型规则网格数据构建为图网格数据，只有第一次输入的noddy_model可以用到，之后代码会自动加载数据缓存
     gme_models = GmeModelGraphList('gme_model', root=root_path,

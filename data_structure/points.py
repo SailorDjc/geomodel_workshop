@@ -449,31 +449,46 @@ class PointSet(object):
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
-        save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
+        file_name = self.tmp_dump_str
+        if out_name is None and self.name is not None:
+            out_name = self.name
+        if out_name is not None:
+            # 若不存在同名文件，则可以创建
+            if not os.path.exists(os.path.join(self.dir_path, out_name)):
+                file_name = out_name
+            else:
+                file_name = out_name + '_' + self.tmp_dump_str
+        self.name = file_name
+        save_dir = os.path.join(self.dir_path, file_name)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        save_path = os.path.join(save_dir, self.tmp_dump_str)
+        save_path = os.path.join(save_dir, file_name)
+        tmp_vtk_data_0 = None
+        tmp_vtk_data_1 = None
         if self.vtk_point_data is not None and isinstance(self.vtk_point_data, pv.PolyData):
             self.vtk_point_data.save(filename=save_path + '_p.vtk')
+            tmp_vtk_data_0 = self.vtk_point_data
             self.vtk_point_data = 'dumped'
         if self.vtk_vector_data is not None and isinstance(self.vtk_vector_data, pv.PolyData):
             self.vtk_vector_data.save(filename=save_path + '_v.vtk')
+            tmp_vtk_data_1 = self.vtk_vector_data
             self.vtk_vector_data = 'dumped'
-        file_name = self.tmp_dump_str
-        if out_name is not None:
-            file_name = out_name
         file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)
         out_put.write(out_str)
         out_put.close()
+        if tmp_vtk_data_0 is not None:
+            self.vtk_point_data = tmp_vtk_data_0
+        if tmp_vtk_data_1 is not None:
+            self.vtk_vector_data = tmp_vtk_data_1
         return self.__class__.__name__, file_path
 
     def load(self, dir_path=None):
         if self.dir_path is not None:
             if dir_path is not None:
                 self.dir_path = dir_path
-            save_path = os.path.join(self.dir_path, self.tmp_dump_str)
+            save_path = os.path.join(self.dir_path, self.name)
             if self.vtk_point_data == 'dumped':
                 if os.path.exists(save_path + '_p.vtk'):
                     self.vtk_point_data = pv.read(filename=save_path + '_p.vtk')

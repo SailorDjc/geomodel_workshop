@@ -82,8 +82,17 @@ def create_dgl_graph(edge_list, node_feat=None, edge_feat=None, node_label=None,
     return g
 
 
+class DataSetSplit:
+    def __init__(self, train_ratio, test_ratio=0):
+        assert train_ratio + test_ratio <= 1, 'data set split ratio error.'
+        self.train_ratio = train_ratio
+        self.test_ratio = test_ratio
+        self.valid_ratio = 1 - self.train_ratio - test_ratio
+
+
 class GmeModelGraphList(object):
-    def __init__(self, name, root, graph_id=0, grid_data: list = None, input_sample_data=None, val_ratio=0.2,
+    def __init__(self, name, root, graph_id=0, grid_data: list = None, input_sample_data=None,
+                 split_ratio=DataSetSplit(0.8),
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
                  dgl_graph_param=None, update_graph=False, grid_dims=None, terrain_data=None,
                  grid_cell_density=None, model_depth=None, is_regular=True, **kwargs):
@@ -102,7 +111,7 @@ class GmeModelGraphList(object):
         self.sample_data = []
         self.dgl_graph_param = dgl_graph_param  # 图节点特征、边特征类型参数
         self.sample_operator = sample_operator  # ['rand_drills', 'axis_sections'] 设置已知数据采样方式
-        self.val_ratio = val_ratio
+        self.split_ratio = split_ratio
         self.self_loop = self_loop  # 添加自环
         self.add_inverse_edge = add_inverse_edge  # 无向图
         self.root = root  # 代码工作空间根目录， 会默认将处理后数据存放在 root/processed目录下
@@ -174,7 +183,7 @@ class GmeModelGraphList(object):
                 geodata = GeoMeshGraphParse(mesh, name=mesh.name)
                 dgl_graph = geodata.execute(sample_operator=self.sample_operator,
                                             edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
-                                            feat_normalize=True, val_ratio=self.val_ratio, **self.kwargs)
+                                            feat_normalize=True, split_ratio=self.split_ratio, **self.kwargs)
                 # 对标签进行处理
                 label_num = geodata.classes_num
                 labels_num_list.append(label_num)
@@ -214,7 +223,7 @@ class GmeModelGraphList(object):
                                 self.terrain_data.set_control_points(control_points=top_points)
                             self.terrain_data.execute(resolution_xy=8)
                             # 测试
-                            self.terrain_data.vtk_data.plot()
+                            # self.terrain_data.vtk_data.plot()
                             ##
                         # 分段裁剪
                         # surface = self.terrain_data.clip_segment_by_axis(mask_bounds=build_bounds, seg_axis='x')
@@ -231,9 +240,10 @@ class GmeModelGraphList(object):
                             z_min = self.model_depth
                         external_grid = self.terrain_data.create_grid_from_terrain_surface(
                             z_min=z_min, cell_density=self.grid_cell_density, is_smooth=False)
-                        external_grid.plot()
+                        # external_grid.plot()
                     dgl_graph = geodata.execute(edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
-                                                feat_normalize=True, ext_grid=external_grid, val_ratio=self.val_ratio
+                                                feat_normalize=True, ext_grid=external_grid
+                                                , split_ratio=self.split_ratio
                                                 , **self.kwargs)
                     # 对标签进行处理
                     label_num = geodata.classes_num
@@ -364,7 +374,6 @@ class GmeModelGraphList(object):
                     object.load(dir_path=dir_path)
                     self.geograph[graph_id] = object
         return self.geograph
-
 
     def save_graph_log(self):
         out_put = open(self.graph_log_data_path, 'wb')
@@ -541,7 +550,6 @@ class GeoGridInterpolator(object):
         if self.method is not None:
             self.method = self.method.lower()
         self.support_methods = ['rbf', 'idw']
-
 
 # # 释放内存
 # def release_cache(self):

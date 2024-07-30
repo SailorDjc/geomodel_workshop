@@ -263,7 +263,7 @@ class GmeTrainer:
                                        , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
                 return accuracy.item()
 
-    def train(self, data_split_idx=0, has_test_label=False):
+    def train(self, data_split_idx=0, has_test_label=False, early_stop_patience=10):
         labels_count_map = self.labels_count_map
         key_num = self.gme_dataset.num_classes['labels'][data_split_idx]
         if self.gme_dataset.num_classes['labels'][data_split_idx] != key_num:
@@ -364,7 +364,7 @@ class GmeTrainer:
 
         start_time = datetime.now()
         #
-        early_stopping = EarlyStopping(patience=10)
+        early_stopping = EarlyStopping(patience=early_stop_patience)
         for epoch in range(self.first_epoch - 1, self.max_epochs):
 
             train_loss, train_acc, train_rmse = run_epoch('train', data_split_idx)

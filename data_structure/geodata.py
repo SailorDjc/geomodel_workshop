@@ -273,14 +273,21 @@ class GeodataSet(object):
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
-        save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
+        file_name = self.tmp_dump_str
+        if out_name is None and self.name is not None:
+            out_name = self.name
+        if out_name is not None:
+            # 若不存在同名文件，则可以创建
+            if not os.path.exists(os.path.join(self.dir_path, out_name)):
+                file_name = out_name
+            else:
+                file_name = out_name + '_' + self.tmp_dump_str
+        self.name = file_name
+        save_dir = os.path.join(self.dir_path, file_name)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         for s_id in np.arange(len(self.geodata_list)):
             self.geodata_list[s_id] = self.geodata_list[s_id].save(dir_path=save_dir)
-        file_name = self.tmp_dump_str
-        if out_name is not None:
-            file_name = out_name
         file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)

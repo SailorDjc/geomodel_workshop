@@ -68,7 +68,7 @@ class GeoMeshGraphParse(object):
         return labels_count_map
 
     def execute(self, sample_operator=None, edge_feat=None, node_feat=None, feat_normalize=False,
-                is_create_graph=True, ext_grid=None, val_ratio=None, **kwargs):
+                is_create_graph=True, ext_grid=None, split_ratio=None, **kwargs):
         self.is_create_graph = is_create_graph
         if node_feat is None:
             node_feat = ['position']
@@ -78,10 +78,10 @@ class GeoMeshGraphParse(object):
         # self.map_grid_vertex_labels()
         # 选择测试模型的样本形式
         if self.data is not None:
-            self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, val_ratio=val_ratio, **kwargs)
+            self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, split_ratio=split_ratio, **kwargs)
         elif self.input_sample_data is not None and len(self.input_sample_data) > 0:
             self.set_geo_sample_data(input_sample_data=self.input_sample_data, grid_dims=self.grid_dims
-                                     , ext_grid=ext_grid, val_ratio=val_ratio, **kwargs)
+                                     , ext_grid=ext_grid, split_ratio=split_ratio, **kwargs)
         # 生成三角网剖分
         self.get_triangulate_edges()
         # 生成边权重，以距离作为边权
@@ -95,9 +95,9 @@ class GeoMeshGraphParse(object):
                                      self_loop=False, add_inverse_edge=True, normalize=feat_normalize)
 
     # 设置虚拟地质采样切分以获取训练集
-    def set_virtual_geo_sample(self, grid: Grid, sample_operator=None, val_ratio=None, **kwargs):
+    def set_virtual_geo_sample(self, grid: Grid, sample_operator=None, split_ratio=None, **kwargs):
         geo_grid_sampler = GeoGridDataSampler(grid=grid, sample_operator=sample_operator, **kwargs)
-        geo_grid_sampler.set_val_boreholes_ratio(val_ratio=val_ratio)
+        geo_grid_sampler.set_val_boreholes_ratio(split_ratio=split_ratio)
         geo_grid_sampler.execute(**kwargs)
         self.sample_data = geo_grid_sampler.sample_data_list
         self.sample_operator = geo_grid_sampler.sample_operator
@@ -107,11 +107,11 @@ class GeoMeshGraphParse(object):
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
 
     # 设置真实的地质采样数据，将采样数据映射到建模网格上
-    def set_geo_sample_data(self, input_sample_data: GeodataSet, grid_dims=None, ext_grid=None, val_ratio=None,
+    def set_geo_sample_data(self, input_sample_data: GeodataSet, grid_dims=None, ext_grid=None, split_ratio=None,
                             **kwargs):
         # 将钻孔数据映射到空网格上
         geo_borehole_sample = GeoGridDataSampler(**kwargs)
-        geo_borehole_sample.set_val_boreholes_ratio(val_ratio=val_ratio)
+        geo_borehole_sample.set_val_boreholes_ratio(split_ratio=split_ratio)
         geo_borehole_sample.set_base_grid_by_geodataset(geodataset=input_sample_data, dims=grid_dims
                                                         , external_grid_vtk=ext_grid)
         geo_borehole_sample.execute()

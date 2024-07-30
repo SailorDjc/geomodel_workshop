@@ -44,6 +44,8 @@ class GeoDataSampler(object):
         self.default_value = default_value
         # 设置验证集和训练集
         self.val_ratio = None  # 为None则不设置验证集，值在0和1之间
+        self.train_ratio = None
+        self.test_ratio = 0
         # 钻孔、剖面或散点  {sid: {'train':[], 'val': []}}  sid对应的是self.sample_data_list中的数据索引
         self.geo_sample_data_val_map = {}
         self.train_indexes = []
@@ -55,13 +57,19 @@ class GeoDataSampler(object):
         if len(self.sample_data_list) >= 1:
             if self.sample_operator[sid] == 'None':
                 val_idx = []
+                # 按数据点划分
                 if isinstance(self.sample_data_list[sid], (PointSet, SectionSet, Section)):
                     points_num = self.sample_data_list[sid].get_points_num()
                     sample_data_all_idx = range(points_num)
                     if self.val_ratio is not None:
                         val_sample_num = int(self.val_ratio * points_num)
                         val_idx = list(random.sample(sample_data_all_idx, val_sample_num))
+                    if self.test_ratio > 0:
+                        train_test_idx = [x for x in sample_data_all_idx if x not in val_idx]
+                        test_sample_num = int(self.test_ratio * points_num)
+                        test_idx = list(random.sample(train_test_idx, test_sample_num))
                     train_idx = [x for x in sample_data_all_idx if x not in val_idx]
+                # 按钻孔划分
                 elif isinstance(self.sample_data_list[sid], BoreholeSet):
                     borehole_num = self.sample_data_list[sid].borehole_num
                     sample_data_all_idx = range(borehole_num)
@@ -108,13 +116,10 @@ class GeoDataSampler(object):
                 self.geo_sample_data_val_map[sid]['train'] = train_idx
                 self.geo_sample_data_val_map[sid]['val'] = val_idx
 
-    def set_val_boreholes_ratio(self, val_ratio):
-        if val_ratio is None:
-            self.val_ratio = None
-            return
-        if val_ratio < 0 or val_ratio >= 1:
-            raise ValueError('ratio value must between 0 and 1.')
-        self.val_ratio = val_ratio
+    def set_val_boreholes_ratio(self, split_ratio):
+        self.val_ratio = split_ratio.valid_ratio
+        self.train_ratio = split_ratio.train_ratio
+        self.test_ratio = split_ratio.test_ratio
 
     @property
     def sample_num(self):

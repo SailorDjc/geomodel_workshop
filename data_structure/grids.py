@@ -151,7 +151,11 @@ class Grid(object):
         self.vtk_data['stratum'] = self.grid_points_series
         self.label_dict = new_label_dict
 
-
+    def plot(self, activate_scalars=None):
+        if self.vtk_data is not None:
+            if activate_scalars is not None and isinstance(activate_scalars, str):
+                self.vtk_data.set_active_scalars(activate_scalars)
+            self.vtk_data.plot()
 
     @property
     def classes(self):
@@ -463,21 +467,33 @@ class Grid(object):
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
-        save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
+        file_name = self.tmp_dump_str
+        if out_name is None and self.name is not None:
+            out_name = self.name
+        if out_name is not None:
+            # 若不存在同名文件，则可以创建
+            if not os.path.exists(os.path.join(self.dir_path, out_name)):
+                file_name = out_name
+            else:
+                file_name = out_name + '_' + self.tmp_dump_str
+        self.name = file_name
+        save_dir = os.path.join(self.dir_path, file_name)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
+        tmp_vtk_data = None
         if self.vtk_data is not None and isinstance(self.vtk_data, (pv.RectilinearGrid, pv.UnstructuredGrid)):
-            save_path = os.path.join(save_dir, self.tmp_dump_str + '.vtk')
+            save_path = os.path.join(save_dir, file_name + '.vtk')
             self.vtk_data.save(filename=save_path)
+            tmp_vtk_data = self.vtk_data
             self.vtk_data = 'dumped'
-        file_name = self.tmp_dump_str
-        if out_name is not None:
-            file_name = out_name
+
         file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)
         out_put.write(out_str)
         out_put.close()
+        if tmp_vtk_data is not None:
+            self.vtk_data = tmp_vtk_data
         return self.__class__.__name__, file_path
 
     # 加载该类附属的vtk模型
@@ -486,7 +502,7 @@ class Grid(object):
             if self.vtk_data == 'dumped':
                 if dir_path is not None:
                     self.dir_path = dir_path
-                save_path = os.path.join(self.dir_path, self.tmp_dump_str + '.vtk')
+                save_path = os.path.join(self.dir_path, self.name + '.vtk')
                 if os.path.exists(save_path):
                     self.vtk_data = pv.read(filename=save_path)
                 else:
