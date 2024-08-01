@@ -45,11 +45,13 @@ class GeoMeshGraphParse(object):
         # 训练数据样本构建，随机散点、钻孔、剖面，作为带标签数据输入模型进行训练
         self.train_data_indexes = None  # list 训练数据的idx索引, 对应self.grid_points
         self.val_data_indexes = None
+        self.test_data_indexes = None
 
         self.train_data_proportion = 0  # 已知标签数据比例
         # 可以外部输入，或从网格中进行采样
         self.input_sample_data = input_sample_data  # 采样数据(类型为散点、钻孔、剖面)
         self.sample_operator = []
+        self.data_sampler_list = []
         self.grid_dims = grid_dims
         self.sample_data = []
         self.default_value = default_value
@@ -78,7 +80,8 @@ class GeoMeshGraphParse(object):
         # self.map_grid_vertex_labels()
         # 选择测试模型的样本形式
         if self.data is not None:
-            self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, split_ratio=split_ratio, **kwargs)
+            self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, split_ratio=split_ratio,
+                                        **kwargs)
         elif self.input_sample_data is not None and len(self.input_sample_data) > 0:
             self.set_geo_sample_data(input_sample_data=self.input_sample_data, grid_dims=self.grid_dims
                                      , ext_grid=ext_grid, split_ratio=split_ratio, **kwargs)
@@ -94,6 +97,22 @@ class GeoMeshGraphParse(object):
                                      edge_feat=self.edge_feat, node_label=np.int64(self.grid_points_series),
                                      self_loop=False, add_inverse_edge=True, normalize=feat_normalize)
 
+    def get_grid_data(self):
+        if len(self.data_sampler_list) > 0:
+            return self.data_sampler_list[0].grid
+        else:
+            return None
+
+    # @property
+    # def grid_points(self):
+    #     if len(self.data_sampler_list) > 0:
+    #         return self.data_sampler_list[0].grid_points
+    #     else:
+    #         return None
+
+    # @grid_points.setter
+    # def grid_points(self, grid_points):
+
     # 设置虚拟地质采样切分以获取训练集
     def set_virtual_geo_sample(self, grid: Grid, sample_operator=None, split_ratio=None, **kwargs):
         geo_grid_sampler = GeoGridDataSampler(grid=grid, sample_operator=sample_operator, **kwargs)
@@ -101,7 +120,9 @@ class GeoMeshGraphParse(object):
         geo_grid_sampler.execute(**kwargs)
         self.sample_data = geo_grid_sampler.sample_data_list
         self.sample_operator = geo_grid_sampler.sample_operator
-        self.train_data_indexes, self.val_data_indexes = geo_grid_sampler.get_sample_points_indexes_for_grid_points()
+        self.train_data_indexes, self.val_data_indexes \
+            , self.test_data_indexes = geo_grid_sampler.get_sample_points_indexes_for_grid_points()
+        self.data_sampler_list.append(geo_grid_sampler)
         if self.train_data_indexes is not None and len(self.train_data_indexes) > 0:
             self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
@@ -115,6 +136,7 @@ class GeoMeshGraphParse(object):
         geo_borehole_sample.set_base_grid_by_geodataset(geodataset=input_sample_data, dims=grid_dims
                                                         , external_grid_vtk=ext_grid)
         geo_borehole_sample.execute()
+        self.data_sampler_list.append(geo_borehole_sample)
         self.sample_data = self.input_sample_data.geodata_list
         self.sample_operator = geo_borehole_sample.sample_operator
         self.data = geo_borehole_sample.grid
@@ -127,15 +149,16 @@ class GeoMeshGraphParse(object):
         self.grid_points = self.data.grid_points
         self.grid_points_series = self.data.grid_points_series
         self.classes_num = self.data.classes_num  # np.array
-        self.train_data_indexes, self.val_data_indexes = geo_borehole_sample.get_sample_points_indexes_for_grid_points()
+        self.train_data_indexes, self.val_data_indexes \
+            , self.test_data_indexes = geo_borehole_sample.get_sample_points_indexes_for_grid_points()
         if self.train_data_indexes is not None and len(self.train_data_indexes) > 0:
             self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
 
     # 修改验证集的切分比例
-    def change_val_data_split(self, val_ratio):
+    def change_val_data_split(self, split_ratio):
         grid_sampler = GeoGridDataSampler(sample_operator=self.sample_operator)
-        grid_sampler.set_val_boreholes_ratio(val_ratio=val_ratio)
+        grid_sampler.set_val_boreholes_ratio(split_ratio=split_ratio)
         grid_sampler.sample_data_list = self.sample_data
         grid_sampler.grid = self.data
         train_idx = []
@@ -365,22 +388,25 @@ class GeoMeshGraphParse(object):
                 self.node_feat = node_feat_data
         return node_feat_data
 
-    def save(self, dir_path):
-        self.tmp_dump_str = 'tmp_graph' + str(int(time.time()))
+    def save(self, dir_path, replace=False):
+        if not replace:
+            self.tmp_dump_str = 'tmp_graph' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
         save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        if self.data is not None and isinstance(self.data, Grid):
-            self.data = self.data.save(dir_path=save_dir)
-        if self.sample_data is not None:
-            for s_i in np.arange(len(self.sample_data)):
-                if isinstance(self.sample_data[s_i], (Grid, BoreholeSet, SectionSet, Section, PointSet)):
-                    self.sample_data[s_i] = self.sample_data[s_i].save(dir_path=save_dir)
-                else:
-                    raise ValueError("The data type is not supported.")
+        for d_i in np.arange(len(self.data_sampler_list)):
+            self.data_sampler_list[d_i].save(dir_path=save_dir, replace=replace)
+        # if self.data is not None and isinstance(self.data, Grid):
+        #     self.data = self.data.save(dir_path=save_dir)
+        # if self.sample_data is not None:
+        #     for s_i in np.arange(len(self.sample_data)):
+        #         if isinstance(self.sample_data[s_i], (Grid, BoreholeSet, SectionSet, Section, PointSet)):
+        #             self.sample_data[s_i] = self.sample_data[s_i].save(dir_path=save_dir)
+        #         else:
+        #             raise ValueError("The data type is not supported.")
         file_name = self.tmp_dump_str
         file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
@@ -390,19 +416,23 @@ class GeoMeshGraphParse(object):
         return self.__class__.__name__, file_path
 
     def load(self, dir_path=None):
-        if self.data is not None:
-            file_path = self.data[1]
-            if dir_path is not None:
-                rel_path = os.path.relpath(self.data[1], self.dir_path)
-                file_path = os.path.join(dir_path, rel_path)
-            self.data = load_object(gtype=self.data[0], file_path=file_path)
-        if self.sample_data is not None:
-            for s_i in np.arange(len(self.sample_data)):
-                file_path = self.sample_data[s_i][1]
-                if dir_path is not None:
-                    rel_path = os.path.relpath(self.sample_data[s_i][1], self.dir_path)
-                    file_path = os.path.join(dir_path, rel_path)
-                self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=file_path)
+        # if self.data is not None:
+        #     file_path = self.data[1]
+        #     if dir_path is not None:
+        #         rel_path = os.path.relpath(self.data[1], self.dir_path)
+        #         file_path = os.path.join(dir_path, rel_path)
+        #     self.data = load_object(gtype=self.data[0], file_path=file_path)
+        # if self.sample_data is not None:
+        #     for s_i in np.arange(len(self.sample_data)):
+        #         file_path = self.sample_data[s_i][1]
+        #         if dir_path is not None:
+        #             rel_path = os.path.relpath(self.sample_data[s_i][1], self.dir_path)
+        #             file_path = os.path.join(dir_path, rel_path)
+        #         self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=file_path)
+
+        if len(self.data_sampler_list) > 0:
+            for d_i in np.arange(len(self.data_sampler_list)):
+                self.data_sampler_list[d_i].load(dir_path=dir_path)
         if dir_path is not None:
             self.dir_path = dir_path
 

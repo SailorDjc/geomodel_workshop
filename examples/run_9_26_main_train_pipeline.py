@@ -7,7 +7,7 @@ import numpy as np
 # from dgl.data import AsNodePredDataset
 # from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
 from dgl_geodataset import DglGeoDataset
-from geomodel_analysis import GmeModelGraphList
+from geomodel_analysis import *
 # import tqdm
 # import argparse
 # from pyvistaqt import MultiPlotter
@@ -31,28 +31,29 @@ if __name__ == '__main__':
     path_1 = os.path.abspath('../..')
     root_path = os.path.join(path_1, 'geomodel_workshop')
 
-    noddyData = NoddyModelData(root=r'E:\NoddyDataset', dataset_list=['FOLD_FOLD_FOLD'], max_model_num=10,
+    noddyData = NoddyModelData(root=r'F:\djc\NoddyDataset', dataset_list=['FOLD_FOLD_FOLD'], max_model_num=10,
                                update_grid=False)
     noddy_grid_list = noddyData.get_grid_model_by_idx(dataset='FOLD_FOLD_FOLD', idx=[6])  # 1 6
     grid_list = []
     reader = ReadExportFile()
-    grid_data = reader.read_geodata(file_path=os.path.join(root_path, 'data', 'out_model', 'out_model.dat'))
-    grid_data.plot(activate_scalars='stratum')
+    # grid_data = reader.read_geodata(file_path=os.path.join(root_path, 'data', 'out_model', 'out_model.dat'))
+    # grid_data.plot(activate_scalars='stratum')
     for noddy_grid in noddy_grid_list:
         # 数据重采样，三维模型的尺寸是[150, 150, 120]
         grid = Grid(grid_vtk=noddy_grid, name='GeoGrid')
-        grid.resample_regular_grid(dim=np.array([120, 120, 80]))
-        grid_list.append(grid.vtk_data)
+        grid.resample_regular_grid(dim=np.array([50, 50, 50]))
+        grid_list.append(grid)
     model_idx = 0
 
-    grid_list.append(grid_data.vtk_data)
-    visual_multiple_model(grid_list[0], grid_list[1])
+    # grid_list.append(grid_data.vtk_data)
+    # visual_multiple_model(grid_list[0], grid_list[1])
 
     # 将三维模型规则网格数据构建为图网格数据，只有第一次输入的noddy_model可以用到，之后代码会自动加载数据缓存
     gme_models = GmeModelGraphList('gme_model', root=root_path,
                                    grid_data=grid_list,
                                    sample_operator=['rand_drills'],
                                    add_inverse_edge=True,
+                                   split_ratio=DataSetSplit(0.6, 0.2),
                                    drill_num=50)
     # 节约存储空间，多余模型不加载
     gme_models.load_geograph(graph_id=0)

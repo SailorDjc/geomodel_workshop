@@ -1,10 +1,5 @@
 import math
-
-from data_structure.grids import Grid
-from data_structure.sections import SectionSet, Section
-from data_structure.boreholes import BoreholeSet, Borehole
-from data_structure.points import PointSet
-from data_structure.geodata import GeodataSet
+from data_structure.geodata import *
 import numpy as np
 import random
 import copy
@@ -15,6 +10,7 @@ from utils.vtk_utils import vtk_polydata_to_vtk_unstructured_grid, create_vtk_gr
 from utils.math_libs import remove_repeated_elements_with_lists
 from data_structure.terrain import TerrainData
 from sklearn.model_selection import train_test_split
+import os
 
 random.seed(1)
 
@@ -26,6 +22,7 @@ class GeoDataSampler(object):
         self._base_grid_points = None
         self._base_grid_labels = None
         self._bounds = None
+        self.dir_path = None
         if grid is not None:
             if isinstance(grid, Grid):
                 self._base_grid_points = grid.grid_points
@@ -50,15 +47,21 @@ class GeoDataSampler(object):
         self.geo_sample_data_val_map = {}
         self.train_indexes = []
         self.val_indexes = []
+        self.test_indexes = []
 
     def update_train_val_split_state(self, sid=-1):
         if sid < 0 or sid >= len(self.sample_data_list):
             sid = len(self.sample_data_list) - 1
         if len(self.sample_data_list) >= 1:
+            # sample_operator = None, 则输入数据是钻孔、剖面或散点进行网格映射
             if self.sample_operator[sid] == 'None':
                 val_idx = []
+                train_idx = []
+                test_idx = []
                 # 按数据点划分
+                sample_type = 'boreholes'
                 if isinstance(self.sample_data_list[sid], (PointSet, SectionSet, Section)):
+                    sample_type = 'points'
                     points_num = self.sample_data_list[sid].get_points_num()
                     sample_data_all_idx = range(points_num)
                     if self.val_ratio is not None:
@@ -68,7 +71,9 @@ class GeoDataSampler(object):
                         train_test_idx = [x for x in sample_data_all_idx if x not in val_idx]
                         test_sample_num = int(self.test_ratio * points_num)
                         test_idx = list(random.sample(train_test_idx, test_sample_num))
-                    train_idx = [x for x in sample_data_all_idx if x not in val_idx]
+                        train_idx = list(set(train_test_idx) - set(test_idx))
+                    else:
+                        train_idx = [x for x in sample_data_all_idx if x not in val_idx]
                 # 按钻孔划分
                 elif isinstance(self.sample_data_list[sid], BoreholeSet):
                     borehole_num = self.sample_data_list[sid].borehole_num
@@ -76,16 +81,27 @@ class GeoDataSampler(object):
                     if self.val_ratio is not None:
                         val_sample_num = int(self.val_ratio * borehole_num)
                         val_idx = list(random.sample(sample_data_all_idx, val_sample_num))
-                    train_idx = [x for x in sample_data_all_idx if x not in val_idx]
+                    if self.test_ratio > 0:
+                        train_test_idx = list(set(sample_data_all_idx) - set(val_idx))
+                        test_sample_num = int(self.test_ratio * borehole_num)
+                        test_idx = list(random.sample(train_test_idx, test_sample_num))
+                        train_idx = list(set(train_test_idx) - set(test_idx))
+                    else:
+                        train_idx = [x for x in sample_data_all_idx if x not in val_idx]
                 else:
                     raise ValueError('Not support.')
                 self.geo_sample_data_val_map[sid] = {}
+                self.geo_sample_data_val_map[sid]['type'] = sample_type
                 self.geo_sample_data_val_map[sid]['train'] = train_idx
                 self.geo_sample_data_val_map[sid]['val'] = val_idx
+                self.geo_sample_data_val_map[sid]['test'] = test_idx
             else:
                 val_idx = []
+                test_idx = []
                 ckt = spt.cKDTree(self._base_grid_points)
+                sample_type = 'boreholes'
                 if isinstance(self.sample_data_list[sid], (PointSet, SectionSet, Section)):
+                    sample_type = 'points'
                     sample_points = self.sample_data_list[sid].get_points_data().points
                     d, pid = ckt.query(sample_points)
                     # 点数据，直接按比例切分
@@ -94,6 +110,10 @@ class GeoDataSampler(object):
                     if self.val_ratio is not None:
                         train_idx, val_idx = train_test_split(
                             sample_data_all_idx, test_size=self.val_ratio, random_state=2)
+                    if self.test_ratio > 0:
+                        train_idx, test_idx = train_test_split(
+                            train_idx, test_size=self.test_ratio, random_state=2)
+
                 elif isinstance(self.sample_data_list[sid], BoreholeSet):
                     borehole_num = self.sample_data_list[sid].borehole_num
                     all_sample_points = self.sample_data_list[sid].get_points_data().points
@@ -110,11 +130,23 @@ class GeoDataSampler(object):
                         dv, val_pid = ckt.query(val_sample_points)
                         val_idx = list(sorted(set(val_pid)))
                         train_idx = list(set(all_idx) - set(val_idx))
+                        if self.test_ratio > 0:
+                            test_sample_num = int(self.test_ratio * borehole_num)
+                            train_test_borehole_idx = list(set(all_borehole_idx) - set(val_borehole_idx))
+                            test_borehole_idx = list(random.sample(list(train_test_borehole_idx), test_sample_num))
+                            test_boreholes = self.sample_data_list[sid].get_boreholes(idx=test_borehole_idx)
+                            test_sample_points = test_boreholes.get_points_data().points
+                            dt, test_pid = ckt.query(test_sample_points)
+                            test_idx = list(sorted(set(test_pid)))
+                            test_idx = list(set(test_idx) - set(val_idx))
+                            train_idx = list(set(train_idx) - set(test_idx))
                 else:
                     raise ValueError('Not support.')
                 self.geo_sample_data_val_map[sid] = {}
+                self.geo_sample_data_val_map[sid]['type'] = sample_type
                 self.geo_sample_data_val_map[sid]['train'] = train_idx
                 self.geo_sample_data_val_map[sid]['val'] = val_idx
+                self.geo_sample_data_val_map[sid]['test'] = test_idx
 
     def set_val_boreholes_ratio(self, split_ratio):
         self.val_ratio = split_ratio.valid_ratio
@@ -246,14 +278,17 @@ class GeoDataSampler(object):
         if log_id in self.geo_sample_data_val_map.keys():
             val_points_data = points_data.get_points_data_by_ids(ids=self.geo_sample_data_val_map[log_id]['val'])
             train_points_data = points_data.get_points_data_by_ids(ids=self.geo_sample_data_val_map[log_id]['train'])
+            test_points_data = points_data.get_points_data_by_ids(ids=self.geo_sample_data_val_map[log_id]['test'])
             val_cell_indices, val_cell_labels = self.map_base_grid_points_by_sample_data(sample_data=val_points_data)
             train_cell_indices, train_cell_labels = self.map_base_grid_points_by_sample_data(
                 sample_data=train_points_data)
+            test_cell_indices, test_cell_labels = self.map_base_grid_points_by_sample_data(sample_data=test_points_data)
             self.train_indexes.append(train_cell_indices)
             self.val_indexes.append(val_cell_indices)
+            self.test_indexes.append(test_cell_indices)
             # 合并
-            cell_indices = np.hstack((val_cell_indices, train_cell_indices))
-            cell_labels = np.hstack((val_cell_labels, train_cell_labels))
+            cell_indices = np.hstack((val_cell_indices, train_cell_indices, test_cell_indices))
+            cell_labels = np.hstack((val_cell_labels, train_cell_labels, test_cell_labels))
             cell_indices, cell_labels = remove_repeated_elements_with_lists(
                 list_item_1=cell_indices, list_item_2=cell_labels)
         else:
@@ -286,14 +321,18 @@ class GeoDataSampler(object):
         if log_id in self.geo_sample_data_val_map.keys():
             val_boreholes = boreholes.get_boreholes(idx=self.geo_sample_data_val_map[log_id]['val'])
             train_boreholes = boreholes.get_boreholes(idx=self.geo_sample_data_val_map[log_id]['train'])
+            test_boreholes = boreholes.get_boreholes(idx=self.geo_sample_data_val_map[log_id]['test'])
             val_cell_indices, val_cell_labels = self.map_base_grid_points_by_sample_data(sample_data=val_boreholes)
             train_cell_indices, train_cell_labels = self.map_base_grid_points_by_sample_data(
                 sample_data=train_boreholes)
+            test_cell_indices, test_cell_labels = self.map_base_grid_points_by_sample_data(
+                sample_data=test_boreholes)
             self.train_indexes.append(train_cell_indices)
             self.val_indexes.append(val_cell_indices)
+            self.test_indexes.append(test_cell_indices)
             # 合并
-            cell_indices = np.hstack((val_cell_indices, train_cell_indices))
-            cell_labels = np.hstack((val_cell_labels, train_cell_labels))
+            cell_indices = np.hstack((val_cell_indices, train_cell_indices, test_cell_indices))
+            cell_labels = np.hstack((val_cell_labels, train_cell_labels, test_cell_labels))
             cell_indices, cell_labels = remove_repeated_elements_with_lists(
                 list_item_1=cell_indices, list_item_2=cell_labels)
         else:
@@ -404,35 +443,47 @@ class GeoDataSampler(object):
             raise ValueError('Grid points should not be empty.')
         train_indexes = []
         val_indexes = []
+        test_indexes = []
         for sample_op_it in range(len(self.sample_operator)):
             if self.sample_operator[sample_op_it] != 'None':
                 self.update_train_val_split_state(sid=sample_op_it)
                 train_indexes_1 = self.geo_sample_data_val_map[sample_op_it]['train']
                 val_indexes_1 = self.geo_sample_data_val_map[sample_op_it]['val']
+                test_indexes_1 = self.geo_sample_data_val_map[sample_op_it]['test']
                 train_indexes.extend(train_indexes_1)
                 val_indexes.extend(val_indexes_1)
+                test_indexes.extend(test_indexes_1)
         if 'None' in self.sample_operator:
             val_indexes_2 = self.val_indexes
             train_indexes_2 = self.train_indexes
+            test_indexes_2 = self.test_indexes
             if len(self.val_indexes) > 0:
                 val_indexes_2 = np.hstack(self.val_indexes)
             if len(self.train_indexes) > 0:
                 train_indexes_2 = np.hstack(self.train_indexes)
+            if len(self.test_indexes) > 0:
+                test_indexes_2 = np.hstack(self.test_indexes)
             train_indexes.extend(train_indexes_2)
             val_indexes.extend(val_indexes_2)
+            test_indexes.extend(test_indexes_2)
         if len(train_indexes) > 0:
             train_indexes = np.hstack(train_indexes)
         if len(val_indexes) > 0:
             val_indexes = np.hstack(val_indexes)
+        if len(test_indexes) > 0:
+            test_indexes = np.hstack(test_indexes)
         val_indexes = list(sorted(set(np.unique(val_indexes))))
         train_indexes = list(sorted(set(np.unique(train_indexes))))
-        del_indexes = []
-        for v_id in val_indexes:
-            if v_id in train_indexes:
-                del_indexes.append(train_indexes.index(v_id))
-        if len(del_indexes) > 0:
-            train_indexes = np.delete(train_indexes, del_indexes, axis=0)
-        return train_indexes, val_indexes
+        test_indexes = list(sorted(set(np.unique(test_indexes))))
+        # del_indexes = []
+        train_indexes = list(set(train_indexes) - set(val_indexes) - set(test_indexes))
+        val_indexes = list(set(val_indexes) - set(test_indexes))
+        # for v_id in val_indexes:
+        #     if v_id in train_indexes:
+        #         del_indexes.append(train_indexes.index(v_id))
+        # if len(del_indexes) > 0:
+        #     train_indexes = np.delete(train_indexes, del_indexes, axis=0)
+        return train_indexes, val_indexes, test_indexes
 
     # 获取采样点数据
     def get_points_data(self, sample_id=0):
@@ -445,13 +496,31 @@ class GeoDataSampler(object):
             sample_data = sample_data.get_points_data()
             return sample_data
 
-    def save(self, dir_path: str):
+    def save(self, dir_path: str, replace=False):
+        self.dir_path = dir_path
         for s_id in np.arange(len(self.sample_data_list)):
-            self.sample_data_list[s_id].save(dir_path=dir_path)
+            if isinstance(self.sample_data_list[s_id], (Grid, BoreholeSet, SectionSet, Section, PointSet)):
+                self.sample_data_list[s_id] = self.sample_data_list[s_id].save(dir_path=dir_path, replace=replace)
+            else:
+                raise ValueError("The sample data type is not supported.")
 
-    def load(self, dir_path: str):
+    def load(self, dir_path: str = None):
+        # if self.sample_data is not None:
+        #     for s_i in np.arange(len(self.sample_data)):
+        #         file_path = self.sample_data[s_i][1]
+        #         if dir_path is not None:
+        #             rel_path = os.path.relpath(self.sample_data[s_i][1], self.dir_path)
+        #             file_path = os.path.join(dir_path, rel_path)
+        #         self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=file_path)
         for s_id in np.arange(len(self.sample_data_list)):
-            self.sample_data_list[s_id].load(dir_path=dir_path)
+            file_path = self.sample_data_list[s_id][1]
+            if dir_path is not None:
+                rel_path = os.path.relpath(self.sample_data_list[s_id][1], self.dir_path)
+                file_path = os.path.join(dir_path, rel_path)
+            self.sample_data_list[s_id] = load_object(file_path=file_path
+                                                      , gtype=self.sample_data_list[s_id][0])
+        if dir_path is not None:
+            self.dir_path = dir_path
 
 
 # Parameters:
@@ -481,6 +550,20 @@ class GeoGridDataSampler(GeoDataSampler):
         self.names = sample_data_names
         self.kwargs = kwargs
 
+    def save(self, dir_path: str, replace=False):
+        if self.grid is not None and isinstance(self.grid, Grid):
+            self.grid = self.grid.save(dir_path=dir_path, replace=replace)
+        super().save(dir_path=dir_path, replace=replace)
+
+    def load(self, dir_path=None):
+        if self.grid is not None:
+            file_path = self.grid[1]
+            if dir_path is not None:
+                rel_path = os.path.relpath(self.grid[1], self.dir_path)
+                file_path = os.path.join(dir_path, rel_path)
+            self.grid = load_object(gtype=self.grid[0], file_path=file_path)
+        super().load(dir_path=dir_path)
+
     @property
     def grid(self):
         return self._base_grid
@@ -488,12 +571,10 @@ class GeoGridDataSampler(GeoDataSampler):
     @grid.setter
     def grid(self, grid):
         self._base_grid = grid
-        if grid is not None:
+        if grid is not None and isinstance(grid, Grid):
             self._base_grid_points = grid.grid_points
             self._base_grid_labels = grid.grid_points_series
             self._bounds = grid.bounds
-        else:
-            raise ValueError('Input grid is None')
 
     def execute(self, **kwargs):
         if self._base_grid is not None:

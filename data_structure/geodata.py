@@ -268,8 +268,9 @@ class GeodataSet(object):
     def __len__(self):
         return len(self.geodata_list)
 
-    def save(self, dir_path: str, out_name: str = None):
-        self.tmp_dump_str = 'tmp_geo' + str(int(time.time()))
+    def save(self, dir_path: str, out_name: str = None, replace=False):
+        if not replace:
+            self.tmp_dump_str = 'tmp_geo' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)
@@ -287,7 +288,7 @@ class GeodataSet(object):
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         for s_id in np.arange(len(self.geodata_list)):
-            self.geodata_list[s_id] = self.geodata_list[s_id].save(dir_path=save_dir)
+            self.geodata_list[s_id] = self.geodata_list[s_id].save(dir_path=save_dir, replace=replace)
         file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
         out_str = pickle.dumps(self)

@@ -57,7 +57,6 @@ if __name__ == '__main__':
                                                     , show_edge=False)
     plotter_2.show()
 
-
     dataset = DglGeoDataset(gme_models)
 
     # initialize a trainer instance and kick off training

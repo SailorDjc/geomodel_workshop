@@ -779,9 +779,10 @@ class BoreholeSet(object):
         return self.boreholes_list[idx]
 
     # dir_path是保存的文件夹
-    def save(self, dir_path: str, out_name: str = None):
-        # 每次保存更新文件名
-        self.tmp_dump_str = 'tmp_hole' + str(int(time.time()))
+    def save(self, dir_path: str, out_name: str = None, replace=False):
+        if not replace:
+            # 每次保存更新文件名
+            self.tmp_dump_str = 'tmp_hole' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)

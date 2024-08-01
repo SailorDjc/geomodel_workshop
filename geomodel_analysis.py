@@ -192,7 +192,7 @@ class GmeModelGraphList(object):
                 # is_connected = geodata.is_connected_graph()
                 # print('is_connected:', is_connected)
                 print('Saving geograph...')
-                self.geograph.append(geodata.save(dir_path=self.processed_dir))
+                self.geograph.append(geodata.save(dir_path=self.processed_dir, replace=True))
                 dgl_graph_path = self.processed_file_path + '_' + str(pre_save_graph_num)
                 save_graphs(dgl_graph_path, [dgl_graph])
                 # dgl_graph_list.append(dgl_graph_path)
@@ -269,7 +269,7 @@ class GmeModelGraphList(object):
         self.graph_log = self.load_graph_log()
 
     # 如果数据集已经进行了验证集分割，则这里的参数val_ratio无效
-    def get_split_idx(self, idx, val_ratio=None, test_ratio=None):
+    def get_split_idx(self, idx, split_ratio: DataSetSplit):
         if idx >= len(self.graph) or idx < 0:
             raise ValueError('Input idx is out of graph array range.')
         else:
@@ -278,35 +278,38 @@ class GmeModelGraphList(object):
             x = np.arange(node_num)
             # 已经预先划分了训练数据，即已知标签数据
             default_val_ratio = 0.1
-            if val_ratio is None:
+            if split_ratio.valid_ratio is None:
                 val_ratio = default_val_ratio
-            if test_ratio is None or test_ratio + val_ratio >= 1:
-                test_ratio = (1 - val_ratio) * 0.7
+            # if split_ratio.test_ratio is None or test_ratio + val_ratio >= 1:
+            #     test_ratio = (1 - val_ratio) * 0.7
             self.load_geograph(graph_id=idx)
             if self.geograph[idx].train_data_indexes is None:
                 # random_state 确保每次切分是确定的
-                val_train, test = train_test_split(x, test_size=test_ratio, random_state=2)
-                train, val = train_test_split(val_train, test_size=val_ratio, random_state=2)
+                val_train, test = train_test_split(x, test_size=split_ratio.test_ratio, random_state=2)
+                train, val = train_test_split(val_train, test_size=split_ratio.valid_ratio, random_state=2)
             else:
                 print('get split Dataset')
                 train = np.array(self.geograph[idx].train_data_indexes)
                 if self.geograph[idx].val_data_indexes is not None and len(self.geograph[idx].val_data_indexes) > 0:
                     val = np.array(self.geograph[idx].val_data_indexes)
                 else:
-                    train, val = train_test_split(train, test_size=val_ratio, random_state=2)
-                test = np.array(list(set(x) - set(train) - set(val)))
+                    train, val = train_test_split(train, test_size=split_ratio.valid_ratio, random_state=2)
+                if self.geograph[idx].test_data_indexes is not None and len(self.geograph[idx].test_data_indexes) > 0:
+                    test = np.array(self.geograph[idx].test_data_indexes)
+                else:
+                    test = np.array(list(set(x) - set(train) - set(val)))
             train_idx = torch.from_numpy(train)
             valid_idx = torch.from_numpy(val)
             test_idx = torch.from_numpy(test)
             return {'train': train_idx, 'valid': valid_idx, 'test': test_idx}
 
     # 修改验证集比例，不能修改采样数据，用于调整验证集钻孔数量，调整范围不能超过初始采样数量
-    def change_val_indexes(self, val_ratio, g_idx=0, replace=False):
+    def change_val_indexes(self, split_ratio, g_idx=0, replace=False):
         geograph_num = len(self.geograph)
         if g_idx < geograph_num:
             print('Changing Graph Data val_data proportion ...')
             self.load_geograph(graph_id=g_idx)
-            self.geograph[g_idx].change_val_data_split(val_ratio=val_ratio)
+            self.geograph[g_idx].change_val_data_split(split_ratio=split_ratio)
             # x = np.arange(len(self.geodata[model_index].grid_points))
             val_proportion = self.geograph[g_idx].train_data_proportion
 
@@ -314,7 +317,7 @@ class GmeModelGraphList(object):
             # self.geodata[model_index].set_virtual_geo_sample(sample_operator=sample_operator, **kwargs)
             # # 替换并存储
             if replace:
-                self.geograph[g_idx] = self.geograph[g_idx].save(dir_path=self.processed_dir)
+                self.geograph[g_idx] = self.geograph[g_idx].save(dir_path=self.processed_dir, replace=True)
 
     # 添加硬数据约束，此功能是为了分段建模设计的，以重复分段作为拼接约束，后一个分段模型在前一个分段模型的预测基础上做预测。
     # 可能会添加新的标签，所以标签要进行标准化处理，关键是在标签改变的过程中，记录下映射字典。

@@ -596,8 +596,9 @@ class TerrainData(object):
                 self.grid_points = np.add(self.grid_points, center)
                 self.is_rtc = False
 
-    def save(self, dir_path: str, out_name: str = None):
-        self.tmp_dump_str = 'tmp_terrain' + str(int(time.time()))
+    def save(self, dir_path: str, out_name: str = None, replace=False):
+        if not replace:
+            self.tmp_dump_str = 'tmp_terrain' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)

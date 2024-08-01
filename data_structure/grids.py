@@ -462,8 +462,9 @@ class Grid(object):
         else:
             raise ValueError('Please input an object of Grid class.')
 
-    def save(self, dir_path: str, out_name: str = None):
-        self.tmp_dump_str = 'tmp_grid' + str(int(time.time()))
+    def save(self, dir_path: str, out_name: str = None, replace=False):
+        if not replace:
+            self.tmp_dump_str = 'tmp_grid' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)

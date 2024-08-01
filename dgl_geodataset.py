@@ -12,12 +12,14 @@ from geomodel_analysis import GmeModelGraphList
 # DGL 图数据集封装，将图处理为dgl数据集
 class DglGeoDataset(DGLDataset):
 
-    def __init__(self, dataset: GmeModelGraphList, graph_id=0, val_ratio=None, test_ratio=None, **kwargs):
+    def __init__(self, dataset: GmeModelGraphList, graph_id=0, split_ratio=None, **kwargs):
         self.graph = []
         self.dataset = dataset
-        self.val_ratio = val_ratio  # 自定义验证集比例参数
-        self.test_ratio = test_ratio  # 自定义验证集比例参数
-        self.split_ratio = None  # 这是dgl封装的数据集切分参数
+        if split_ratio is None:
+            self.split_ratio = self.dataset.split_ratio
+        else:
+            self.split_ratio = split_ratio  # 自定义验证集比例参数
+        # self.split_ratio = None  # 这是dgl封装的数据集切分参数
         self.target_ntype = None
         self.num_classes = getattr(self.dataset, 'num_classes', None)
         self.graph_id = graph_id
@@ -40,8 +42,9 @@ class DglGeoDataset(DGLDataset):
         self.train_idx = []
         self.val_idx = []
         self.test_idx = []
-        super().__init__(self.dataset.name + '-as-nodepred',
-                         hash_key=(self.split_ratio, self.target_ntype, dataset.name, 'nodepred'), **kwargs)
+        super().__init__(self.dataset.name + '-as-nodepred', **kwargs)
+        # super().__init__(self.dataset.name + '-as-nodepred',
+        #                  hash_key=(self.split_ratio, self.target_ntype, dataset.name, 'nodepred'), **kwargs)
         self.dataset = None
 
     def process(self):
@@ -65,8 +68,8 @@ class DglGeoDataset(DGLDataset):
             if 'label' not in self.graph[0].nodes[self.target_ntype].data:
                 raise ValueError("Missing node labels. Make sure labels are stored "
                                  "under name 'label'.")
-            if self.split_ratio is None:
-                split = self.dataset.get_split_idx(self.graph_id, val_ratio=self.val_ratio, test_ratio=self.test_ratio)
+            if self.split_ratio is not None:
+                split = self.dataset.get_split_idx(self.graph_id, split_ratio=self.split_ratio)
                 train_idx, val_idx, test_idx = split['train'], split['valid'], split['test']
                 n = self.graph[0].num_nodes()
                 train_mask = utils.generate_mask_tensor(utils.idx2mask(train_idx, n))

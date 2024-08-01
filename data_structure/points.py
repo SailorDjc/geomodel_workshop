@@ -444,8 +444,9 @@ class PointSet(object):
     def __len__(self):
         return self.points_num
 
-    def save(self, dir_path: str, out_name: str = None):
-        self.tmp_dump_str = 'tmp_pnt' + str(int(time.time()))
+    def save(self, dir_path: str, out_name: str = None, replace=False):
+        if not replace:
+            self.tmp_dump_str = 'tmp_pnt' + str(int(time.time()))
         self.dir_path = dir_path
         if not os.path.exists(self.dir_path):
             os.makedirs(self.dir_path)

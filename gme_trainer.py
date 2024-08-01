@@ -125,6 +125,7 @@ class GmeTrainer:
         self.preprocess_labels()
         self.train_dataset = None
         self.val_dataset = None
+        self.test_dataset = None
         # config param
         self.config = config
         self.lr = self.config.learning_rate
@@ -175,14 +176,15 @@ class GmeTrainer:
             labels.index_fill_(0, indices_dict[k], v)
         return labels
 
-    def preprocess_input(self, data, idx):
+    def preprocess_input(self, data, idx=0):
         # if idx >= data.__len__():
         #     raise ValueError("索引超出范围")
-        g = data[0]
+        g = data[idx]
         g = g.to(self.device)
         # 获取 训练集与验证集的 节点索引
-        train_idx = data.train_idx[0].to(self.device)
-        val_idx = data.val_idx[0].to(self.device)
+        train_idx = data.train_idx[idx].to(self.device)
+        val_idx = data.val_idx[idx].to(self.device)
+        test_idx = data.test_idx[idx].to(self.device)
         # 采样器
         sampler = NeighborSampler(self.sample_neigh,  # fanout for [layer-0, layer-1, layer-2]
                                   prefetch_node_feats=['feat'],
@@ -190,13 +192,16 @@ class GmeTrainer:
 
         train_dataloader = dgl.dataloading.DataLoader(g, train_idx, sampler, device=self.device,
                                                       batch_size=self.config.batch_size, shuffle=True,
-                                                      drop_last=False)  # num_workers=0,use_uva=False,
-
-        val_dataloader = dgl.dataloading.DataLoader(g, val_idx, sampler, device=self.device,
-                                                    batch_size=self.config.batch_size, shuffle=True,
-                                                    drop_last=False)  # num_workers=0, use_uva=False
-
-        return train_dataloader, val_dataloader
+                                                      drop_last=False)
+        valid_dataloader = dgl.dataloading.DataLoader(g, val_idx, sampler, device=self.device,
+                                                      batch_size=self.batch_size, shuffle=True,
+                                                      drop_last=False)  # num_workers=0, use_uva=False
+        test_dataloader = None
+        if test_idx is not None and len(test_idx) > 0:
+            test_dataloader = dgl.dataloading.DataLoader(g, test_idx, sampler, device=self.device,
+                                                         batch_size=self.batch_size, shuffle=True,
+                                                         drop_last=False)
+        return train_dataloader, valid_dataloader, test_dataloader
 
     def load_checkpoint(self):
         raw_model = self.model.module if hasattr(self.model, "module") else self.model
@@ -233,7 +238,7 @@ class GmeTrainer:
         sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.config.gnn_n_layer,
                                                                 prefetch_node_feats=['feat'],
                                                                 prefetch_labels=['label'])
-        test_dataloader = dgl.dataloading.DataLoader(
+        total_dataloader = dgl.dataloading.DataLoader(
             graph, nodes.to(graph.device), sampler, device=self.device,
             batch_size=self.config.batch_size, shuffle=True,
             drop_last=False
@@ -241,27 +246,65 @@ class GmeTrainer:
         model.eval()
         with torch.no_grad():
             pred = torch.empty(graph.number_of_nodes(), model.config.out_size, device=graph.device)
-            for input_nodes, output_nodes, blocks in tqdm(test_dataloader):
+            for input_nodes, output_nodes, blocks in tqdm(total_dataloader):
                 x = blocks[0].srcdata['feat']
-                y = model(blocks, x)
-                pred[output_nodes] = y.to(graph.device)
+                y_hat = model(blocks, x)
+                pred[output_nodes] = y_hat.to(graph.device)
             grid_data = load_object(data.grid_data_path)
             grid_data.label_dict = self.label_dict
             mvk.visual_predicted_values_model(grid_data, pred, is_show=is_show, save_path=save_path)
             if has_test_label:
-                test_idx = data.test_idx[idx]
-                pred_test = pred[test_idx]
-                label_test = graph.ndata['label'][test_idx].to(pred_test.device)
-                accuracy = MF.accuracy(pred_test, label_test, task='multiclass'
-                                       , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
-                return accuracy.item()
+                # test_idx = data.test_idx[idx]
+                # pred_test = pred[test_idx]
+                # label_test = graph.ndata['label'][test_idx].to(pred_test.device)
+                # accuracy = MF.accuracy(pred_test, label_test, task='multiclass'
+                #                        , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
+                test_loss, test_acc, test_rmse = self.test(data_idx=idx)
+
+                message = '==============Test Accuracy {:.4f} Loss {: .4f} Rmse {: .4f}============='\
+                    .format(test_loss, test_acc, test_rmse)
+                return message
             else:
+                # 用验证集精度替代
                 val_idx = data.val_idx[0]
                 pred_val = pred[val_idx]
                 label_val = graph.ndata['label'][val_idx].to(pred_val.device)
                 accuracy = MF.accuracy(pred_val, label_val, task='multiclass'
                                        , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
-                return accuracy.item()
+                message = '================Test Accuracy {:.4f}================' \
+                    .format(accuracy.item())
+                return message
+
+    def test(self, data_idx=0):
+        if self.test_dataset is not None:
+            model = self.model.module if hasattr(self.model, "module") else self.model
+            model.eval()
+            loader = self.test_dataset
+            losses = []
+            ys = []
+            y_hats = []
+            pbar = enumerate(loader)
+            with torch.no_grad():
+                for it, (input_nodes, output_nodes, blocks) in pbar:
+                    x = blocks[0].srcdata['feat']
+                    y = blocks[-1].dstdata['label']
+                    y_hat = model(blocks, x)
+                    loss = F.cross_entropy(y_hat, y, ignore_index=-1)
+                    # loss = self.custom_loss(y_hat, y)
+                    losses.append(loss.item())
+                    # 计算epoch 的总体 accuracy
+                    ys.append(y)
+                    y_hats.append(y_hat)
+                test_acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys), task='multiclass'
+                                       , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
+                preds = torch.cat(y_hats).cpu().detach().numpy()
+                preds = np.argmax(preds, axis=1)
+                targets = torch.cat(ys).cpu().detach().numpy()
+                test_rms = mean_squared_error(targets, preds)
+                test_rms = math.sqrt(test_rms)
+                test_loss = float(np.mean(losses))
+                logger.info("test loss: ", test_loss)
+                return test_loss, test_acc.item(), test_rms
 
     def train(self, data_split_idx=0, has_test_label=False, early_stop_patience=10):
         labels_count_map = self.labels_count_map
@@ -275,16 +318,13 @@ class GmeTrainer:
 
         model, config = self.model, self.config
         raw_model, optimizer = self.load_checkpoint()
-        # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.8)
-        # torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=10, verbose=True,
-        #                                            threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=1e-8,
-        #                                            eps=1e-08)
 
+        # split = 'train' | 'valid' | 'test'
         def run_epoch(split, data_idx):
             # 判断dataset是train()传入，还是self.dataset，self.datatset用于作预训练，tran()传入作为实际应用。
             is_train = split == 'train'
-            # if self.train_dataset is None or self.val_dataset is None:
-            self.train_dataset, self.val_dataset = self.preprocess_input(self.gme_dataset, data_idx)
+            self.train_dataset, self.val_dataset, self.test_dataset\
+                = self.preprocess_input(self.gme_dataset, data_idx)
             model.train(is_train)  # train(false) 等价于 eval()
             loader = self.train_dataset if is_train else self.val_dataset
 
@@ -302,7 +342,6 @@ class GmeTrainer:
                     y_hat = model(blocks, x)
                     # ignore_index=-1, 计算跳过填充值-1
                     loss = F.cross_entropy(y_hat, y, ignore_index=-1)
-                    uq = torch.unique(y)
                     # loss = self.custom_loss(y_hat, y)
                     losses.append(loss.item())
                     # 计算epoch 的总体 accuracy
@@ -333,7 +372,7 @@ class GmeTrainer:
             train_rms = math.sqrt(train_rms)
             if not is_train:
                 val_loss = float(np.mean(losses))
-                logger.info("test loss: ", val_loss)
+                logger.info("valid loss: ", val_loss)
                 return val_loss, train_acc.item(), train_rms
             else:
                 train_loss = float(np.mean(losses))
@@ -401,10 +440,8 @@ class GmeTrainer:
         # visual_acc_picture(train_acc=train_acc_list, test_acc=var_acc_list, save_path=self.config.output_dir)
         print('Testing...')
 
-        acc = self.inference(self.gme_dataset, idx=data_split_idx, has_test_label=has_test_label,
-                             save_path=vtk_file_path)
-        message = '================Test Accuracy {:.4f}================' \
-            .format(acc)
+        message = self.inference(self.gme_dataset, idx=data_split_idx, has_test_label=has_test_label,
+                                 save_path=vtk_file_path)
         print(message)
         print('This round of training takes: {}s'.format(datetime.now() - start_time))
         with open(self.log_name, "a") as log_file:
