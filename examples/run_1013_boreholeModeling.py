@@ -23,12 +23,12 @@ if __name__ == '__main__':
     # # # 从外部数据文本中加载钻孔数据
     reader = ReadExportFile()
     boreholes_data = reader.read_boreholes_data_from_text_file(dat_file_path=xm_file_path)
-    boreholes_data.get_boreholes(idx=random.sample(list(np.arange(len(boreholes_data))), 95))
+    # boreholes_data.get_boreholes(idx=random.sample(list(np.arange(len(boreholes_data))), 95))
     # 延展钻孔最底层
     boreholes_data.extend_base_layer(base_label=41)
     # 添加基底层
     boreholes_data.add_base_layer_for_each_borehole()
-    boreholes_data.plot()
+    # boreholes_data.plot()
     # boreholes_data_2 = reader.read_labels_map(
     #     map_file_path=os.path.join(root_path, 'data', 'sample_drills_0306.map'), encoding='ANSI')
 
@@ -40,7 +40,7 @@ if __name__ == '__main__':
     # 这里采用真实钻孔，不采用虚拟钻孔采样
     terrain_data = TerrainData()
     gme_models = GmeModelGraphList('gme_model', root=root_path,
-                                   split_ratio=DataSetSplit(0.8),
+                                   split_ratio=DataSetSplit(0.4, test_ratio=0.4),
                                    input_sample_data=gd,
                                    add_inverse_edge=True,
                                    grid_dims=[120, 120, 120],

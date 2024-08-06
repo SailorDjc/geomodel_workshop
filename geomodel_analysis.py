@@ -1,5 +1,7 @@
 import copy
 import pickle
+from functools import total_ordering
+
 import numpy as np
 
 import os
@@ -88,6 +90,24 @@ class DataSetSplit:
         self.train_ratio = train_ratio
         self.test_ratio = test_ratio
         self.valid_ratio = 1 - self.train_ratio - test_ratio
+
+    def __eq__(self, other):
+        if other is None:
+            return False
+        if self.test_ratio == other.test_ratio and self.valid_ratio == other.valid_ratio and \
+                self.train_ratio == other.train_ratio:
+            return True
+        else:
+            return False
+
+    def __ne__(self, other):
+        if other is None:
+            return True
+        if self.test_ratio == other.test_ratio and self.valid_ratio == other.valid_ratio and \
+                self.train_ratio == other.train_ratio:
+            return False
+        else:
+            return True
 
 
 class GmeModelGraphList(object):
@@ -273,31 +293,25 @@ class GmeModelGraphList(object):
         if idx >= len(self.graph) or idx < 0:
             raise ValueError('Input idx is out of graph array range.')
         else:
-            self.load_dglgraph(graph_id=idx)
-            node_num = self.graph[idx][0][0].num_nodes()
-            x = np.arange(node_num)
-            # 已经预先划分了训练数据，即已知标签数据
-            default_val_ratio = 0.1
-            if split_ratio.valid_ratio is None:
-                val_ratio = default_val_ratio
-            # if split_ratio.test_ratio is None or test_ratio + val_ratio >= 1:
-            #     test_ratio = (1 - val_ratio) * 0.7
-            self.load_geograph(graph_id=idx)
-            if self.geograph[idx].train_data_indexes is None:
+            print('get split Dataset')
+            if self.split_ratio is not None and split_ratio == self.split_ratio:
+                # 已经预先划分了训练数据，即已知标签数据
+                self.load_geograph(graph_id=idx)
+                train = np.array(self.geograph[idx].train_data_indexes)
+                val = np.array(self.geograph[idx].val_data_indexes)
+                test = np.array(self.geograph[idx].test_data_indexes)
+            elif split_ratio is not None:
+                self.change_val_indexes(split_ratio=split_ratio)
+                train = np.array(self.geograph[idx].train_data_indexes)
+                val = np.array(self.geograph[idx].val_data_indexes)
+                test = np.array(self.geograph[idx].test_data_indexes)
+            else:
+                self.load_dglgraph(graph_id=idx)
+                node_num = self.graph[idx][0][0].num_nodes()
+                x = np.arange(node_num)
                 # random_state 确保每次切分是确定的
                 val_train, test = train_test_split(x, test_size=split_ratio.test_ratio, random_state=2)
                 train, val = train_test_split(val_train, test_size=split_ratio.valid_ratio, random_state=2)
-            else:
-                print('get split Dataset')
-                train = np.array(self.geograph[idx].train_data_indexes)
-                if self.geograph[idx].val_data_indexes is not None and len(self.geograph[idx].val_data_indexes) > 0:
-                    val = np.array(self.geograph[idx].val_data_indexes)
-                else:
-                    train, val = train_test_split(train, test_size=split_ratio.valid_ratio, random_state=2)
-                if self.geograph[idx].test_data_indexes is not None and len(self.geograph[idx].test_data_indexes) > 0:
-                    test = np.array(self.geograph[idx].test_data_indexes)
-                else:
-                    test = np.array(list(set(x) - set(train) - set(val)))
             train_idx = torch.from_numpy(train)
             valid_idx = torch.from_numpy(val)
             test_idx = torch.from_numpy(test)
@@ -311,9 +325,8 @@ class GmeModelGraphList(object):
             self.load_geograph(graph_id=g_idx)
             self.geograph[g_idx].change_val_data_split(split_ratio=split_ratio)
             # x = np.arange(len(self.geodata[model_index].grid_points))
-            val_proportion = self.geograph[g_idx].train_data_proportion
-
-            print('The previous train data proportion is {}.'.format(val_proportion))
+            train_proportion = self.geograph[g_idx].train_data_proportion
+            print('The train data proportion is changed to {}.'.format(train_proportion))
             # self.geodata[model_index].set_virtual_geo_sample(sample_operator=sample_operator, **kwargs)
             # # 替换并存储
             if replace:

@@ -389,7 +389,8 @@ class TerrainData(object):
                     self.dst_crs = crs.CRS().from_epsg(code=4326)
 
     # 生成地形曲面
-    def create_terrain_surface_from_points(self, points_data: PointSet, resolution_xy=5):
+    def create_terrain_surface_from_points(self, points_data: PointSet, resolution_xy=5
+                                           , kernel='thin_plate_spline', smoothing=1):
         tmp_bounds = points_data.bounds
         result_bounds = bounds_merge(self.bounds, tmp_bounds)
         self._bounds = result_bounds
@@ -416,7 +417,7 @@ class TerrainData(object):
         y = known_points[:, 1]
         z = known_points[:, 2]
         print('Terrain is being built...')
-        self.interp = RBFInterpolator(list(zip(x, y, )), z)  #
+        self.interp = RBFInterpolator(list(zip(x, y, )), z, kernel=kernel, smoothing=smoothing)  #
 
         # interp = LinearNDInterpolator(list(zip(x, y)), z)
         cell_points = terrain_surface.points
@@ -427,6 +428,9 @@ class TerrainData(object):
         terrain_surface = terrain_surface.warp_by_scalar()
         terrain_surface = vtk_unstructured_grid_to_vtk_polydata(terrain_surface)
         self.grid_points = terrain_surface.cell_centers().points
+        # terrain_surface.plot()
+        terrain_surface.clear_data()
+        # terrain_surface.plot()
         self.vtk_data = terrain_surface
 
     # simplify: float 值在0-1之间，地形面三角形简化，降低地形面三角形数量

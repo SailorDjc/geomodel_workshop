@@ -97,7 +97,7 @@ if __name__ == '__main__':
     # model training
     print('Training...')
     # 开始训练
-    trainer.train(data_split_idx=model_idx, has_test_label=True)
+    trainer.train(data_split_idx=model_idx, has_test_label=True, only_inference=True)
 
     # grid_model = Grid(grid_vtk_path=os.path.join(gme_models.processed_dir, 'vtk_model.vtk'))
     # boreholes_data = gme_models.sample_data[0]  # boreholes_data,

@@ -15,10 +15,12 @@ class DglGeoDataset(DGLDataset):
     def __init__(self, dataset: GmeModelGraphList, graph_id=0, split_ratio=None, **kwargs):
         self.graph = []
         self.dataset = dataset
+        self.split_ratio = split_ratio
         if split_ratio is None:
             self.split_ratio = self.dataset.split_ratio
         else:
-            self.split_ratio = split_ratio  # 自定义验证集比例参数
+            if self.split_ratio != self.dataset.split_ratio:
+                self.split_ratio = self.dataset.split_ratio  # 自定义验证集比例参数
         # self.split_ratio = None  # 这是dgl封装的数据集切分参数
         self.target_ntype = None
         self.num_classes = getattr(self.dataset, 'num_classes', None)
@@ -37,8 +39,9 @@ class DglGeoDataset(DGLDataset):
         self.grid_data_path = None
         if grid_data_num > self.graph_id:
             self.dataset.load_geograph(graph_id=self.graph_id)
-            self.grid_data_path = os.path.join(self.dataset.geograph[self.graph_id].data.dir_path
-                                               , self.dataset.geograph[self.graph_id].data.tmp_dump_str + '.dat')
+            file_name = self.dataset.geograph[self.graph_id].data.name
+            self.grid_data_path = os.path.join(self.dataset.geograph[self.graph_id].data.dir_path, file_name
+                                               , file_name + '.dat')
         self.train_idx = []
         self.val_idx = []
         self.test_idx = []
@@ -79,9 +82,10 @@ class DglGeoDataset(DGLDataset):
                 self.graph[0].ndata['val_mask'] = val_mask
                 self.graph[0].ndata['test_mask'] = test_mask
             else:
-                if self.verbose:
-                    print('Generating train/val/test masks...')
-                utils.add_nodepred_split(self, self.split_ratio, self.target_ntype)
+                # if self.verbose:
+                #     print('Generating train/val/test masks...')
+                # utils.add_nodepred_split(self, self.split_ratio, self.target_ntype)
+                pass
             self._set_split_index(0)
 
     def __getitem__(self, idx):

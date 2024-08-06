@@ -56,7 +56,7 @@ class PointSet(object):
     def __init__(self, points: np.ndarray = None, point_labels: np.ndarray = None
                  , label_codes=None
                  , vectors: np.ndarray = None
-                 , name=None, dir_path=None):  # dir_path 数据默认保存文件夹
+                 , name=None, dir_path=None, radius=3):  # dir_path 数据默认保存文件夹
         self.name = name
         self.points = points  # 点集
         self.labels = point_labels  # 训练类别标签
@@ -85,7 +85,7 @@ class PointSet(object):
         self.epsilon = 0.00001  # 足够小，作为距离阈值
         # vtk数据唯一性编码
         self.tmp_dump_str = 'tmp_pnt' + str(int(time.time()))
-        self.buffer_dist = 5  # 点控制缓冲半径
+        self.buffer_dist = radius  # 点控制缓冲半径
         # 对象拷贝
         self.dir_path = dir_path
 

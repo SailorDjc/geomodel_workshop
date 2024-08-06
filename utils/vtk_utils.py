@@ -18,7 +18,7 @@ import collections.abc
 def voxelize(mesh, density=None, check_surface=True, tolerance=0.000000001):
     if not pv.is_pyvista_dataset(mesh):
         mesh = pv.wrap(mesh)
-    mesh.plot()
+    # mesh.plot()
     if density is None:
         density = mesh.length / 100
     if isinstance(density, (int, float, np.number)):
@@ -31,7 +31,7 @@ def voxelize(mesh, density=None, check_surface=True, tolerance=0.000000001):
     # check and pre-process input mesh
     surface = mesh.extract_geometry()  # filter preserves topology
 
-    surface.plot()
+    # surface.plot()
 
     if not surface.faces.size:
         # we have a point cloud or an empty mesh
@@ -39,6 +39,7 @@ def voxelize(mesh, density=None, check_surface=True, tolerance=0.000000001):
     if not surface.is_all_triangles:
         # reduce chance for artifacts, see gh-1743
         surface.triangulate(inplace=True)
+        surface.clean()
 
     x_min, x_max, y_min, y_max, z_min, z_max = mesh.bounds
     x = np.arange(x_min, x_max, density_x)
@@ -51,9 +52,12 @@ def voxelize(mesh, density=None, check_surface=True, tolerance=0.000000001):
     # Create unstructured grid from the structured grid
     grid = pv.StructuredGrid(x, y, z)
     ugrid = pv.UnstructuredGrid(grid)
-
+    # pl = pv.Plotter()
+    # pl.add_mesh(ugrid)
+    # pl.add_mesh(surface)
+    # pl.show()
     # get part of the mesh within the mesh's bounding surface.
-    ugrid.plot()
+    # ugrid.plot()
     selection = ugrid.select_enclosed_points(surface, tolerance=tolerance, check_surface=check_surface)
     mask = selection.point_data['SelectedPoints'].view(np.bool_)
 

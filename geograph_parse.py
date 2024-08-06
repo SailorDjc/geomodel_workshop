@@ -51,7 +51,7 @@ class GeoMeshGraphParse(object):
         # 可以外部输入，或从网格中进行采样
         self.input_sample_data = input_sample_data  # 采样数据(类型为散点、钻孔、剖面)
         self.sample_operator = []
-        self.data_sampler_list = []
+        self.data_sampler = None
         self.grid_dims = grid_dims
         self.sample_data = []
         self.default_value = default_value
@@ -98,8 +98,8 @@ class GeoMeshGraphParse(object):
                                      self_loop=False, add_inverse_edge=True, normalize=feat_normalize)
 
     def get_grid_data(self):
-        if len(self.data_sampler_list) > 0:
-            return self.data_sampler_list[0].grid
+        if self.data_sampler is not None:
+            return self.data_sampler.grid
         else:
             return None
 
@@ -113,16 +113,21 @@ class GeoMeshGraphParse(object):
     # @grid_points.setter
     # def grid_points(self, grid_points):
 
+    def get_sample_data_list(self):
+        if self.data_sampler is not None:
+            return self.data_sampler.sample_data_list
+        else:
+            return []
+
     # 设置虚拟地质采样切分以获取训练集
     def set_virtual_geo_sample(self, grid: Grid, sample_operator=None, split_ratio=None, **kwargs):
         geo_grid_sampler = GeoGridDataSampler(grid=grid, sample_operator=sample_operator, **kwargs)
         geo_grid_sampler.set_val_boreholes_ratio(split_ratio=split_ratio)
         geo_grid_sampler.execute(**kwargs)
-        self.sample_data = geo_grid_sampler.sample_data_list
         self.sample_operator = geo_grid_sampler.sample_operator
         self.train_data_indexes, self.val_data_indexes \
             , self.test_data_indexes = geo_grid_sampler.get_sample_points_indexes_for_grid_points()
-        self.data_sampler_list.append(geo_grid_sampler)
+        self.data_sampler = geo_grid_sampler
         if self.train_data_indexes is not None and len(self.train_data_indexes) > 0:
             self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
@@ -133,11 +138,8 @@ class GeoMeshGraphParse(object):
         # 将钻孔数据映射到空网格上
         geo_borehole_sample = GeoGridDataSampler(**kwargs)
         geo_borehole_sample.set_val_boreholes_ratio(split_ratio=split_ratio)
-        geo_borehole_sample.set_base_grid_by_geodataset(geodataset=input_sample_data, dims=grid_dims
-                                                        , external_grid_vtk=ext_grid)
-        geo_borehole_sample.execute()
-        self.data_sampler_list.append(geo_borehole_sample)
-        self.sample_data = self.input_sample_data.geodata_list
+        geo_borehole_sample.execute(sample_data=input_sample_data, dims=grid_dims, external_grid_vtk=ext_grid)
+        self.data_sampler = geo_borehole_sample
         self.sample_operator = geo_borehole_sample.sample_operator
         self.data = geo_borehole_sample.grid
 
@@ -145,7 +147,7 @@ class GeoMeshGraphParse(object):
         # pp = control_visibility_with_layer_label(geo_object_list=[self.data])
         # pp.show()
 
-        self.data.label_dict = self.input_sample_data.label_dict
+        # self.data.label_dict = self.input_sample_data.label_dict
         self.grid_points = self.data.grid_points
         self.grid_points_series = self.data.grid_points_series
         self.classes_num = self.data.classes_num  # np.array
@@ -157,39 +159,42 @@ class GeoMeshGraphParse(object):
 
     # 修改验证集的切分比例
     def change_val_data_split(self, split_ratio):
-        grid_sampler = GeoGridDataSampler(sample_operator=self.sample_operator)
-        grid_sampler.set_val_boreholes_ratio(split_ratio=split_ratio)
-        grid_sampler.sample_data_list = self.sample_data
-        grid_sampler.grid = self.data
-        train_idx = []
-        val_idx = []
-        for sid in range(len(self.sample_operator)):
-            grid_sampler.update_train_val_split_state(sid=sid)
-            if self.sample_operator[sid] == 'None':
-                in_train_data_idx = grid_sampler.geo_sample_data_val_map[sid]['train']
-                in_val_data_idx = grid_sampler.geo_sample_data_val_map[sid]['val']
-                if isinstance(grid_sampler.sample_data_list[sid], BoreholeSet):
-                    all_boreholes = grid_sampler.sample_data_list[sid]
-                    t_train_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
-                        sample_data=all_boreholes.get_boreholes(idx=in_train_data_idx))
-                    t_val_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
-                        sample_data=all_boreholes.get_boreholes(idx=in_val_data_idx))
-                else:
-                    all_points_data = grid_sampler.sample_data_list[sid].get_points_data()
-                    t_train_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
-                        sample_data=all_points_data.get_points_data_by_ids(ids=in_train_data_idx))
-                    t_val_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
-                        sample_data=all_points_data.get_points_data_by_ids(ids=in_val_data_idx))
-                train_idx.extend(t_train_idx)
-                val_idx.extend(t_val_idx)
-            else:
-                train_idx.extend(grid_sampler.geo_sample_data_val_map[sid]['train'])
-                val_idx.extend(grid_sampler.geo_sample_data_val_map[sid]['val'])
-        train_idx = list(np.unique(train_idx))
-        val_idx = list(np.unique(val_idx))
-        self.train_data_indexes = train_idx
-        self.val_data_indexes = val_idx
-        self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
+        if self.data_sampler is not None:
+            self.data_sampler.set_val_boreholes_ratio(split_ratio=split_ratio)
+
+            self.data_sampler.execute()
+            self.train_data_indexes, self.val_data_indexes \
+                , self.test_data_indexes = self.data_sampler.get_sample_points_indexes_for_grid_points()
+            self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
+        # else:
+        #     grid_sampler = GeoGridDataSampler(sample_operator=self.sample_operator)
+        #     grid_sampler.set_val_boreholes_ratio(split_ratio=split_ratio)
+        #     grid_sampler.sample_data_list = self.sample_data
+        #     grid_sampler.grid = self.data
+        #     train_idx = []
+        #     val_idx = []
+        #     for sid in range(len(self.sample_operator)):
+        #         grid_sampler.update_train_val_split_state(sid=sid)
+        #         if self.sample_operator[sid] == 'None':
+        #             in_train_data_idx = grid_sampler.geo_sample_data_val_map[sid]['train']
+        #             in_val_data_idx = grid_sampler.geo_sample_data_val_map[sid]['val']
+        #             if isinstance(grid_sampler.sample_data_list[sid], BoreholeSet):
+        #                 all_boreholes = grid_sampler.sample_data_list[sid]
+        #                 t_train_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
+        #                     sample_data=all_boreholes.get_boreholes(idx=in_train_data_idx))
+        #                 t_val_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
+        #                     sample_data=all_boreholes.get_boreholes(idx=in_val_data_idx))
+        #             else:
+        #                 all_points_data = grid_sampler.sample_data_list[sid].get_points_data()
+        #                 t_train_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
+        #                     sample_data=all_points_data.get_points_data_by_ids(ids=in_train_data_idx))
+        #                 t_val_idx, _ = grid_sampler.map_base_grid_points_by_sample_data(
+        #                     sample_data=all_points_data.get_points_data_by_ids(ids=in_val_data_idx))
+        #             train_idx.extend(t_train_idx)
+        #             val_idx.extend(t_val_idx)
+        #         else:
+        #             train_idx.extend(grid_sampler.geo_sample_data_val_map[sid]['train'])
+        #             val_idx.extend(grid_sampler.geo_sample_data_val_map[sid]['val'])
 
     # 添加硬数据约束
     def append_rigid_restriction(self, points_data: PointSet):
@@ -397,8 +402,8 @@ class GeoMeshGraphParse(object):
         save_dir = os.path.join(self.dir_path, self.tmp_dump_str)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        for d_i in np.arange(len(self.data_sampler_list)):
-            self.data_sampler_list[d_i].save(dir_path=save_dir, replace=replace)
+        if self.data_sampler is not None:
+            self.data_sampler.save(dir_path=save_dir, replace=replace)
         # if self.data is not None and isinstance(self.data, Grid):
         #     self.data = self.data.save(dir_path=save_dir)
         # if self.sample_data is not None:
@@ -430,9 +435,8 @@ class GeoMeshGraphParse(object):
         #             file_path = os.path.join(dir_path, rel_path)
         #         self.sample_data[s_i] = load_object(gtype=self.sample_data[s_i][0], file_path=file_path)
 
-        if len(self.data_sampler_list) > 0:
-            for d_i in np.arange(len(self.data_sampler_list)):
-                self.data_sampler_list[d_i].load(dir_path=dir_path)
+        if self.data_sampler is not None:
+            self.data_sampler.load(dir_path=dir_path)
         if dir_path is not None:
             self.dir_path = dir_path
 

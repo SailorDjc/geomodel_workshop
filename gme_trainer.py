@@ -231,8 +231,8 @@ class GmeTrainer:
 
     # data
     def inference(self, data, idx, has_test_label=True, is_show=False, save_path=None):
+        _, _, self.test_dataset = self.preprocess_input(self.gme_dataset, idx)
         model = self.model.module if hasattr(self.model, "module") else self.model
-
         graph = data[0].to(self.device)
         nodes = torch.arange(graph.number_of_nodes())
         sampler = dgl.dataloading.MultiLayerFullNeighborSampler(model.config.gnn_n_layer,
@@ -253,7 +253,7 @@ class GmeTrainer:
             grid_data = load_object(data.grid_data_path)
             grid_data.label_dict = self.label_dict
             mvk.visual_predicted_values_model(grid_data, pred, is_show=is_show, save_path=save_path)
-            if has_test_label:
+            if has_test_label and self.test_dataset is not None:
                 # test_idx = data.test_idx[idx]
                 # pred_test = pred[test_idx]
                 # label_test = graph.ndata['label'][test_idx].to(pred_test.device)
@@ -261,7 +261,7 @@ class GmeTrainer:
                 #                        , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
                 test_loss, test_acc, test_rmse = self.test(data_idx=idx)
 
-                message = '==============Test Accuracy {:.4f} Loss {: .4f} Rmse {: .4f}============='\
+                message = '==============Test Accuracy {:.4f} Loss {: .4f} Rmse {: .4f}=============' \
                     .format(test_loss, test_acc, test_rmse)
                 return message
             else:
@@ -277,14 +277,14 @@ class GmeTrainer:
 
     def test(self, data_idx=0):
         if self.test_dataset is not None:
-            model = self.model.module if hasattr(self.model, "module") else self.model
-            model.eval()
+            model = self.model
+            model.train(False)
             loader = self.test_dataset
             losses = []
             ys = []
             y_hats = []
             pbar = enumerate(loader)
-            with torch.no_grad():
+            with torch.set_grad_enabled(False):
                 for it, (input_nodes, output_nodes, blocks) in pbar:
                     x = blocks[0].srcdata['feat']
                     y = blocks[-1].dstdata['label']
@@ -306,7 +306,9 @@ class GmeTrainer:
                 logger.info("test loss: ", test_loss)
                 return test_loss, test_acc.item(), test_rms
 
-    def train(self, data_split_idx=0, has_test_label=False, early_stop_patience=10):
+    def train(self, data_split_idx=0, has_test_label=False, early_stop_patience=10, only_inference=False):
+        start_time = datetime.now()
+        # if not only_inference:
         labels_count_map = self.labels_count_map
         key_num = self.gme_dataset.num_classes['labels'][data_split_idx]
         if self.gme_dataset.num_classes['labels'][data_split_idx] != key_num:
@@ -323,8 +325,7 @@ class GmeTrainer:
         def run_epoch(split, data_idx):
             # 判断dataset是train()传入，还是self.dataset，self.datatset用于作预训练，tran()传入作为实际应用。
             is_train = split == 'train'
-            self.train_dataset, self.val_dataset, self.test_dataset\
-                = self.preprocess_input(self.gme_dataset, data_idx)
+            self.train_dataset, self.val_dataset, _ = self.preprocess_input(self.gme_dataset, data_idx)
             model.train(is_train)  # train(false) 等价于 eval()
             loader = self.train_dataset if is_train else self.val_dataset
 
@@ -401,7 +402,6 @@ class GmeTrainer:
         train_acc_list = []
         var_acc_list = []
 
-        start_time = datetime.now()
         #
         early_stopping = EarlyStopping(patience=early_stop_patience)
         for epoch in range(self.first_epoch - 1, self.max_epochs):

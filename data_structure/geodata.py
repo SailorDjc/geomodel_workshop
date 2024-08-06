@@ -81,6 +81,21 @@ class GeodataSet(object):
                 geo_data_list.append(self.search_by_rect2d(rect2d=cur_bounds))
         return geo_data_list
 
+    def get_geodata_by_ids(self, idx_dict: dict):
+        geo_data = GeodataSet()
+        for id_key in idx_dict.keys():
+            g_it = int(id_key)
+            if g_it >= len(self.geodata_list):
+                continue
+            sample_data = self.geodata_list[g_it]
+            if isinstance(sample_data, BoreholeSet):
+                geo_data.append(sample_data.get_boreholes(idx=idx_dict[id_key]))
+            if isinstance(sample_data, PointSet):
+                geo_data.append(sample_data.get_points_data_by_ids(ids=idx_dict[id_key]))
+            if isinstance(sample_data, Section):
+                geo_data.append(sample_data.get_points_data().get_points_data_by_ids(ids=idx_dict[id_key]))
+        return geo_data
+
     @property
     def center(self):
         if self.bounds is not None:
@@ -91,17 +106,6 @@ class GeodataSet(object):
             return self._center
         else:
             raise ValueError('This geodata data is empty.')
-
-    @property
-    def bounds(self):
-        for g_data in self.geodata_list:
-            points_data = g_data.get_points_data()
-            if self._bounds is None:
-                self._bounds = get_bounds_from_coords(points_data.points)
-            else:
-                new_bounds = get_bounds_from_coords(points_data.points)
-                self._bounds = bounds_merge(self._bounds, new_bounds)
-        return self._bounds
 
     def set_class_dict(self, label_dict=None):
         pass
@@ -255,9 +259,8 @@ class GeodataSet(object):
     @property
     def bounds(self):
         points_data = self.get_points_data()
-        if points_data.is_empty():
-            raise ValueError('The dataset is empty.')
-        self._bounds = get_bounds_from_coords(points_data.points)
+        if not points_data.is_empty():
+            self._bounds = get_bounds_from_coords(points_data.points)
         return self._bounds
 
     def __getitem__(self, idx):
