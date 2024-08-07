@@ -386,6 +386,7 @@ class GeoDataSampler(object):
                 if self._base_grid.dims is not None:
                     z_buffer = (self._bounds[5] - self._bounds[4]) / self._base_grid.dims[-1] / 2
             points_data = pv.PolyData(self._base_grid_points)
+            # sample_data.plot()
             for borehole_id in range(sample_data.borehole_num):
                 one_borehole = sample_data[borehole_id]
                 # 搜索范围上下缓冲一下，防止漏选
@@ -393,9 +394,9 @@ class GeoDataSampler(object):
                 hole_top_pos[2] += z_buffer
                 hole_bottom_pos = copy.deepcopy(one_borehole.bottom_pos)
                 hole_bottom_pos[2] -= z_buffer
-                line_direction = np.subtract(hole_top_pos, hole_bottom_pos)
-                if np.linalg.norm(line_direction) == 0:
-                    raise ValueError('Borehole data occur except error')
+                # line_direction = np.subtract(hole_top_pos, hole_bottom_pos)
+                # if np.linalg.norm(line_direction) == 0:
+                #     raise ValueError('Borehole data occur except error')
                 # line_direction_norm = line_direction / np.linalg.norm(line_direction)
                 # height = np.linalg.norm(hole_top_pos - hole_bottom_pos)
                 radius = one_borehole.buffer_dist_xy
@@ -838,7 +839,7 @@ class GeoSectionDataSampler(GeoDataSampler):
                 self.sample_operator = ['None']
             else:
                 self.sample_operator.append('None')
-            self.set_map_boreholes_labels_to_base_grid(boreholes=boreholes)
+            self.set_map_sample_data_labels_to_base_grid(sample_data=boreholes)
 
     # unlapped_indices = np.argwhere(boreholes_points_labels == self.default_value)
     # unlapped_indices = unlapped_indices.flatten()

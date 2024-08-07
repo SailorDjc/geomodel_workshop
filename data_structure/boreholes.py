@@ -132,6 +132,8 @@ class Borehole(object):
             self.points = np.array(tmp_points)
             self.series = np.array(tmp_labels)
             self.points_num = len(self.holelayer_list) + 1
+            self.top_pos = self.points[0]
+            self.bottom_pos = self.points[-1]
 
     # 只保留层位点
     # 遍历钻孔地层序列点，获取界面点 is_delete=False, 中间点不删除，True则删除
@@ -813,8 +815,6 @@ class BoreholeSet(object):
         out_str = pickle.dumps(self)
         out_put.write(out_str)
         out_put.close()
-        if tmp_vtk_data is not None:
-            self.vtk_data = tmp_vtk_data
         return self.__class__.__name__, file_path
 
     def load(self, dir_path=None):

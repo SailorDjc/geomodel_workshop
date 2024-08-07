@@ -28,6 +28,7 @@ if __name__ == '__main__':
     boreholes_data.extend_base_layer(base_label=41)
     # 添加基底层
     boreholes_data.add_base_layer_for_each_borehole()
+    boreholes_data.plot()
     # boreholes_data.plot()
     # boreholes_data_2 = reader.read_labels_map(
     #     map_file_path=os.path.join(root_path, 'data', 'sample_drills_0306.map'), encoding='ANSI')
@@ -45,15 +46,20 @@ if __name__ == '__main__':
                                    add_inverse_edge=True,
                                    grid_dims=[120, 120, 120],
                                    terrain_data=terrain_data)
-    gme_models.load_geograph(graph_id=model_idx)
+    gme_models.load_geograph(graph_id=model_idx, dir_path=os.path.join(root_path, 'processed'))
+
     geodata = gme_models.geograph[model_idx]
     train_idx = geodata.train_data_indexes
     val_idx = geodata.val_data_indexes
-    grid_points = geodata.data.grid_points
-    points_label = geodata.data.grid_points_series
+    test_idx = geodata.test_data_indexes
+    grid_points = geodata.get_grid_points()
+    points_label = geodata.get_grid_points_labels()
+    gd.geodata_list[0].plot()
     train_points = PointSet(points=grid_points[train_idx], point_labels=points_label[train_idx])
     val_points = PointSet(points=grid_points[val_idx], point_labels=points_label[val_idx])
-    plotter_2 = control_visibility_with_layer_label(geo_object_list=[train_points, val_points], grid_smooth=False
+    test_points = PointSet(points=grid_points[test_idx], point_labels=points_label[test_idx])
+
+    plotter_2 = control_visibility_with_layer_label(geo_object_list=[train_points, val_points, test_points, gd.geodata_list[0]], grid_smooth=False
                                                     , show_edge=False)
     plotter_2.show()
 

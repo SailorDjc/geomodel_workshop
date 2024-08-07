@@ -111,7 +111,7 @@ class DataSetSplit:
 
 
 class GmeModelGraphList(object):
-    def __init__(self, name, root, graph_id=0, grid_data: list = None, input_sample_data=None,
+    def __init__(self, name, root, graph_id=0, grid_data_list: list = None, input_sample_data=None,
                  split_ratio=DataSetSplit(0.8),
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
                  dgl_graph_param=None, update_graph=False, grid_dims=None, terrain_data=None,
@@ -123,7 +123,7 @@ class GmeModelGraphList(object):
             dgl_graph_param = [['position'], None]  # [[node_feat], [edge_feat]]
         self.is_regular = is_regular
         # 外部传入参数
-        self.grid_data = grid_data  # list[Grid]
+        self.grid_data_list = grid_data_list  # list[Grid]
         self.input_sample_data = input_sample_data
         self.grid_dims = grid_dims
         if grid_dims is None:
@@ -197,9 +197,9 @@ class GmeModelGraphList(object):
         dgl_graph_list = []
         labels_num_list = []
         save_flag = False
-        if self.grid_data is not None:
-            for model_index in np.arange(len(self.grid_data)):
-                mesh = self.grid_data[model_index]
+        if self.grid_data_list is not None:
+            for model_index in np.arange(len(self.grid_data_list)):
+                mesh = self.grid_data_list[model_index]
                 geodata = GeoMeshGraphParse(mesh, name=mesh.name)
                 dgl_graph = geodata.execute(sample_operator=self.sample_operator,
                                             edge_feat=self.dgl_graph_param[1], node_feat=self.dgl_graph_param[0],
@@ -387,7 +387,8 @@ class GmeModelGraphList(object):
                     raise ValueError('file is not exists.')
                 with open(load_path, 'rb') as file:
                     object = pickle.loads(file.read())
-                    object.load(dir_path=dir_path)
+                    cur_dir_path = os.path.dirname(load_path)
+                    object.load(dir_path=cur_dir_path)
                     self.geograph[graph_id] = object
         return self.geograph
 

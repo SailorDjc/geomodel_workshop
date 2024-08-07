@@ -157,6 +157,23 @@ class Grid(object):
                 self.vtk_data.set_active_scalars(activate_scalars)
             self.vtk_data.plot()
 
+    def points_transform(self, modefunc, factor, center=None):
+        if self.grid_points is None:
+            return
+        if center is None:
+            center = self.center
+        self.grid_points = modefunc(self.grid_points, factor, center)
+        if self.vtk_data is not None:
+            self.vtk_data.points = modefunc(self.vtk_data.points, factor, center)
+        self.bounds = get_bounds_from_coords(self.grid_points)
+        # for borehole_id in range(len(self.boreholes_list)):
+        #     if self.boreholes_list[borehole_id].points is None:
+        #         self.boreholes_list[borehole_id].update_borehole_data_by_holelayers()
+        #     self.boreholes_list[borehole_id].points = modefunc(self.boreholes_list[borehole_id].points, factor, center)
+        #     self.boreholes_list[borehole_id].update_holelayer_list()
+        # self.bounds = get_bounds_from_coords(self.points)
+
+
     @property
     def classes(self):
         self.get_classes()
@@ -493,8 +510,6 @@ class Grid(object):
         out_str = pickle.dumps(self)
         out_put.write(out_str)
         out_put.close()
-        if tmp_vtk_data is not None:
-            self.vtk_data = tmp_vtk_data
         return self.__class__.__name__, file_path
 
     # 加载该类附属的vtk模型

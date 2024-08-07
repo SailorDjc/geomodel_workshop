@@ -13,7 +13,7 @@ import copy
 
 def load_object(file_path, gtype=None):
     if not os.path.exists(file_path):
-        raise ValueError('file is not exists.')
+        raise ValueError('file {} is not exists.'.format(file_path))
     with open(file_path, 'rb') as file:
         object = pickle.loads(file.read())
         if isinstance(object, (PointSet, BoreholeSet, Grid, Section, SectionSet, GeodataSet
@@ -21,10 +21,11 @@ def load_object(file_path, gtype=None):
             dir_path = os.path.dirname(file_path)
             if gtype is not None:
                 if gtype != object.__class__.__name__:
-                    raise ValueError('The data type is inconsistent.')
+                    raise ValueError('The data type {} is inconsistent with {}.'
+                                     .format(object.__class__.__name__, gtype))
             object.load(dir_path=dir_path)
         else:
-            raise ValueError("Unsupported data type.")
+            raise ValueError("Unsupported data type {}.".format(object.__class__.__name__))
         return object
 
 
@@ -303,8 +304,10 @@ class GeodataSet(object):
         for s_id in np.arange(len(self.geodata_list)):
             file_path = self.geodata_list[s_id][1]
             if dir_path is not None:
-                rel_path = os.path.relpath(self.geodata_list[s_id][1], self.dir_path)
-                file_path = os.path.join(dir_path, rel_path)
+                file_name = os.path.basename(self.geodata_list[s_id][1])
+                dir_name = os.path.splitext(file_name)[0]
+                rel_path = os.path.join(dir_path, dir_name, file_name)
+                file_path = rel_path
             self.geodata_list[s_id] = load_object(file_path=file_path
                                                   , gtype=self.geodata_list[s_id][0])
         if dir_path is not None:

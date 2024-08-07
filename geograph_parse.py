@@ -28,26 +28,27 @@ import pickle
 
 class GeoMeshGraphParse(object):
     def __init__(self, mesh: Grid = None, input_sample_data: GeodataSet = None, grid_dims=None, name=None
-                 , is_normalize=False, dir_path=None, default_value=-1, is_regular=True):  # , pre_train=True
+                 , is_normalize=True, dir_path=None, default_value=-1, is_regular=True):  # , pre_train=True
         self.name = name
         self.is_normalize = is_normalize  # 坐标是否归一化
-        self.data = mesh
+        self.base_grid = mesh
         self.is_regular = is_regular
         if mesh is not None:
             self.center = mesh.center  # 输入mesh的中心点坐标
             # ori 即输入的原始地质格网数据, 原始模型数据均不做更改，坐标、标签变换在 sample数据中进行
-            self.grid_points = mesh.grid_points
-            self.grid_points_series = mesh.grid_points_series
-            self.classes_num = mesh.classes_num  # np.array
+            self._grid_points = mesh.grid_points
+            self._grid_points_series = mesh.grid_points_series
+            self._classes_num = mesh.classes_num  # np.array
         # 图参数
         self.is_create_graph = False  # 为False是外部传入图数据，内部无需构建，为True则是内部构建图
         self.edge_list = None  # list 边集（采样数据，包括训练数据与测试数据）
+
         # 训练数据样本构建，随机散点、钻孔、剖面，作为带标签数据输入模型进行训练
         self.train_data_indexes = None  # list 训练数据的idx索引, 对应self.grid_points
         self.val_data_indexes = None
         self.test_data_indexes = None
-
         self.train_data_proportion = 0  # 已知标签数据比例
+
         # 可以外部输入，或从网格中进行采样
         self.input_sample_data = input_sample_data  # 采样数据(类型为散点、钻孔、剖面)
         self.sample_operator = []
@@ -64,10 +65,52 @@ class GeoMeshGraphParse(object):
 
     def get_labels_count_map(self):
         labels_count_map = {}
-        for ll in np.unique(self.grid_points_series):
-            if ll != -1:
-                labels_count_map[ll] = np.sum(self.grid_points_series == ll)
+        grid_labels = self.get_grid_points_labels()
+        if grid_labels is not None:
+            for ll in np.unique(grid_labels):
+                if ll != -1:
+                    labels_count_map[ll] = np.sum(grid_labels == ll)
         return labels_count_map
+
+    def get_base_grid(self):
+        if self.base_grid is not None:
+            return self.base_grid
+        if self.data_sampler is not None:
+            return self.data_sampler.grid
+        else:
+            return None
+
+    # self.grid_points = self.data.grid_points
+    # self.grid_points_series = self.data.grid_points_series
+    def get_grid_points(self):
+        grid_data = self.get_base_grid()
+        if grid_data is not None:
+            return grid_data.grid_points
+        else:
+            return None
+
+    def get_grid_points_labels(self):
+        grid_data = self.get_base_grid()
+        if grid_data is not None:
+            return grid_data.grid_points_series
+        else:
+            return None
+
+    @property
+    def classes(self):
+        grid_data = self.get_base_grid()
+        if grid_data is not None:
+            return grid_data.classes
+        else:
+            return None
+
+    @property
+    def classes_num(self):
+        grid_data = self.get_base_grid()
+        if grid_data is not None:
+            return grid_data.classes_num
+        else:
+            return 0
 
     def execute(self, sample_operator=None, edge_feat=None, node_feat=None, feat_normalize=False,
                 is_create_graph=True, ext_grid=None, split_ratio=None, **kwargs):
@@ -79,8 +122,8 @@ class GeoMeshGraphParse(object):
         # 对标签标准化处理
         # self.map_grid_vertex_labels()
         # 选择测试模型的样本形式
-        if self.data is not None:
-            self.set_virtual_geo_sample(grid=self.data, sample_operator=sample_operator, split_ratio=split_ratio,
+        if self.base_grid is not None:
+            self.set_virtual_geo_sample(grid=self.base_grid, sample_operator=sample_operator, split_ratio=split_ratio,
                                         **kwargs)
         elif self.input_sample_data is not None and len(self.input_sample_data) > 0:
             self.set_geo_sample_data(input_sample_data=self.input_sample_data, grid_dims=self.grid_dims
@@ -94,14 +137,8 @@ class GeoMeshGraphParse(object):
             self.get_edge_weight_feat(edge_feat=edge_feat_type, normalize=feat_normalize)
 
         return self.create_dgl_graph(edge_list=np.int64(self.edge_list).transpose(), node_feat=self.node_feat,
-                                     edge_feat=self.edge_feat, node_label=np.int64(self.grid_points_series),
-                                     self_loop=False, add_inverse_edge=True, normalize=feat_normalize)
-
-    def get_grid_data(self):
-        if self.data_sampler is not None:
-            return self.data_sampler.grid
-        else:
-            return None
+                                     edge_feat=self.edge_feat, node_label=np.int64(self.get_grid_points_labels()),
+                                     self_loop=False, add_inverse_edge=True)
 
     # @property
     # def grid_points(self):
@@ -129,7 +166,7 @@ class GeoMeshGraphParse(object):
             , self.test_data_indexes = geo_grid_sampler.get_sample_points_indexes_for_grid_points()
         self.data_sampler = geo_grid_sampler
         if self.train_data_indexes is not None and len(self.train_data_indexes) > 0:
-            self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
+            self.train_data_proportion = len(self.train_data_indexes) / len(self.get_grid_points())
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
 
     # 设置真实的地质采样数据，将采样数据映射到建模网格上
@@ -141,20 +178,10 @@ class GeoMeshGraphParse(object):
         geo_borehole_sample.execute(sample_data=input_sample_data, dims=grid_dims, external_grid_vtk=ext_grid)
         self.data_sampler = geo_borehole_sample
         self.sample_operator = geo_borehole_sample.sample_operator
-        self.data = geo_borehole_sample.grid
-
-        from utils.plot_utils import control_visibility_with_layer_label
-        # pp = control_visibility_with_layer_label(geo_object_list=[self.data])
-        # pp.show()
-
-        # self.data.label_dict = self.input_sample_data.label_dict
-        self.grid_points = self.data.grid_points
-        self.grid_points_series = self.data.grid_points_series
-        self.classes_num = self.data.classes_num  # np.array
         self.train_data_indexes, self.val_data_indexes \
             , self.test_data_indexes = geo_borehole_sample.get_sample_points_indexes_for_grid_points()
         if self.train_data_indexes is not None and len(self.train_data_indexes) > 0:
-            self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
+            self.train_data_proportion = len(self.train_data_indexes) / len(self.get_grid_points())
             print('Set train_data_proportion is {} ...'.format(self.train_data_proportion))
 
     # 修改验证集的切分比例
@@ -165,7 +192,7 @@ class GeoMeshGraphParse(object):
             self.data_sampler.execute()
             self.train_data_indexes, self.val_data_indexes \
                 , self.test_data_indexes = self.data_sampler.get_sample_points_indexes_for_grid_points()
-            self.train_data_proportion = len(self.train_data_indexes) / len(self.grid_points)
+            self.train_data_proportion = len(self.train_data_indexes) / len(self.get_grid_points())
         # else:
         #     grid_sampler = GeoGridDataSampler(sample_operator=self.sample_operator)
         #     grid_sampler.set_val_boreholes_ratio(split_ratio=split_ratio)
@@ -197,28 +224,28 @@ class GeoMeshGraphParse(object):
         #             val_idx.extend(grid_sampler.geo_sample_data_val_map[sid]['val'])
 
     # 添加硬数据约束
-    def append_rigid_restriction(self, points_data: PointSet):
-        selected_points_data = points_data.search_by_rect3d(rect3d=self.data.bounds)
-        if self.is_regular:
-            ckt = spt.cKDTree(self.grid_points)
-            rigid_points = selected_points_data.points
-            rigid_labels = selected_points_data.labels
-            d, pid = ckt.query(rigid_points)
-            s_ids, s_labels = remove_repeated_elements_with_lists(list_item_1=pid, list_item_2=rigid_labels)
-            self.data.grid_points_series[s_ids] = s_labels
-            self.grid_points_series = self.data.grid_points_series
-            uq = np.unique(self.grid_points_series)
-            self.train_data_indexes.extend(list(s_ids))
-            self.train_data_indexes = list(sorted(set(self.train_data_indexes)))
-            self.val_data_indexes = list(set(self.val_data_indexes) - set(self.train_data_indexes))
-            labels = self.grid_points_series[self.train_data_indexes]
-            uq_0 = np.unique(labels)
-            labels_1 = self.grid_points_series[self.val_data_indexes]
-            uq_1 = np.unique(labels_1)
+    # def append_rigid_restriction(self, points_data: PointSet):
+    #     selected_points_data = points_data.search_by_rect3d(rect3d=self.data.bounds)
+    #     if self.is_regular:
+    #         ckt = spt.cKDTree(self.grid_points)
+    #         rigid_points = selected_points_data.points
+    #         rigid_labels = selected_points_data.labels
+    #         d, pid = ckt.query(rigid_points)
+    #         s_ids, s_labels = remove_repeated_elements_with_lists(list_item_1=pid, list_item_2=rigid_labels)
+    #         # self.data.grid_points_series[s_ids] = s_labels
+    #         # self.grid_points_series = self.data.grid_points_series
+    #         uq = np.unique(self.get_grid_points_labels())
+    #         self.train_data_indexes.extend(list(s_ids))
+    #         self.train_data_indexes = list(sorted(set(self.train_data_indexes)))
+    #         self.val_data_indexes = list(set(self.val_data_indexes) - set(self.train_data_indexes))
+    #         labels = self.get_grid_points_labels()[self.train_data_indexes]
+    #         uq_0 = np.unique(labels)
+    #         labels_1 = self.get_grid_points_labels()[self.val_data_indexes]
+    #         uq_1 = np.unique(labels_1)
 
     # 要保证 edge_list 图中没有自环
     def create_dgl_graph(self, edge_list=None, node_feat=None, edge_feat=None, node_label=None,
-                         self_loop=False, add_inverse_edge=False, normalize=False, is_regular_grid=True):
+                         self_loop=False, add_inverse_edge=False, is_regular_grid=True):
 
         # 为每一个节点添加一个固定属性-坐标 coord
         # edge_list  node_feat edge_feat node_label add_inverse_edge
@@ -256,10 +283,10 @@ class GeoMeshGraphParse(object):
         else:
             graph['node_feat'] = None
         # 记录每一个图节点的空间坐标
-        if normalize is True:
+        if self.is_normalize is True:
             sample_points = np.float32(self.grid_points_normalize())
         else:
-            sample_points = np.float32(self.grid_points)
+            sample_points = np.float32(self.get_grid_points())
         graph['position'] = sample_points[0:num_node]
         graph['num_nodes'] = num_node
         g = dgl.graph((graph['edge_index'][0], graph['edge_index'][1]), num_nodes=graph['num_nodes'])
@@ -274,7 +301,7 @@ class GeoMeshGraphParse(object):
         return g
 
     def is_connected_graph(self):
-        if self.grid_points is None:
+        if self.get_grid_points() is None:
             raise ValueError('Graph Data is empty.')
         elif self.edge_list is None:
             print('Graph Data is empty.')
@@ -284,26 +311,24 @@ class GeoMeshGraphParse(object):
             return is_connected
 
     # 如果normalize为False， 临时输出归一化坐标，但是对self.grid_matrix_point不做更新
-    def grid_points_normalize(self, normalize=False):
-        if self.grid_points is None:
-            raise ValueError
+    def grid_points_normalize(self, normalize=True):
+        if self.get_grid_points() is None:
+            raise ValueError('Graph Data is empty.')
         # 判断如果已经对网格坐标点进行了normalize操作，则直接返回网格坐标点
-        if self.is_normalize is True:
-            return self.grid_points
-        minmax_pnt = preprocessing.MinMaxScaler(feature_range=(-1, 1)).fit_transform(self.grid_points)
         if normalize:
-            self.grid_points = minmax_pnt
-            self.is_normalize = normalize
-        return minmax_pnt
+            minmax_pnt = preprocessing.MinMaxScaler(feature_range=(-1, 1)).fit_transform(self.get_grid_points())
+            return minmax_pnt
+        else:
+            return self.get_grid_points()
 
     # 构建图结构边集合，采用delaunay三角剖分
     def get_triangulate_edges(self, tetgen_mode=True):
         print('Building Delaunay Tetgen of {}'.format(self.name))
         edge_list = []
-        if self.grid_points is not None:
-            vertex = self.grid_points
+        if self.get_grid_points() is not None:
+            vertex = self.get_grid_points()
         else:
-            raise ValueError
+            raise ValueError('Data is empty.')
         if tetgen_mode:
             tri = pytetgen.Delaunay(vertex)
             tet_list = tri.simplices
@@ -328,7 +353,7 @@ class GeoMeshGraphParse(object):
         axis_labels = ['x', 'y', 'z']
         label_to_index = {label: index for index, label in enumerate(axis_labels)}
         ax_index = label_to_index[axis_label]
-        grid_point = self.grid_points
+        grid_point = self.get_grid_points()
         # 投影面，目前只能投影到坐标轴平面上，如 'x', 'y'
         pro_ind = [ind for ind in np.arange(3) if ind != ax_index]
         # 转二维坐标，然后构建三角网
@@ -365,7 +390,7 @@ class GeoMeshGraphParse(object):
         if normalize is True:
             sample_points = self.grid_points_normalize()
         else:
-            sample_points = self.grid_points
+            sample_points = self.get_grid_points()
         for item in self.edge_list:
             if edge_feat == 'euclidean':
                 coord_i = sample_points[item[0]]
@@ -403,6 +428,7 @@ class GeoMeshGraphParse(object):
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         if self.data_sampler is not None:
+            self.input_sample_data = None
             self.data_sampler.save(dir_path=save_dir, replace=replace)
         # if self.data is not None and isinstance(self.data, Grid):
         #     self.data = self.data.save(dir_path=save_dir)
@@ -415,6 +441,7 @@ class GeoMeshGraphParse(object):
         file_name = self.tmp_dump_str
         file_path = os.path.join(save_dir, file_name + '.dat')
         out_put = open(file_path, 'wb')
+        self.base_grid = None
         out_str = pickle.dumps(self)
         out_put.write(out_str)
         out_put.close()
@@ -437,6 +464,10 @@ class GeoMeshGraphParse(object):
 
         if self.data_sampler is not None:
             self.data_sampler.load(dir_path=dir_path)
+            if 'None' in self.data_sampler.sample_operator:
+                s_id = self.data_sampler.sample_operator.index('None')
+                self.input_sample_data = self.data_sampler.sample_data_list[s_id]
+        self.base_grid = self.get_base_grid()
         if dir_path is not None:
             self.dir_path = dir_path
 

@@ -1,10 +1,9 @@
 from data_structure.reader import ReadExportFile
-from data_structure.geodata import GeodataSet, Grid, BoreholeSet, Borehole
+from data_structure.geodata import *
 from dgl_geodataset import DglGeoDataset
-from geomodel_analysis import GmeModelGraphList, GeoDataMLClassifier
-from gme_trainer import GmeTrainer, GmeTrainerConfig, GraphTransConfig
+from geomodel_analysis import *
+from gme_trainer import *
 from models.model import GraphTransfomer
-from data_structure.terrain import TerrainData
 import numpy as np
 import os
 from utils.plot_utils import control_visibility_with_layer_label, visual_multiple_model
@@ -59,7 +58,7 @@ if __name__ == "__main__":
                                    model_depth=model_depth,
                                    grid_dims=[120, 120, 50],
                                    grid_cell_density=[2, 2, 1],
-                                   val_ratio=0.2,
+                                   split_ratio=DataSetSplit(train_ratio=0.6, test_ratio=0.1),
                                    is_regular=True,
                                    update_graph=False)  # 不规则网格
     gme_models.load_geograph(graph_id=0)
@@ -91,7 +90,7 @@ if __name__ == "__main__":
     # model training
     print('Training...')
     # 开始训练
-    trainer.train(data_split_idx=model_idx, has_test_label=False)
+    trainer.train(data_split_idx=model_idx, has_test_label=False, early_stop_patience=30)
 
 
 
