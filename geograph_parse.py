@@ -156,6 +156,13 @@ class GeoMeshGraphParse(object):
         else:
             return []
 
+    def get_sample_data(self, s_id, dataset: str ='train'):
+        if self.data_sampler is not None:
+            sample_idx = GeoGridDataSampler().geo_sample_data_val_map[s_id][dataset]
+            sample_data = GeoGridDataSampler().sample_data_list[s_id]
+        else:
+            return None
+
     # 设置虚拟地质采样切分以获取训练集
     def set_virtual_geo_sample(self, grid: Grid, sample_operator=None, split_ratio=None, **kwargs):
         geo_grid_sampler = GeoGridDataSampler(grid=grid, sample_operator=sample_operator, **kwargs)

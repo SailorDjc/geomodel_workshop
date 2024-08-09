@@ -19,7 +19,7 @@ from utils.vtk_utils import CreateLUT
 from utils.math_libs import *
 matplotlib.use("TkAgg")
 
-
+pv.read(filename='')
 # 根据神经网络的预测值，生成基于网格的地质模型，网格已经在geodata中指定
 def visual_predicted_values_model(grid_data, cell_values, is_show=True, save_path=None):
     if isinstance(cell_values, torch.Tensor):

@@ -43,31 +43,33 @@ if __name__ == '__main__':
     gme_models = GmeModelGraphList('gme_model', root=root_path,
                                    split_ratio=DataSetSplit(0.4, test_ratio=0.4),
                                    input_sample_data=gd,
+                                   dir_path=os.path.join(root_path, 'processed'),
                                    add_inverse_edge=True,
                                    grid_dims=[120, 120, 120],
                                    terrain_data=terrain_data)
-    gme_models.load_geograph(graph_id=model_idx, dir_path=os.path.join(root_path, 'processed'))
+    # gme_models.load_geograph(graph_id=model_idx, dir_path=os.path.join(root_path, 'processed'))
 
-    geodata = gme_models.geograph[model_idx]
-    train_idx = geodata.train_data_indexes
-    val_idx = geodata.val_data_indexes
-    test_idx = geodata.test_data_indexes
-    grid_points = geodata.get_grid_points()
-    points_label = geodata.get_grid_points_labels()
-    gd.geodata_list[0].plot()
-    train_points = PointSet(points=grid_points[train_idx], point_labels=points_label[train_idx])
-    val_points = PointSet(points=grid_points[val_idx], point_labels=points_label[val_idx])
-    test_points = PointSet(points=grid_points[test_idx], point_labels=points_label[test_idx])
-
-    plotter_2 = control_visibility_with_layer_label(geo_object_list=[train_points, val_points, test_points, gd.geodata_list[0]], grid_smooth=False
-                                                    , show_edge=False)
-    plotter_2.show()
+    # geodata = gme_models.geograph[model_idx]
+    #
+    # train_idx = geodata.train_data_indexes
+    # val_idx = geodata.val_data_indexes
+    # test_idx = geodata.test_data_indexes
+    # grid_points = geodata.get_grid_points()
+    # points_label = geodata.get_grid_points_labels()
+    # gd.geodata_list[0].plot()
+    # train_points = PointSet(points=grid_points[train_idx], point_labels=points_label[train_idx])
+    # val_points = PointSet(points=grid_points[val_idx], point_labels=points_label[val_idx])
+    # test_points = PointSet(points=grid_points[test_idx], point_labels=points_label[test_idx])
+    #
+    # plotter_2 = control_visibility_with_layer_label(geo_object_list=[train_points, val_points, test_points, gd.geodata_list[0]], grid_smooth=False
+    #                                                 , show_edge=False)
+    # plotter_2.show()
 
     dataset = DglGeoDataset(gme_models)
 
     # initialize a trainer instance and kick off training
     # 模型训练相关参数    初始训练参数的设置
-    trainer_config = GmeTrainerConfig(max_epochs=1500, batch_size=512, num_workers=4, learning_rate=1e-4,
+    trainer_config = GmeTrainerConfig(max_epochs=5, batch_size=512, num_workers=4, learning_rate=1e-4,
                                       ckpt_path=os.path.join(root_path, 'processed', 'latest_tran.pth'),
                                       output_dir=os.path.join(root_path, 'output'),
                                       out_put_grid_file_name=os.path.join(root_path, 'output', 'vtk_model'),

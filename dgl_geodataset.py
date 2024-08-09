@@ -32,16 +32,16 @@ class DglGeoDataset(DGLDataset):
             self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
         self.grid_data = []
         grid_data_num = len(self.dataset.geograph)
-        #
-        self.dataset.load_geograph(graph_id=self.graph_id)
-        self.labels_count_map = self.dataset.geograph[self.graph_id].get_labels_count_map()
-        self.processed_path = self.dataset.processed_dir
         self.grid_data_path = None
         if grid_data_num > self.graph_id:
-            self.dataset.load_geograph(graph_id=self.graph_id)
+            self.dataset.load_geograph(graph_id=self.graph_id, dir_path=dataset.dir_path)
             file_name = self.dataset.geograph[self.graph_id].base_grid.name
-            self.grid_data_path = os.path.join(self.dataset.geograph[self.graph_id].base_grid.dir_path, file_name
+            self.grid_data_path = os.path.join(self.dataset.geograph[self.graph_id].base_grid.dir_path
                                                , file_name + '.dat')
+        else:
+            raise ValueError('Graph data is empty.')
+        self.labels_count_map = self.dataset.geograph[self.graph_id].get_labels_count_map()
+        self.processed_path = self.dataset.processed_dir
         self.train_idx = []
         self.val_idx = []
         self.test_idx = []
@@ -53,7 +53,7 @@ class DglGeoDataset(DGLDataset):
     def process(self):
         self.graph.clear()
         if self.graph_id < self.dataset.__len__():
-            self.dataset.load_dglgraph(graph_id=self.graph_id)
+            self.dataset.load_dglgraph(graph_id=self.graph_id, dir_path=self.dataset.dir_path)
             g = self.dataset[self.graph_id].clone()
             self.graph.append(g)
             train_idx = []

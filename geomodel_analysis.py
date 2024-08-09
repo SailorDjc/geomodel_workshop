@@ -113,6 +113,7 @@ class DataSetSplit:
 class GmeModelGraphList(object):
     def __init__(self, name, root, graph_id=0, grid_data_list: list = None, input_sample_data=None,
                  split_ratio=DataSetSplit(0.8),
+                 dir_path=None,
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
                  dgl_graph_param=None, update_graph=False, grid_dims=None, terrain_data=None,
                  grid_cell_density=None, model_depth=None, is_regular=True, **kwargs):
@@ -137,7 +138,7 @@ class GmeModelGraphList(object):
         self.root = root  # 代码工作空间根目录， 会默认将处理后数据存放在 root/processed目录下
         self.name = name  # 数据集名称
         self.update_graph = update_graph
-
+        self.dir_path = dir_path
         self.graph_log = {}  # 待删除
         self.num_classes = None  # 数据集分类数目
         self.terrain_data = terrain_data  # 地形数据
@@ -296,7 +297,7 @@ class GmeModelGraphList(object):
             print('get split Dataset')
             if self.split_ratio is not None and split_ratio == self.split_ratio:
                 # 已经预先划分了训练数据，即已知标签数据
-                self.load_geograph(graph_id=idx)
+                self.load_geograph(graph_id=idx, dir_path=self.dir_path)
                 train = np.array(self.geograph[idx].train_data_indexes)
                 val = np.array(self.geograph[idx].val_data_indexes)
                 test = np.array(self.geograph[idx].test_data_indexes)
@@ -306,7 +307,7 @@ class GmeModelGraphList(object):
                 val = np.array(self.geograph[idx].val_data_indexes)
                 test = np.array(self.geograph[idx].test_data_indexes)
             else:
-                self.load_dglgraph(graph_id=idx)
+                self.load_dglgraph(graph_id=idx, dir_path=self.dir_path)
                 node_num = self.graph[idx][0][0].num_nodes()
                 x = np.arange(node_num)
                 # random_state 确保每次切分是确定的
@@ -322,7 +323,7 @@ class GmeModelGraphList(object):
         geograph_num = len(self.geograph)
         if g_idx < geograph_num:
             print('Changing Graph Data val_data proportion ...')
-            self.load_geograph(graph_id=g_idx)
+            self.load_geograph(graph_id=g_idx, dir_path=self.dir_path)
             self.geograph[g_idx].change_val_data_split(split_ratio=split_ratio)
             # x = np.arange(len(self.geodata[model_index].grid_points))
             train_proportion = self.geograph[g_idx].train_data_proportion
@@ -337,9 +338,9 @@ class GmeModelGraphList(object):
     def append_rigid_ristriction(self, points_data, g_idx=0):
         geograph_num = len(self.geograph)
         if g_idx < geograph_num:
-            self.load_geograph(graph_id=g_idx)
+            self.load_geograph(graph_id=g_idx, dir_path=self.dir_path)
             self.geograph[g_idx].append_rigid_restriction(points_data)
-            self.load_dglgraph(graph_id=g_idx)
+            self.load_dglgraph(graph_id=g_idx, dir_path=self.dir_path)
             node_label = self.geograph[g_idx].grid_points_series
             label_num = len(np.unique(node_label))
             if -1 in np.unique(node_label):
@@ -363,10 +364,16 @@ class GmeModelGraphList(object):
         self.graph_log[key_name] = values
 
     # 将图数据从文件加载到内存
-    def load_dglgraph(self, graph_id=0):
+    def load_dglgraph(self, graph_id=0, dir_path=None):
         if graph_id < len(self.graph):
             dgl_path = self.graph[graph_id]
             if isinstance(dgl_path, str):
+                if dir_path is not None:
+                    file_path = os.path.basename(dgl_path)
+                    rel_path = os.path.join(dir_path, file_path)
+                    dgl_path = str(rel_path)
+                if not os.path.exists(dgl_path):
+                    raise ValueError('file {} is not exists.'.format(dgl_path))
                 print('Loading {}th dglgraph'.format(graph_id))
                 self.graph[graph_id] = load_graphs(filename=dgl_path)
         return self.graph
@@ -384,7 +391,7 @@ class GmeModelGraphList(object):
                     rel_path = os.path.join(dir_path, dir_name, file_path)
                     load_path = rel_path
                 if not os.path.exists(load_path):
-                    raise ValueError('file is not exists.')
+                    raise ValueError('file {} is not exists.'.format(load_path))
                 with open(load_path, 'rb') as file:
                     object = pickle.loads(file.read())
                     cur_dir_path = os.path.dirname(load_path)
@@ -415,7 +422,7 @@ class GmeModelGraphList(object):
 
     def __getitem__(self, idx):
         if idx < len(self.graph):
-            self.load_dglgraph(graph_id=idx)
+            self.load_dglgraph(graph_id=idx, dir_path=self.dir_path)
             return self.graph[idx][0][0]
 
     def __len__(self):

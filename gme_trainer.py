@@ -262,7 +262,7 @@ class GmeTrainer:
                 test_loss, test_acc, test_rmse = self.test(data_idx=idx)
 
                 message = '==============Test Accuracy {:.4f} Loss {: .4f} Rmse {: .4f}=============' \
-                    .format(test_loss, test_acc, test_rmse)
+                    .format(test_acc, test_loss, test_rmse)
                 return message
             else:
                 # 用验证集精度替代

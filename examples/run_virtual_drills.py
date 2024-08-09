@@ -54,14 +54,13 @@ if __name__ == "__main__":
     gme_models = GmeModelGraphList('gme_model', root=root_path,
                                    input_sample_data=geodataset,  #
                                    add_inverse_edge=True,
-                                   terrain_data=None, # terr_seg,
+                                   terrain_data=None,  # terr_seg,
                                    model_depth=model_depth,
                                    grid_dims=[120, 120, 50],
                                    grid_cell_density=[2, 2, 1],
                                    split_ratio=DataSetSplit(train_ratio=0.6, test_ratio=0.1),
                                    is_regular=True,
                                    update_graph=False)  # 不规则网格
-    gme_models.load_geograph(graph_id=0)
 
     dataset = DglGeoDataset(gme_models, graph_id=model_idx)
 
@@ -72,6 +71,7 @@ if __name__ == "__main__":
                                       output_dir=os.path.join(root_path, 'output'),
                                       out_put_grid_file_name='vtk_sec_model_{}'.format(model_idx),
                                       sample_neigh=[10, 10, 15, 15], gpu_num=1)
+
     # 从图数据集中取出一张图
     g = dataset[0]
     # create GraphSAGE model
