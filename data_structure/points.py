@@ -7,7 +7,7 @@ from sklearn.cluster import DBSCAN
 import time
 import os
 import pickle
-from utils.vtk_utils import get_bounds_from_coords
+from utils.math_libs import get_bounds_from_coords, remove_duplicate_points, add_point_to_point_set_if_no_duplicate
 from typing import List
 
 
@@ -226,6 +226,13 @@ class PointSet(object):
                 self.set_vectors(new_item.vectors)
             else:
                 raise ValueError('Neither of the two merged objects can be null.')
+
+    # 添加点到点集，查重，返回点在点集中的索引
+    def append_search_point_without_labels(self, insert_point):
+        if self.points is None:
+            self.points = []
+        self.points, r_id = add_point_to_point_set_if_no_duplicate(self.points, insert_point)
+        return self.points, r_id
 
     # 对于要合并的points_data属性，只合并共有属性，若出现属性不一致的情况，则该属性数据丢失
     @staticmethod

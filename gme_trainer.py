@@ -412,13 +412,14 @@ class GmeTrainer:
             val_rmse = 0
             if self.val_dataset is not None:
                 val_loss, val_acc, val_rmse = run_epoch('test', data_split_idx)
-            message = f"Epoch {epoch + 1}, Train loss: {train_loss}, Train acc: {train_acc}, Train rmse: {train_rmse}, Val loss: {val_loss}, Val acc: {val_acc}, Val rmse: {val_rmse}"
-            print(message)
+
             train_loss_list.append(train_loss)
             train_acc_list.append(train_acc)
             val_loss_list.append(val_loss)
             var_acc_list.append(val_acc)
             early_stopping(val_loss)
+            message = f"Epoch {epoch + 1}, Train loss: {train_loss}, Train acc: {train_acc}, Train rmse: {train_rmse}, Val loss: {val_loss}, Val acc: {val_acc}, Val rmse: {val_rmse}, Stop Count: {early_stopping.counter}"
+            print(message)
             with open(self.log_name, "a") as log_file:
                 message_write = f"{epoch + 1},{train_loss},{train_acc},{train_rmse},{val_loss},{val_acc},{val_rmse}"
                 log_file.write('%s\n' % message_write)

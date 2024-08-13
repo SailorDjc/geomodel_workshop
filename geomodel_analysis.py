@@ -150,7 +150,7 @@ class GmeModelGraphList(object):
         self.processed_dir = processed_dir
         if not os.path.exists(self.processed_dir):
             os.makedirs(self.processed_dir)
-        self.processed_file_path = os.path.join(processed_dir, 'gme_data_processed')  # 存储与训练的dgl_graph图数据
+        self.processed_dglgraph_path = os.path.join(processed_dir, 'dgl_graph')  # 存储与训练的dgl_graph图数据
         self.processed_geodata_path = os.path.join(processed_dir, 'geograph.pkl')  # 存储geodata模型数据
         # 待删除
         # 记录 dgl_graph, 以及图生成参数，包括node_feat类型, edge_feat类型,类别数, 节点数, 边数.
@@ -176,14 +176,6 @@ class GmeModelGraphList(object):
             self.num_classes = self.graph_log['num_classes']
         else:
             self.graph_log = {'graph': [], 'geograph': [], 'num_classes': {'labels': []}}
-        # 加载dgl_graph和geodata, 其中dgl_graph是图神经网络训练的数据源, geodata主要存储地质数据源用来可视化分析
-        # if os.path.exists(self.processed_geodata_path):  # geodata
-        #     self.load_geograph(graph_id=self.graph_id)
-        #     print('Loading {}th GeoModel Data ...'.format(self.graph_id))
-        # 加载图数据
-        # if os.path.exists(self.processed_file_path + str(self.graph_id)):
-        #     self.graph, self.num_classes = load_graphs(self.processed_file_path + str(self.graph_id))  # dgl_graph
-        #     print('Loading {} Saved Graphs Files Data ...'.format(len(self.graph)))
         # 容器初始化
         if self.graph is None:
             self.graph = []
@@ -195,9 +187,7 @@ class GmeModelGraphList(object):
     # 将网格数据处理为图结构数据
     def process_grid_data_to_graph_data(self):
         # 批量处理每一个地质模型数据文件
-        dgl_graph_list = []
         labels_num_list = []
-        save_flag = False
         if self.grid_data_list is not None:
             for model_index in np.arange(len(self.grid_data_list)):
                 mesh = self.grid_data_list[model_index]
@@ -214,10 +204,8 @@ class GmeModelGraphList(object):
                 # print('is_connected:', is_connected)
                 print('Saving geograph...')
                 self.geograph.append(geodata.save(dir_path=self.processed_dir, replace=True))
-                dgl_graph_path = self.processed_file_path + '_' + str(pre_save_graph_num)
+                dgl_graph_path = self.processed_dglgraph_path + '_' + str(pre_save_graph_num)
                 save_graphs(dgl_graph_path, [dgl_graph])
-                # dgl_graph_list.append(dgl_graph_path)
-                save_flag = False
                 self.graph.append(dgl_graph_path)
             if torch.is_tensor(self.num_classes['labels']):
                 self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
@@ -273,18 +261,18 @@ class GmeModelGraphList(object):
                     pre_save_graph_num = len(self.graph)
                     print('Saving geograph...')
                     self.geograph.append(geodata.save(self.processed_dir))
-                    dgl_graph_path = self.processed_file_path + '_' + str(pre_save_graph_num)
+                    dgl_graph_path = self.processed_dglgraph_path + '_' + str(pre_save_graph_num)
                     save_graphs(dgl_graph_path, [dgl_graph])
-                    # dgl_graph_list.append(dgl_graph_path)
-                    save_flag = False
                     self.graph.append(dgl_graph_path)
                 if torch.is_tensor(self.num_classes['labels']):
                     self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
                 self.num_classes['labels'].extend(labels_num_list)
                 self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
         self.update_graph_log(key_name='num_classes', values=self.num_classes)
-        self.update_graph_log(key_name='geograph', values=self.geograph)
+        self.update_graph_log(key_name='geograph', values=copy.deepcopy(self.geograph))
         self.update_graph_log(key_name='graph', values=self.graph)
+        self.update_graph_log(key_name='split_ratio', values=[self.split_ratio])
+
         # 数据存储
         self.save_graph_log()
         self.graph_log = self.load_graph_log()
@@ -325,13 +313,19 @@ class GmeModelGraphList(object):
             print('Changing Graph Data val_data proportion ...')
             self.load_geograph(graph_id=g_idx, dir_path=self.dir_path)
             self.geograph[g_idx].change_val_data_split(split_ratio=split_ratio)
-            # x = np.arange(len(self.geodata[model_index].grid_points))
             train_proportion = self.geograph[g_idx].train_data_proportion
             print('The train data proportion is changed to {}.'.format(train_proportion))
-            # self.geodata[model_index].set_virtual_geo_sample(sample_operator=sample_operator, **kwargs)
             # # 替换并存储
+            label_num = self.geograph[g_idx].classes_num
+            if torch.is_tensor(self.num_classes['labels']):
+                self.num_classes['labels'] = self.num_classes['labels'].numpy().tolist()
             if replace:
+                self.num_classes['labels'][g_idx] = label_num
+                self.num_classes = {'labels': torch.tensor(self.num_classes['labels']).to(torch.long)}
                 self.geograph[g_idx] = self.geograph[g_idx].save(dir_path=self.processed_dir, replace=True)
+                self.update_graph_log(key_name='geograph', values=copy.deepcopy(self.geograph))
+                self.update_graph_log(key_name='num_classes', values=self.num_classes)
+                self.update_graph_log(key_name='split_ratio', values=[self.split_ratio])
 
     # 添加硬数据约束，此功能是为了分段建模设计的，以重复分段作为拼接约束，后一个分段模型在前一个分段模型的预测基础上做预测。
     # 可能会添加新的标签，所以标签要进行标准化处理，关键是在标签改变的过程中，记录下映射字典。

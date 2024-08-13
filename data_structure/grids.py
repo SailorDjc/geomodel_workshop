@@ -162,17 +162,17 @@ class Grid(object):
             return
         if center is None:
             center = self.center
-        self.grid_points = modefunc(self.grid_points, factor, center)
         if self.vtk_data is not None:
-            self.vtk_data.points = modefunc(self.vtk_data.points, factor, center)
+            if isinstance(self.vtk_data, pv.RectilinearGrid):
+                transform_matrix = modefunc(t_factor=factor, center=center,
+                                            only_get_matrix=True)
+                self.vtk_data.transform(transform_matrix)
+            else:
+                transform_points = modefunc(points=self.vtk_data.points, t_factor=factor, center=center,
+                                            only_get_matrix=True)
+                self.vtk_data.points = transform_points
+        self.grid_points = modefunc(self.grid_points, factor, center)
         self.bounds = get_bounds_from_coords(self.grid_points)
-        # for borehole_id in range(len(self.boreholes_list)):
-        #     if self.boreholes_list[borehole_id].points is None:
-        #         self.boreholes_list[borehole_id].update_borehole_data_by_holelayers()
-        #     self.boreholes_list[borehole_id].points = modefunc(self.boreholes_list[borehole_id].points, factor, center)
-        #     self.boreholes_list[borehole_id].update_holelayer_list()
-        # self.bounds = get_bounds_from_coords(self.points)
-
 
     @property
     def classes(self):

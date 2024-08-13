@@ -112,7 +112,7 @@ class GeoMeshGraphParse(object):
         else:
             return 0
 
-    def execute(self, sample_operator=None, edge_feat=None, node_feat=None, feat_normalize=False,
+    def execute(self, sample_operator=None, edge_feat=None, node_feat=None, feat_normalize=True,
                 is_create_graph=True, ext_grid=None, split_ratio=None, **kwargs):
         self.is_create_graph = is_create_graph
         if node_feat is None:

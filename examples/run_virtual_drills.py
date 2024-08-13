@@ -18,7 +18,7 @@ reader = ReadExportFile()
 file_drill_path = os.path.join(root_path, 'data', 'all_sampling_results.dat')
 # 获取钻孔数据
 boreholes = reader.read_boreholes_data_from_text_file(dat_file_path=file_drill_path)
-boreholes = boreholes.get_boreholes(idx=list(random.sample(list(np.arange(boreholes.borehole_num)), 50)))
+# boreholes = boreholes.get_boreholes(idx=list(random.sample(list(np.arange(boreholes.borehole_num)), 50)))
 print('sec_bounds:', boreholes.bounds)
 
 geodataset = GeodataSet()

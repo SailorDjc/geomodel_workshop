@@ -8,8 +8,8 @@ from data_structure.grids import PointSet
 from tqdm import tqdm
 from utils.vtk_utils import create_vtk_grid_by_rect_bounds, vtk_unstructured_grid_to_vtk_polydata, \
     create_polygon_with_sorted_points_3d
-from utils.vtk_utils import create_implict_surface_reconstruct, bounds_merge, get_bounds_from_coords, \
-    bounds_intersect, voxelize
+from utils.vtk_utils import create_implict_surface_reconstruct, voxelize
+from utils.math_libs import bounds_intersect, get_bounds_from_coords, bounds_merge
 import os
 import json
 import time

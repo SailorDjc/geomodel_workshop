@@ -1,7 +1,7 @@
 from utils.plot_utils import control_visibility_with_layer_label
 from data_structure.reader import ReadExportFile
 from data_structure.geodata import Grid, GeodataSet, Section
-from utils.vtk_utils import get_bounds_from_coords, exaggerate_vtk_object
+from utils.math_libs import get_bounds_from_coords
 import os
 import numpy as np
 

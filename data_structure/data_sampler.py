@@ -6,8 +6,8 @@ import copy
 import scipy.spatial as spt
 import pyvista as pv
 from utils.vtk_utils import vtk_polydata_to_vtk_unstructured_grid, create_vtk_grid_by_rect_bounds, \
-    create_vtk_grid_by_boundary, get_bounds_from_coords, create_closed_cylinder_surface
-from utils.math_libs import remove_repeated_elements_with_lists
+    create_vtk_grid_by_boundary, create_closed_cylinder_surface
+from utils.math_libs import remove_repeated_elements_with_lists, get_bounds_from_coords
 from data_structure.terrain import TerrainData
 from sklearn.model_selection import train_test_split
 import os

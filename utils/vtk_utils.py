@@ -4,15 +4,49 @@ from vtkmodules.all import vtkImageData, vtkStructuredGrid, vtkUnstructuredGrid,
     vtkTransformFilter, vtkBoundingBox, vtkDataSet, VTK_DOUBLE, VTK_INT, vtkLookupTable, vtkColorTransferFunction, \
     vtkImagePermute, vtkProbeFilter, vtkImageMapToColors, vtkPNGWriter, vtkCellArray, vtkPoints, vtkRectilinearGrid, \
     vtkImageDataGeometryFilter, vtkImageToPolyDataFilter, vtkPolyDataMapper, vtkImageStencil, vtkIdList, vtkPointData \
-    , vtkDataSetSurfaceFilter, vtkClipDataSet, vtkPlane, vtkTriangleFilter, vtkPolygon
+    , vtkDataSetSurfaceFilter, vtkClipDataSet, vtkPlane, vtkTriangleFilter, vtkPolygon, vtkDataSetReader, vtkIntArray \
+    , vtkCleanPolyData, vtkOBBTree
+
 from vtkmodules.util import numpy_support
 import os
 import vtkmodules.all as vtk
-from vtkmodules.all import vtkSurfaceReconstructionFilter
+from vtkmodules.all import vtkSurfaceReconstructionFilter, vtkAppendPolyData
 import pyvista as pv
 import copy
 import scipy.spatial as spt
 import collections.abc
+import geopandas as gpd
+import shapely as sy
+from utils.math_libs import remove_duplicate_points, add_point_to_point_set_if_no_duplicate, check_triangle_box_overlap
+
+obbtree = vtkOBBTree()
+obbtree.SetTolerance(1e-8)
+
+
+def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid):
+    vtk_obbtree_0 = vtkOBBTree()
+    vtk_obbtree_0.SetDataSet(poly_surf)
+    vtk_obbtree_0.BuildLocator()
+    obb_poly = vtkPolyData()
+    vtk_obbtree_0.GenerateRepresentation(0, obb_poly)
+    obb_poly = pv.wrap(obb_poly)
+    select_cell_ids = []
+    if isinstance(grid, (pv.RectilinearGrid, pv.UnstructuredGrid, pv.StructuredGrid)):
+        gird_points_poly = pv.PolyData(grid.points)
+        select_cells = gird_points_poly.select_enclosed_points(surface=obb_poly, check_surface=True, tolerance=0.000000001)
+        rect_point_ids = select_cells.point_data['SelectedPoints']
+        rect_point_ids = np.argwhere(rect_point_ids > 0).flatten()
+        select_points = grid.extract_points(ind=rect_point_ids)
+        rect_point_ids = grid.find_containing_cell(select_points.cell_centers().points)
+        for cell_id in rect_point_ids:
+            cell = grid.extract_cells([cell_id])
+            for face_id in np.arange(poly_surf.n_cells):
+                face_points = poly_surf.get_cell(index=face_id)
+                check_intersect = check_triangle_box_overlap(tri_points=face_points.points, voxel_points=cell.points)
+                if check_intersect:
+                    select_cell_ids.append(cell_id)
+                    break
+        return select_cell_ids
 
 
 def voxelize(mesh, density=None, check_surface=True, tolerance=0.000000001):
@@ -66,6 +100,42 @@ def voxelize(mesh, density=None, check_surface=True, tolerance=0.000000001):
     return vox
 
 
+def read_dxf_surface(geom_file_path: str):
+    gdf = gpd.read_file(geom_file_path)
+    geoms = gdf['geometry']
+    layer = gdf['Layer']
+    points_array2 = []
+    for geom in geoms:
+        if isinstance(geom, sy.Polygon):
+            coords = [list(coord) for coord in geom.exterior.coords]
+            points_3d, _ = remove_duplicate_points(points_3d=coords, is_remove=True)
+            points_3d = [list(point) for point in points_3d]
+            points_array2.append(points_3d)
+    points_array2, points_ids_list = get_poly_points_topo(points_array2)
+    faces = []
+    for points_ids in points_ids_list:
+        faces.append(len(points_ids))
+        faces.extend(points_ids)
+    surface_polydata = pv.PolyData(points_array2, faces=faces)
+    surface_polydata.cell_data['layer'] = layer
+    return surface_polydata
+
+
+# points_array 二维点集数组，每一组点构成一个多边形
+def get_poly_points_topo(points_array2):
+    from data_structure.points import PointSet
+    points_set = PointSet()
+    points_ids_list = []
+    for i, points_list in enumerate(points_array2):
+        points_ids = []
+        for j, point in enumerate(points_list):
+            _, p_id = points_set.append_search_point_without_labels(insert_point=point)
+            points_ids.append(p_id)
+        points_ids_list.append(points_ids)
+    return points_set.points, points_ids_list
+
+
+# 通过传入三维点，创建多边形面，传入的点是排序好的环
 def create_polygon_with_sorted_points_3d(points_3d):
     tri_filter = vtkTriangleFilter()
     pts = vtkPoints()
@@ -102,6 +172,7 @@ def create_implict_surface_reconstruct(points, sample_spacing,
     return surface
 
 
+# 根据凸包创建封闭面
 def create_closed_surface_by_convexhull_2d(bounds: np.ndarray, convexhull_2d: np.ndarray):
     top_surface_points = copy.deepcopy(convexhull_2d)
     top_surface_points[:, 2] = bounds[5]  # z_max
@@ -253,7 +324,7 @@ def create_vtk_grid_by_rect_bounds(dim: np.ndarray = None, bounds: np.ndarray = 
 
 # 在规则格网的基础上，通过一个2d凸包范围切割格网
 def create_vtk_grid_by_boundary(dims: np.ndarray, bounds: np.ndarray
-                                        , convexhull_2d: np.ndarray, cell_density: np.ndarray = None):
+                                , convexhull_2d: np.ndarray, cell_density: np.ndarray = None):
     convex_surface, grid_outline = create_closed_surface_by_convexhull_2d(bounds=bounds
                                                                           , convexhull_2d=convexhull_2d)
     if cell_density is None:
@@ -265,93 +336,6 @@ def create_vtk_grid_by_boundary(dims: np.ndarray, bounds: np.ndarray
         cell_density = np.array([x_r, y_r, z_r])
     sample_grid = pv.voxelize(convex_surface, density=cell_density)
     return sample_grid, grid_outline
-
-
-# 获取点云数据集的包围盒
-# Parameters: coords 输入是np.array 的二维数组，且坐标是3D坐标
-# xy_buffer z_buffer 为大于0的浮点数，是包围盒的缓冲距离
-def get_bounds_from_coords(coords: np.ndarray, xy_buffer=0, z_buffer=0):
-    assert coords.ndim == 2, "input coords array is not 2D array"
-    # assert coords.shape[1] == 3, "input coords are not 3D"
-
-    coord_min = coords.min(axis=0)
-    coord_max = coords.max(axis=0)
-
-    x_min = coord_min[0]
-    x_max = coord_max[0]
-    y_min = coord_min[1]
-    y_max = coord_max[1]
-    if coords.shape[1] == 3:
-        z_min = coord_min[2]
-        z_max = coord_max[2]
-    else:
-        z_min = 0
-        z_max = 0
-    bounds = np.array([x_min, x_max, y_min, y_max, z_min, z_max])
-    if xy_buffer != 0 or z_buffer != 0:
-        if xy_buffer == 0:
-            xy_buffer = z_buffer
-        if z_buffer == 0:
-            z_buffer = xy_buffer
-        dx = bounds[1] - bounds[0]
-        dy = bounds[3] - bounds[2]
-        dz = bounds[5] - bounds[4]
-        bounds[0] = bounds[0] - xy_buffer * dx
-        bounds[1] = bounds[1] + xy_buffer * dx
-        bounds[2] = bounds[2] - xy_buffer * dy
-        bounds[3] = bounds[3] + xy_buffer * dy
-        bounds[4] = bounds[4] - z_buffer * dz
-        bounds[5] = bounds[5] + z_buffer * dz
-    return bounds
-
-
-# bounds 必须是6元数
-def bounds_merge(bounds_a, bounds_b):
-    if bounds_a is None and bounds_b is not None:
-        return np.array(bounds_b)
-    elif bounds_a is not None and bounds_b is None:
-        return np.array(bounds_a)
-    elif bounds_a is not None and bounds_b is not None:
-        x_min = np.min([bounds_a[0], bounds_b[0]])
-        x_max = np.max([bounds_a[1], bounds_b[1]])
-        y_min = np.min([bounds_a[2], bounds_b[2]])
-        y_max = np.max([bounds_a[3], bounds_b[3]])
-        z_min = np.min([bounds_a[4], bounds_b[4]])
-        z_max = np.max([bounds_a[5], bounds_b[5]])
-        return np.array([x_min, x_max, y_min, y_max, z_min, z_max])
-    else:
-        raise ValueError('Input bounds is None.')
-
-
-def compute_bounds_center(bounds):
-    if len(bounds) == 6:
-        x_min, x_max, y_min, y_max, z_min, z_max = bounds
-        center = np.array([(x_min + x_max) * 0.5, (y_min + y_max) * 0.5, (z_min + z_max) * 0.5])
-        return center
-    elif len(bounds) == 4:
-        x_min, x_max, y_min, y_max = bounds
-        center = np.array([(x_min + x_max) * 0.5, (y_min + y_max) * 0.5, 0])
-        return center
-    else:
-        raise ValueError('Input error.')
-
-
-# 包围盒求交
-def bounds_intersect(bounds_a, bounds_b, ignore_z=False):
-    min_x_a, max_x_a, min_y_a, max_y_a, min_z_a, max_z_a = bounds_a
-    min_x_b, max_x_b, min_y_b, max_y_b, min_z_b, max_z_b = bounds_b
-    min_x = max(min_x_a, min_x_b)
-    min_y = max(min_y_a, min_y_b)
-    min_z = max(min_z_a, min_z_b)
-    max_x = min(max_x_a, max_x_b)
-    max_y = min(max_y_a, max_y_b)
-    max_z = min(max_z_a, max_z_b)
-    if min_x > max_x or min_y > max_y:
-        return None
-    if ignore_z is False:
-        if min_z > max_z:
-            return None
-    return np.array([min_x, max_x, min_y, max_y, min_z, max_z])
 
 
 def create_continuous_property_vtk_array(name: str, arr: np.ndarray):
@@ -406,7 +390,7 @@ def add_np_property_to_vtk_object(vtk_object, prop_name, prop_arr, continuous=Tr
 
 # 水平和垂直方向拉伸  # vertically_ # horizontal_ 比例变换
 def exaggerate_vtk_object(vtk_object, horizontal_x_exaggeration=1, horizontal_y_exaggeration=1
-                                     , vertical_exaggeration=1):
+                          , vertical_exaggeration=1):
     transform = vtkTransform()
     transform.Scale(horizontal_x_exaggeration, horizontal_y_exaggeration, vertical_exaggeration)
     transform.Update()

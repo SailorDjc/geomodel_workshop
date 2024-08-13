@@ -7,8 +7,156 @@ from rdp import rdp
 import copy
 
 
-def points_trans_translate(points, t_factor, center=None):
+# 检查一个三角形与一个长方体是否相交
+def check_triangle_box_overlap(tri_points, voxel_points):
+    # axis[3]
+    # d, p0, p1, p2, rad, fex, fey, fez
+    # normal[3], e0[3], e1[3], e2[3]
+    box_half_size = caculate_box_length(voxel_points)
+    box_center = caculate_box_center(voxel_points)
+    tri_offset = np.subtract(tri_points, box_center)
+    tri_max_x = np.max(tri_offset[:, 0])
+    tri_min_x = np.min(tri_offset[:, 0])
+    if tri_min_x > box_half_size[0] or tri_max_x < -box_half_size[0]:
+        return False
+    tri_max_y = np.max(tri_offset[:, 1])
+    tri_min_y = np.min(tri_offset[:, 1])
+    if tri_min_y > box_half_size[1] or tri_max_y < -box_half_size[1]:
+        return False
+    tri_max_z = np.max(tri_offset[:, 2])
+    tri_min_z = np.min(tri_offset[:, 2])
+    if tri_min_z > box_half_size[1] or tri_max_z < -box_half_size[1]:
+        return False
+    # 三角形两向量
+    v0, v1, v2 = tri_offset[0], tri_offset[1], tri_offset[2]
+    e0 = np.subtract(v1, v0)
+    e1 = np.subtract(v2, v1)
+    # 三角形法向量
+    normal = np.cross(e0, e1)
+    d = - np.dot(normal, v0)
+    if not check_plane_box_overlap(normal=normal, d=d, maxbox=box_half_size):
+        return False
+    e2 = np.subtract(v0, v2)
+    fex, fey, fez = np.fabs(e0[0]), np.fabs(e0[1]), np.fabs(e0[2])
+    # (e0[Z], e0[Y], fez, fey);
+    p0 = e0[2] * v0[1] - e0[1] * v0[2]
+    p2 = e0[2] * v2[1] - e0[1] * v2[2]
+    min_val = min(p0, p2)
+    max_val = max(p0, p2)
+    rad = fez * box_half_size[1] + fey * box_half_size[2]
+    if min_val > rad or max_val < -rad:
+        return False
+    # (e0[Z], e0[X], fez, fex)
+    p0 = -e0[2] * v0[0] + e0[0] * v0[2]
+    p2 = -e0[2] * v2[0] + e0[0] * v2[2]
+    min_val = min(p0, p2)
+    max_val = max(p0, p2)
+    rad = fez * box_half_size[0] + fex * box_half_size[2]
+    if min_val > rad or max_val < -rad:
+        return False
+    # (e0[Y], e0[X], fey, fex)
+    p1 = e0[1] * v1[0] - e0[0] * v1[1]
+    p2 = e0[1] * v2[0] - e0[0] * v2[1]
+    min_val = min(p1, p2)
+    max_val = max(p1, p2)
+    rad = fey * box_half_size[0] + fex * box_half_size[1]
+    if min_val > rad or max_val < -rad:
+        return False
+    fex, fey, fez = np.fabs(e1[0]), np.fabs(e1[1]), np.fabs(e1[2])
+    # e1[Z], e1[Y], fez, fey
+    p0 = e1[2] * v0[1] - e1[1] * v0[2]
+    p2 = e1[2] * v2[1] - e1[1] * v2[2]
+    min_val = min(p0, p2)
+    max_val = max(p0, p2)
+    rad = fez * box_half_size[1] + fey * box_half_size[2]
+    if min_val > rad or max_val < -rad:
+        return False
+    # (e1[Z], e1[X], fez, fex)
+    p0 = -e1[2] * v0[0] + e1[0] * v0[2]
+    p2 = -e1[2] * v2[0] + e1[0] * v2[2]
+    min_val = min(p0, p2)
+    max_val = max(p0, p2)
+    rad = fez * box_half_size[0] + fex * box_half_size[2]
+    if min_val > rad or max_val < -rad:
+        return False
+    # (e1[Y], e1[X], fey, fex)
+    p0 = e1[1] * v0[0] - e1[0] * v0[1]
+    p1 = e1[1] * v1[0] - e1[0] * v1[1]
+    min_val = min(p0, p1)
+    max_val = max(p0, p1)
+    rad = fey * box_half_size[0] + fex * box_half_size[1]
+    if min_val > rad or max_val < -rad:
+        return False
+    # (e2[Z], e2[Y], fez, fey);
+    fex, fey, fez = np.fabs(e2[0]), np.fabs(e2[1]), np.fabs(e2[2])
+    p0 = e2[2] * v0[1] - e2[1] * v0[2]
+    p1 = e2[2] * v1[1] - e2[1] * v1[2]
+    min_val = min(p0, p1)
+    max_val = max(p0, p1)
+    rad = fez * box_half_size[1] + fey * box_half_size[2]
+    if min_val > rad or max_val < -rad:
+        return False
+    # (e2[Z], e2[X], fez, fex)
+    p0 = -e2[2] * v0[0] + e2[0] * v0[2]
+    p1 = -e2[2] * v1[0] + e2[0] * v1[2]
+    min_val = min(p0, p1)
+    max_val = max(p0, p1)
+    rad = fez * box_half_size[0] + fex * box_half_size[2]
+    if min_val > rad or max_val < -rad:
+        return False
+    # (e2[Y], e2[X], fey, fex)
+    p1 = e2[1] * v1[0] - e2[0] * v1[1]
+    p2 = e2[1] * v2[0] - e2[0] * v2[1]
+    min_val = min(p1, p2)
+    max_val = max(p1, p2)
+    rad = fey * box_half_size[0] + fex * box_half_size[2]
+    if min_val > rad or max_val < -rad:
+        return False
+    return True
+
+
+def check_plane_box_overlap(normal, d, maxbox):
+    v_min = [0, 0, 0]
+    v_max = [0, 0, 0]
+    for q in np.arange(3):
+        if normal[q] > 0.0:
+            v_min[q] = -maxbox[q]
+            v_max[q] = maxbox[q]
+        else:
+            v_min[q] = maxbox[q]
+            v_max[q] = -maxbox[q]
+    f1 = np.dot(normal, v_min)
+    if f1 + d > 0.0:
+        return False
+    f2 = np.dot(normal, v_max)
+    if f2 + d > 0:
+        return True
+    return False
+
+
+# np.dot 向量点乘
+# 计算长方体长宽高
+def caculate_box_length(points):
+    x_vec = np.max(points[:, 0]) - np.min(points[:, 0])
+    length = np.linalg.norm(x=x_vec)
+    y_vec = np.max(points[:, 1]) - np.min(points[:, 1])
+    width = np.linalg.norm(x=y_vec)
+    z_vec = np.max(points[:, 2]) - np.min(points[:, 2])
+    height = np.linalg.norm(x=z_vec)
+    return [length/2, width/2, height/2]
+
+
+def caculate_box_center(points):
+    center = np.mean(points, axis=0)
+    return center
+
+
+def points_trans_translate(t_factor, points=None, center=None, only_get_matrix=False):
+    if only_get_matrix:
+        return get_translate_transform_matrix(t_factor[0], t_factor[1], t_factor[2])
     trans_points_list = []
+    if points is None:
+        raise ValueError('points is None.')
     for one_point in points:
         trans_point = trans_translate(one_point[0], one_point[0], one_point[0], t_factor[0], t_factor[1], t_factor[2])
         trans_points_list.append(trans_point)
@@ -16,11 +164,15 @@ def points_trans_translate(points, t_factor, center=None):
     return trans_points
 
 
-def points_trans_scale(points, s_factor, center):
+def points_trans_scale(t_factor, center, points=None, only_get_matrix=False):
+    if only_get_matrix:
+        return get_scale_transform_matrix(center[0], center[1], center[2], t_factor[0], t_factor[1], t_factor[2])
     scale_points_list = []
+    if points is None:
+        raise ValueError('points is None.')
     for one_point in points:
         scale_point = trans_scale(one_point[0], one_point[1], one_point[2], center[0], center[1], center[2],
-                                  s_factor[0], s_factor[1], s_factor[2])
+                                  t_factor[0], t_factor[1], t_factor[2])
         scale_points_list.append(scale_point)
     scale_points = np.vstack(scale_points_list)
     return scale_points
@@ -28,11 +180,7 @@ def points_trans_scale(points, s_factor, center):
 
 # 在三维空间中，点(x, y, z) 平移(tx, ty, tz)
 def trans_translate(x, y, z, tx, ty, tz):
-    T = [[1, 0, 0, tx],
-         [0, 1, 0, ty],
-         [0, 0, 1, tz],
-         [0, 0, 0, 1]]
-    T = np.array(T)
+    T = get_translate_transform_matrix(tx, ty, tz)
     P = np.array([x, y, z, [1] * x.size])
     x_, y_, z_, _ = np.dot(T, P)
     return np.float32([x_, y_, z_])
@@ -40,30 +188,75 @@ def trans_translate(x, y, z, tx, ty, tz):
 
 # 在三维空间中，点(x, y, z)相对于另一点(px,py,pz)进行缩放操作,(sx, sy, sz)是缩放因子。
 def trans_scale(x, y, z, px, py, pz, sx, sy, sz):
-    T = [[sx, 0, 0, px * (1 - sx)],
-         [0, sy, 0, py * (1 - sy)],
-         [0, 0, sz, pz * (1 - sz)],
-         [0, 0, 0, 1]]
-    T = np.array(T)
+    T = get_scale_transform_matrix(px, py, pz, sx, sy, sz)
     P = np.array([x, y, z, 1])  # [1] * x.size
     x_, y_, z_, _ = np.dot(T, P)
     return np.float32([x_, y_, z_])
 
 
+# 获取缩放变换矩阵
+def get_scale_transform_matrix(px, py, pz, sx, sy, sz):
+    T = [[sx, 0, 0, px * (1 - sx)],
+         [0, sy, 0, py * (1 - sy)],
+         [0, 0, sz, pz * (1 - sz)],
+         [0, 0, 0, 1]]
+    T = np.array(T)
+    return T
+
+
+# 获取平移变换矩阵
+def get_translate_transform_matrix(tx, ty, tz):
+    T = [[1, 0, 0, tx],
+         [0, 1, 0, ty],
+         [0, 0, 1, tz],
+         [0, 0, 0, 1]]
+    T = np.array(T)
+    return T
+
+
 # 去除重复坐标点
-def remove_duplicate_points(points_3d, tolerance=0.000001, is_remove=False):
-    ckt = spt.cKDTree(points_3d)
+def remove_duplicate_points(points_3d, tolerance=0.000001, is_remove=False, is_reverse=True, k=3):
     remove_point_ids = []
-    for p_id, one_point in enumerate(points_3d):
-        d, pid = ckt.query(one_point, k=3)
-        for d_i in range(len(d)):
-            if p_id in remove_point_ids:
-                continue
-            if pid[d_i] != p_id and np.abs(d[d_i]) < tolerance:
-                remove_point_ids.append(pid[d_i])
+    if len(points_3d) <= 1:
+        return points_3d, remove_point_ids
+    ckt = spt.cKDTree(points_3d)
+    if not is_reverse:
+        for p_id, one_point in enumerate(points_3d):
+            d, pid = ckt.query(one_point, k=k)
+            for d_i in range(len(d)):
+                if p_id in remove_point_ids:
+                    continue
+                if pid[d_i] != p_id and np.abs(d[d_i]) < tolerance:
+                    remove_point_ids.append(pid[d_i])
+    else:
+        for p_id, one_point in reversed(list(enumerate(points_3d))):
+            d, pid = ckt.query(one_point, k=3)
+            for d_i in range(len(d)):
+                if p_id in remove_point_ids:
+                    continue
+                if pid[d_i] != p_id and np.abs(d[d_i]) < tolerance:
+                    remove_point_ids.append(pid[d_i])
     if is_remove and len(remove_point_ids) > 0:
         points_3d = np.delete(points_3d, remove_point_ids, axis=0)
     return points_3d, remove_point_ids
+
+
+def add_point_to_point_set_if_no_duplicate(points_set: list, point, tolerance=0.000001, k=3):
+    if len(points_set) == 0:
+        points_set.append(point)
+        return points_set, len(points_set) - 1
+    if len(points_set) == 1:
+        dist = math.dist(points_set[0], point)
+        if dist > tolerance:
+            points_set.append(point)
+        return points_set, len(points_set) - 1
+    ckt = spt.cKDTree(points_set)
+    d, pid = ckt.query(point, k=k)
+    for d_i in range(len(d)):
+        if np.abs(d[d_i]) < tolerance:
+            return points_set, pid[d_i]
+    points_set.append(point)
+    return points_set, len(points_set) - 1
 
 
 # 简化二维折线，折角小于指定角度的拐点删除
@@ -123,6 +316,10 @@ def densify_line_xy_points_with_interp(line_points: np.ndarray, resolution_xy, i
 def softmax(data):
     if isinstance(data, torch.Tensor):
         data = data.cpu().numpy()
+    # 防止上下溢出
+    m = np.max(data, axis=1)
+    m_tiled = np.tile(m, (data.shape[1], 1)).T
+    data = np.subtract(data, m_tiled)
     e_x = np.exp(data)
     nn = np.sum(np.exp(data), axis=1, keepdims=True)
     x = e_x / nn
@@ -171,3 +368,90 @@ def remove_repeated_elements_with_lists(list_item_1, list_item_2=None):
         return unique, list_item_2
     else:
         return unique
+
+
+# 获取点云数据集的包围盒
+# Parameters: coords 输入是np.array 的二维数组，且坐标是3D坐标
+# xy_buffer z_buffer 为大于0的浮点数，是包围盒的缓冲距离
+def get_bounds_from_coords(coords: np.ndarray, xy_buffer=0, z_buffer=0):
+    assert coords.ndim == 2, "input coords array is not 2D array"
+    # assert coords.shape[1] == 3, "input coords are not 3D"
+
+    coord_min = coords.min(axis=0)
+    coord_max = coords.max(axis=0)
+
+    x_min = coord_min[0]
+    x_max = coord_max[0]
+    y_min = coord_min[1]
+    y_max = coord_max[1]
+    if coords.shape[1] == 3:
+        z_min = coord_min[2]
+        z_max = coord_max[2]
+    else:
+        z_min = 0
+        z_max = 0
+    bounds = np.array([x_min, x_max, y_min, y_max, z_min, z_max])
+    if xy_buffer != 0 or z_buffer != 0:
+        if xy_buffer == 0:
+            xy_buffer = z_buffer
+        if z_buffer == 0:
+            z_buffer = xy_buffer
+        dx = bounds[1] - bounds[0]
+        dy = bounds[3] - bounds[2]
+        dz = bounds[5] - bounds[4]
+        bounds[0] = bounds[0] - xy_buffer * dx
+        bounds[1] = bounds[1] + xy_buffer * dx
+        bounds[2] = bounds[2] - xy_buffer * dy
+        bounds[3] = bounds[3] + xy_buffer * dy
+        bounds[4] = bounds[4] - z_buffer * dz
+        bounds[5] = bounds[5] + z_buffer * dz
+    return bounds
+
+
+# bounds 必须是6元数
+def bounds_merge(bounds_a, bounds_b):
+    if bounds_a is None and bounds_b is not None:
+        return np.array(bounds_b)
+    elif bounds_a is not None and bounds_b is None:
+        return np.array(bounds_a)
+    elif bounds_a is not None and bounds_b is not None:
+        x_min = np.min([bounds_a[0], bounds_b[0]])
+        x_max = np.max([bounds_a[1], bounds_b[1]])
+        y_min = np.min([bounds_a[2], bounds_b[2]])
+        y_max = np.max([bounds_a[3], bounds_b[3]])
+        z_min = np.min([bounds_a[4], bounds_b[4]])
+        z_max = np.max([bounds_a[5], bounds_b[5]])
+        return np.array([x_min, x_max, y_min, y_max, z_min, z_max])
+    else:
+        raise ValueError('Input bounds is None.')
+
+
+def compute_bounds_center(bounds):
+    if len(bounds) == 6:
+        x_min, x_max, y_min, y_max, z_min, z_max = bounds
+        center = np.array([(x_min + x_max) * 0.5, (y_min + y_max) * 0.5, (z_min + z_max) * 0.5])
+        return center
+    elif len(bounds) == 4:
+        x_min, x_max, y_min, y_max = bounds
+        center = np.array([(x_min + x_max) * 0.5, (y_min + y_max) * 0.5, 0])
+        return center
+    else:
+        raise ValueError('Input error.')
+
+
+# 包围盒求交
+def bounds_intersect(bounds_a, bounds_b, ignore_z=False):
+    min_x_a, max_x_a, min_y_a, max_y_a, min_z_a, max_z_a = bounds_a
+    min_x_b, max_x_b, min_y_b, max_y_b, min_z_b, max_z_b = bounds_b
+    min_x = max(min_x_a, min_x_b)
+    min_y = max(min_y_a, min_y_b)
+    min_z = max(min_z_a, min_z_b)
+    max_x = min(max_x_a, max_x_b)
+    max_y = min(max_y_a, max_y_b)
+    max_z = min(max_z_a, max_z_b)
+    if min_x > max_x or min_y > max_y:
+        return None
+    if ignore_z is False:
+        if min_z > max_z:
+            return None
+    return np.array([min_x, max_x, min_y, max_y, min_z, max_z])

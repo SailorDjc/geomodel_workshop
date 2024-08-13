@@ -7,7 +7,7 @@ import time
 import pickle
 import os
 import numpy as np
-from utils.vtk_utils import bounds_merge, compute_bounds_center
+from utils.math_libs import bounds_merge, compute_bounds_center
 import copy
 
 
