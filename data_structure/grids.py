@@ -166,12 +166,12 @@ class Grid(object):
             if isinstance(self.vtk_data, pv.RectilinearGrid):
                 transform_matrix = modefunc(t_factor=factor, center=center,
                                             only_get_matrix=True)
-                self.vtk_data.transform(transform_matrix)
+                self.vtk_data = self.vtk_data.transform(transform_matrix, inplace=False)
             else:
                 transform_points = modefunc(points=self.vtk_data.points, t_factor=factor, center=center,
                                             only_get_matrix=True)
                 self.vtk_data.points = transform_points
-        self.grid_points = modefunc(self.grid_points, factor, center)
+        self.grid_points = modefunc(points=self.grid_points, t_factor=factor, center=center)
         self.bounds = get_bounds_from_coords(self.grid_points)
 
     @property

@@ -23,6 +23,8 @@ obbtree = vtkOBBTree()
 obbtree.SetTolerance(1e-8)
 
 
+# 面数据与网格数据求交，将
+# poly_surf: PolyData面数据
 def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid):
     vtk_obbtree_0 = vtkOBBTree()
     vtk_obbtree_0.SetDataSet(poly_surf)
