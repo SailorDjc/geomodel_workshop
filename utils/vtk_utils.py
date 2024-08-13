@@ -18,6 +18,7 @@ import collections.abc
 import geopandas as gpd
 import shapely as sy
 from utils.math_libs import remove_duplicate_points, add_point_to_point_set_if_no_duplicate, check_triangle_box_overlap
+from tqdm import tqdm
 
 obbtree = vtkOBBTree()
 obbtree.SetTolerance(1e-8)
@@ -25,12 +26,19 @@ obbtree.SetTolerance(1e-8)
 
 # 面数据与网格数据求交，将
 # poly_surf: PolyData面数据
-def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid):
+# check_level: 构建obbtree的级别，默认为None，构建最高级
+def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid, check_level=0):
     vtk_obbtree_0 = vtkOBBTree()
     vtk_obbtree_0.SetDataSet(poly_surf)
     vtk_obbtree_0.BuildLocator()
     obb_poly = vtkPolyData()
-    vtk_obbtree_0.GenerateRepresentation(0, obb_poly)
+    max_level = vtk_obbtree_0.GetLevel()
+    if check_level is None:
+        check_level = max_level
+    else:
+        if check_level > max_level:
+            check_level = 0
+    vtk_obbtree_0.GenerateRepresentation(check_level, obb_poly)
     obb_poly = pv.wrap(obb_poly)
     select_cell_ids = []
     if isinstance(grid, (pv.RectilinearGrid, pv.UnstructuredGrid, pv.StructuredGrid)):
@@ -40,7 +48,9 @@ def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid):
         rect_point_ids = np.argwhere(rect_point_ids > 0).flatten()
         select_points = grid.extract_points(ind=rect_point_ids)
         rect_point_ids = grid.find_containing_cell(select_points.cell_centers().points)
-        for cell_id in rect_point_ids:
+        print('Computing...')
+        pbr = tqdm(enumerate(rect_point_ids), total=len(rect_point_ids), position=0, leave=True)
+        for it, cell_id in pbr:
             cell = grid.extract_cells([cell_id])
             for face_id in np.arange(poly_surf.n_cells):
                 face_points = poly_surf.get_cell(index=face_id)
