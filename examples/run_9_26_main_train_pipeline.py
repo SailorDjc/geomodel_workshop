@@ -50,7 +50,7 @@ if __name__ == '__main__':
 
     # 将三维模型规则网格数据构建为图网格数据，只有第一次输入的noddy_model可以用到，之后代码会自动加载数据缓存
     gme_models = GmeModelGraphList('gme_model', root=root_path,
-                                   grid_data=grid_list,
+                                   grid_data_list=grid_list,
                                    sample_operator=['rand_drills'],
                                    add_inverse_edge=True,
                                    split_ratio=DataSetSplit(0.6, 0.2),

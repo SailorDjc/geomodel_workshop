@@ -53,16 +53,21 @@ if __name__ == '__main__':
         plotter.add_mesh(surf)
         poly_surface_list.append(surf)
     plotter.show()
-    plotter_1 = pv.Plotter()
+    # plotter_1 = pv.Plotter()
     pbr = tqdm(enumerate(poly_surface_list), total=len(poly_surface_list))
+    label_dict = {"1_Base_Tommy": 0, "2_Base_Isa": 1, "3_Base_Soldiers_Cap": 2, "4_Base_Calvert": 3,
+                  "5_Base_Quilalar": 4, "7_Base_Bulonga": 5, "8_Base_Leichhardt": 6, "9_Base_L_Volcs": 7,
+                  "Williams_Naraku_Granites": 8}
     for it, poly_surf in pbr:
         # 筛选出与surf面相交的cell的id号
-        plotter_1.add_mesh(poly_surf)
-        cell_ids = poly_surf_intersect_with_grid(poly_surf=poly_surf, grid=grid_data.vtk_data)
-        cells_series[cell_ids] = it
+        # plotter_1.add_mesh(poly_surface_list[it])
+        cell_ids = poly_surf_intersect_with_grid(poly_surf=poly_surface_list[it], grid=grid_data.vtk_data, check_level=0)
+        file_name = os.path.basename(interface_data_list[it])
+        layer_name = os.path.splitext(file_name)[0]
+        cells_series[cell_ids] = label_dict[layer_name]
         pp = grid_data.vtk_data.extract_cells(ind=cell_ids)
-        plotter_1.add_mesh(pp, opacity=0.5)
-        plotter_1.show()
+        # plotter_1.add_mesh(pp, opacity=0.5)
+        # plotter_1.show()
     grid_data.vtk_data.cell_data['Scalar Field'] = cells_series
     # 保存grid文件
     grid_data.save(dir_path=interface_data_dir, out_name='new_model')

@@ -26,7 +26,8 @@ obbtree.SetTolerance(1e-8)
 
 # 面数据与网格数据求交，将
 # poly_surf: PolyData面数据
-# check_level: 构建obbtree的级别，默认为None，构建最高级
+# check_level: 构建obbtree的级别，默认为0，构建最初级
+# grid: vtk网格
 def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid, check_level=0):
     vtk_obbtree_0 = vtkOBBTree()
     vtk_obbtree_0.SetDataSet(poly_surf)

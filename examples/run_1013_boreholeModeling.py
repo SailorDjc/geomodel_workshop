@@ -29,7 +29,7 @@ if __name__ == '__main__':
     # 添加基底层
     boreholes_data.add_base_layer_for_each_borehole()
 
-    boreholes_data.plot()
+    # boreholes_data.plot()
     # boreholes_data_2 = reader.read_labels_map(
     #     map_file_path=os.path.join(root_path, 'data', 'sample_drills_0306.map'), encoding='ANSI')
 

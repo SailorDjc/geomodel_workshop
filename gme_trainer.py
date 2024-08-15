@@ -316,7 +316,7 @@ class GmeTrainer:
         alpha_list = np.array([labels_count_map[a] for a in range(key_num)])
         item_sum = np.sum(alpha_list)
         alpha_list = alpha_list / item_sum
-        self.custom_loss = FocalLoss(class_num=key_num, items_ratio=alpha_list)
+        self.custom_loss = FocalLoss(classes_ratio=alpha_list, gamma=2, ignore_index=-1)
 
         model, config = self.model, self.config
         raw_model, optimizer = self.load_checkpoint()
@@ -342,8 +342,8 @@ class GmeTrainer:
                     y = blocks[-1].dstdata['label']
                     y_hat = model(blocks, x)
                     # ignore_index=-1, 计算跳过填充值-1
-                    loss = F.cross_entropy(y_hat, y, ignore_index=-1)
-                    # loss = self.custom_loss(y_hat, y)
+                    # loss = F.cross_entropy(y_hat, y, ignore_index=-1)
+                    loss = self.custom_loss(y_hat, y)
                     losses.append(loss.item())
                     # 计算epoch 的总体 accuracy
                     ys.append(y)

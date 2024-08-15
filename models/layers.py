@@ -7,6 +7,7 @@ from torch import nn
 from torch.nn import functional as F
 from dgl.nn.functional import edge_softmax
 import dgl.function as fn
+import dgl.nn as dglnn
 from dgl.base import DGLError
 from dgl.utils import expand_as_pair, check_eq_shape, dgl_warning
 import numpy as np
@@ -65,14 +66,28 @@ class SpacialConv(nn.Module):
         nn.init.xavier_uniform_(self.fc_spatial.weight, gain=gain)
         nn.init.xavier_uniform_(self.fc_neigh.weight, gain=gain)
 
-    #
-    def edges_wight_process(self, edges):
+    def edge_weight_spatial_process(self, edges):
         relative_pos = edges.dst['position'] - edges.src['position']
-        spatial_scale = torch.norm(relative_pos, dim=1) + self.eps
+        return {'e': relative_pos}
+
+    #
+    def edges_weight_process(self, edges):
+        relative_pos = edges.dst['position'] - edges.src['position']
+        spatial_scale = torch.norm(relative_pos, dim=1, p=2) + self.eps
         spatial_scale = spatial_scale.reshape(-1, 1)
         spatial_att = torch.add(relative_pos, 1)
         spatial_coeff = torch.div(spatial_att, spatial_scale)
         return {'e': spatial_coeff}
+
+    # 高斯核
+    def edges_weight_gauss_process(self, edges):
+        relative_pos = edges.dst['position'] - edges.src['position']
+        euclidean_dist = torch.norm(relative_pos, dim=1, p=2)
+        variance = torch.var(euclidean_dist)
+        div_value = torch.pow(variance, 2)
+        exponential = - torch.divide(euclidean_dist, div_value)
+        gauss_kernel = torch.exp(exponential).reshape(-1, 1)
+        return {'e': gauss_kernel}
 
     def forward(self, graph, feat):  # , edge_weight=None
         # self._compatibility_check()
@@ -86,17 +101,17 @@ class SpacialConv(nn.Module):
             if graph.number_of_edges() == 0:
                 graph.dstdata['neigh'] = torch.zeros(
                     feat_dst.shape[0], self._in_src_feats).to(feat_dst)
+
             # Message Passing
             graph.srcdata['h'] = feat_src
-            # graph.apply_edges(self.edges_weight_func)
-            graph.apply_edges(self.edges_wight_process)
+            # graph.apply_edges(self.edges_wight_process)
+            # graph.apply_edges(self.edges_weight_gauss_process)
+            graph.apply_edges(self.edge_weight_spatial_process)
             graph.edata['e'] = self.fc_spatial(graph.edata['e'])
             graph.edata['e'] = F.leaky_relu(graph.edata['e'])
             graph.update_all(fn.u_mul_e('h', 'e', 'em'), fn.mean('em', 'h_mean'))
 
             h_neigh = self.fc_neigh(graph.dstdata['h_mean'])  # [n_nodes, out_feats]
-            # g.update_all(fn.e_add_v('theta', 'phi', 'e'), fn.max('e', 'x'))
-            # graph.update_all(self.message_func, self.reduce_func)
             self_hidden = self.fc_self(h_self)
             rst = self_hidden + h_neigh
 
@@ -132,6 +147,28 @@ class MultiHeadSpatialLayer(nn.Module):
             rst = torch.mean(rst, dim=0)
         return rst
 
+
+class MultiHeadSageLayer(nn.Module):
+    def __init__(self, in_dim, out_dim, num_heads, merge='mean'):
+        super(MultiHeadSageLayer, self).__init__()
+        self.heads = nn.ModuleList()
+        for i in range(num_heads):
+            self.heads.append(dglnn.SAGEConv(in_dim, out_dim, 'mean'))
+        self.merge = merge
+
+    def forward(self, graph, h):
+        head_outs = [attn_head(graph, h) for attn_head in self.heads]
+        if self.merge == 'cat':
+            # concat on the output feature dimension (dim=1)
+            rst = torch.cat(head_outs, dim=1)
+        else:
+            # merge using average
+            rst = torch.stack(head_outs)
+            rst = torch.mean(rst, dim=0)
+        return rst
+
+
+### =========================================================================================================#########
 
 """
     Util functions

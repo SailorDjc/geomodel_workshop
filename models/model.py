@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torchmetrics.functional as MF
 import dgl
 import dgl.nn as dglnn
-from models.layers import MultiHeadSpatialLayer, SpacialConv, GraphTransformerLayer, MLPReadout
+from models.layers import MultiHeadSpatialLayer, MultiHeadSageLayer, GraphTransformerLayer, MLPReadout
 from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
 from tqdm import tqdm
 
@@ -42,28 +42,30 @@ class GNN(nn.Module):
 
 
 class SAGE(nn.Module):
-    def __init__(self, in_size, hid_size, n_layers):  # out_size
+    def __init__(self, in_size, hid_size, num_head, n_layers):  # out_size
         super().__init__()
         self.n_layers = n_layers
         self.layers = nn.ModuleList()
         # three-layer GraphSAGE-mean
-        self.layers.append(dglnn.SAGEConv(in_size, hid_size, 'mean'))
+        # self.layers.append(dglnn.SAGEConv(in_size, hid_size, 'mean'))
+        self.layers.append(MultiHeadSageLayer(in_size, hid_size, num_head))
         for l in range(1, n_layers):
-            self.layers.append(dglnn.SAGEConv(hid_size, hid_size, 'mean'))
+            # self.layers.append(dglnn.SAGEConv(hid_size, hid_size, 'mean'))
+            self.layers.append(MultiHeadSageLayer(hid_size, hid_size, num_head))
         self.dropout = nn.Dropout(0.5)
         self.hid_size = hid_size
         # self.last_layer = nn.Linear(n_layers * hid_size, hid_size)
 
     def forward(self, blocks, x):
         h = x
-        # layer_outputs = []
+        layer_outputs = []
         for l, (layer, block) in enumerate(zip(self.layers, blocks)):
             h = layer(block, h)
             if l != len(self.layers) - 1:
                 h = F.leaky_relu(h)
                 h = self.dropout(h)
-            # layer_outputs.append(h[:blocks[-1].number_of_dst_nodes()])
-        # h = torch.cat(layer_outputs, dim=1)
+            layer_outputs.append(h[:blocks[-1].number_of_dst_nodes()])
+        h = torch.cat(layer_outputs, dim=1)
         # h = self.last_layer(h)
         return h
 
@@ -232,6 +234,7 @@ class TransformerBlock(nn.Module):
         return h
 
 
+#  ===============================================================================================================   #
 class GraphTransfomer(nn.Module):
 
     def __init__(self, config):
@@ -242,19 +245,18 @@ class GraphTransfomer(nn.Module):
         # coors, in_feats, out_feats, n_hidden, num_heads, n_layers
         self.gnn = GNN(config.coors, config.in_size, config.n_embd, config.gnn_n_head, config.gnn_n_layer)
         # self.blocks = nn.Sequential(*[BlockCNN(config) for _ in range(config.n_layer)])
-        # self.blocks = TransformerBlock(config)
         # self.ln_f = nn.LayerNorm(config.n_embd)
         # self.head = nn.Linear(config.n_embd, config.vocab_size, bias=True)
 
         self.blocks = nn.Sequential()
         self.blocks.add_module('at_1', SelfAttention(config.n_embd * config.gnn_n_layer
-                                                 , int(config.n_embd * config.gnn_n_layer / 2)
-                                                 , config.n_head, use_bias=True))
+                                                     , int(config.n_embd * config.gnn_n_layer / 2)
+                                                     , config.n_head, use_bias=True))
         self.blocks.add_module('at_2', SelfAttention(int(config.n_embd * config.gnn_n_layer / 2)
-                                                 , config.n_embd, config.n_head
-                                                 , use_bias=True))
+                                                     , config.n_embd, config.n_head
+                                                     , use_bias=True))
         self.blocks.add_module('at_3', SelfAttention(config.n_embd, config.n_embd
-                                                 , config.n_head, use_bias=True))
+                                                     , config.n_head, use_bias=True))
 
         self.p_layer = nn.Linear(config.n_embd, config.out_size)
         self.apply(self._init_weights)
@@ -274,6 +276,43 @@ class GraphTransfomer(nn.Module):
         h = self.blocks(gh)
         # h = self.ln_f(h)
         # logits = self.head(h)
+        logits = h.squeeze(1)
+        logits_result = self.p_layer(logits)
+        return logits_result
+
+
+class SAGETransfomer(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.drop = nn.Dropout(config.embd_pdrop)
+        self.gnn = SAGE(config.in_size, config.n_embd, config.gnn_n_head, config.gnn_n_layer)
+        self.blocks = nn.Sequential()
+        self.blocks.add_module('at_1', SelfAttention(config.n_embd * config.gnn_n_layer
+                                                     , int(config.n_embd * config.gnn_n_layer / 2)
+                                                     , config.n_head, use_bias=True))
+        self.blocks.add_module('at_2', SelfAttention(int(config.n_embd * config.gnn_n_layer / 2)
+                                                     , config.n_embd, config.n_head
+                                                     , use_bias=True))
+        self.blocks.add_module('at_3', SelfAttention(config.n_embd, config.n_embd
+                                                     , config.n_head, use_bias=True))
+        self.p_layer = nn.Linear(config.n_embd, config.out_size)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            module.weight.data.normal_(mean=0.0, std=0.02)
+            if isinstance(module, nn.Linear) and module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+
+    def forward(self, blocks, x):
+        gh = self.gnn(blocks, x)  # [1024, 1024]
+        gh = gh.unsqueeze(1)
+        h = self.blocks(gh)
         logits = h.squeeze(1)
         logits_result = self.p_layer(logits)
         return logits_result
@@ -339,41 +378,6 @@ class SAGEModel(nn.Module):
         gh = self.gnn(blocks, x)  # [1024, 1024]
         h = self.ln_f(gh)
         logits = self.head(h)
-        logits_result = self.p_layer(logits)
-        return logits_result
-
-
-class SAGETransfomer(nn.Module):
-
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.drop = nn.Dropout(config.embd_pdrop)
-        # coors, in_feats, out_feats, n_hidden, num_heads, n_layers
-        self.gnn = SAGE(config.in_size, config.n_embd, config.gnn_n_layer)
-        self.blocks = nn.Sequential(*[BlockCNN(config) for _ in range(config.n_layer)])
-        self.ln_f = nn.LayerNorm(config.n_embd)
-        self.head = nn.Linear(config.n_embd, config.vocab_size, bias=True)
-
-        self.p_layer = nn.Linear(config.n_embd, config.out_size)
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=0.02)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-
-    def forward(self, blocks, x):
-        gh = self.gnn(blocks, x)  # [1024, 1024]
-        gh = gh.unsqueeze(0)
-        h = self.blocks(gh)
-        h = self.ln_f(h)
-        logits = self.head(h)
-        logits = logits.squeeze(0)
         logits_result = self.p_layer(logits)
         return logits_result
 
