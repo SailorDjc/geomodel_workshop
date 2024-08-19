@@ -53,12 +53,10 @@ def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid, check_level=0):
         pbr = tqdm(enumerate(rect_point_ids), total=len(rect_point_ids), position=0, leave=True)
         for it, cell_id in pbr:
             cell = grid.extract_cells([cell_id])
-            for face_id in np.arange(poly_surf.n_cells):
-                face_points = poly_surf.get_cell(index=face_id)
-                check_intersect = check_triangle_box_overlap(tri_points=face_points.points, voxel_points=cell.points)
-                if check_intersect:
-                    select_cell_ids.append(cell_id)
-                    break
+            face_points = np.array([poly_surf.get_cell(index=face_id).points for face_id in np.arange(poly_surf.n_cells)])
+            check_intersect = check_triangle_box_overlap(tri_points=face_points, voxel_points=cell.points)
+            if check_intersect:
+                select_cell_ids.append(cell_id)
         return select_cell_ids
 
 

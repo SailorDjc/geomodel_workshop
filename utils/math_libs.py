@@ -12,126 +12,200 @@ def check_triangle_box_overlap(tri_points, voxel_points):
     # axis[3]
     # d, p0, p1, p2, rad, fex, fey, fez
     # normal[3], e0[3], e1[3], e2[3]
+    # 三角形数
+    tri_num = tri_points.shape[0]
+    check_flag = np.full((tri_num, ), True)
     box_half_size = caculate_box_length(voxel_points)
     box_center = caculate_box_center(voxel_points)
     tri_offset = np.subtract(tri_points, box_center)
-    tri_max_x = np.max(tri_offset[:, 0])
-    tri_min_x = np.min(tri_offset[:, 0])
-    if tri_min_x > box_half_size[0] or tri_max_x < -box_half_size[0]:
-        return False
-    tri_max_y = np.max(tri_offset[:, 1])
-    tri_min_y = np.min(tri_offset[:, 1])
-    if tri_min_y > box_half_size[1] or tri_max_y < -box_half_size[1]:
-        return False
-    tri_max_z = np.max(tri_offset[:, 2])
-    tri_min_z = np.min(tri_offset[:, 2])
-    if tri_min_z > box_half_size[1] or tri_max_z < -box_half_size[1]:
-        return False
+    tri_max_x = np.max(tri_offset[:, :, 0], axis=1)
+    tri_min_x = np.min(tri_offset[:, :, 0], axis=1)
+    flag_0 = tri_min_x > box_half_size[0]
+    flag_1 = tri_max_x < -box_half_size[0]
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(check_flag, flag_2)
+    tri_max_y = np.max(tri_offset[:, :, 1], axis=1)
+    tri_min_y = np.min(tri_offset[:, :, 1], axis=1)
+    flag_0 = tri_min_y > box_half_size[1]
+    flag_1 = tri_max_y < -box_half_size[1]
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(check_flag, flag_2)
+    tri_max_z = np.max(tri_offset[:, :, 2], axis=1)
+    tri_min_z = np.min(tri_offset[:, :, 2], axis=1)
+    flag_0 = tri_min_z > box_half_size[2]
+    flag_1 = tri_max_z < -box_half_size[2]
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(check_flag, flag_2)
+
     # 三角形两向量
-    v0, v1, v2 = tri_offset[0], tri_offset[1], tri_offset[2]
+    v0, v1, v2 = tri_offset[:, 0], tri_offset[:, 1], tri_offset[:, 2]
+
     e0 = np.subtract(v1, v0)
     e1 = np.subtract(v2, v1)
     # 三角形法向量
     normal = np.cross(e0, e1)
-    d = - np.dot(normal, v0)
-    if not check_plane_box_overlap(normal=normal, d=d, maxbox=box_half_size):
-        return False
+    d = - np.sum((normal * v0), axis=1)
+    flag_3 = check_plane_box_overlap(normal=normal, d=d, maxbox=box_half_size)
+    check_flag = np.logical_and(check_flag, flag_3)
     e2 = np.subtract(v0, v2)
-    fex, fey, fez = np.fabs(e0[0]), np.fabs(e0[1]), np.fabs(e0[2])
+    fex, fey, fez = np.fabs(e0[:, 0]), np.fabs(e0[:, 1]), np.fabs(e0[:, 2])
     # (e0[Z], e0[Y], fez, fey);
-    p0 = e0[2] * v0[1] - e0[1] * v0[2]
-    p2 = e0[2] * v2[1] - e0[1] * v2[2]
-    min_val = min(p0, p2)
-    max_val = max(p0, p2)
+    p0 = e0[:, 2] * v0[:, 1] - e0[:, 1] * v0[:, 2]
+    p2 = e0[:, 2] * v2[:, 1] - e0[:, 1] * v2[:, 2]
+    min_val = np.minimum(p0, p2)
+    max_val = np.maximum(p0, p2)
     rad = fez * box_half_size[1] + fey * box_half_size[2]
-    if min_val > rad or max_val < -rad:
-        return False
+    flag_0 = min_val > rad
+    flag_1 = max_val < -rad
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(flag_2, check_flag)
+    # if min_val > rad or max_val < -rad:
+    #     return False
     # (e0[Z], e0[X], fez, fex)
-    p0 = -e0[2] * v0[0] + e0[0] * v0[2]
-    p2 = -e0[2] * v2[0] + e0[0] * v2[2]
-    min_val = min(p0, p2)
-    max_val = max(p0, p2)
+    p0 = -e0[:, 2] * v0[:, 0] + e0[:, 0] * v0[:, 2]
+    p2 = -e0[:, 2] * v2[:, 0] + e0[:, 0] * v2[:, 2]
+    min_val = np.minimum(p0, p2)
+    max_val = np.maximum(p0, p2)
     rad = fez * box_half_size[0] + fex * box_half_size[2]
-    if min_val > rad or max_val < -rad:
-        return False
+    flag_0 = min_val > rad
+    flag_1 = max_val < -rad
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(flag_2, check_flag)
+    # if min_val > rad or max_val < -rad:
+    #     return False
     # (e0[Y], e0[X], fey, fex)
-    p1 = e0[1] * v1[0] - e0[0] * v1[1]
-    p2 = e0[1] * v2[0] - e0[0] * v2[1]
-    min_val = min(p1, p2)
-    max_val = max(p1, p2)
+    p1 = e0[:, 1] * v1[:, 0] - e0[:, 0] * v1[:, 1]
+    p2 = e0[:, 1] * v2[:, 0] - e0[:, 0] * v2[:, 1]
+    min_val = np.minimum(p1, p2)
+    max_val = np.maximum(p1, p2)
     rad = fey * box_half_size[0] + fex * box_half_size[1]
-    if min_val > rad or max_val < -rad:
-        return False
-    fex, fey, fez = np.fabs(e1[0]), np.fabs(e1[1]), np.fabs(e1[2])
+    flag_0 = min_val > rad
+    flag_1 = max_val < -rad
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(flag_2, check_flag)
+    # if min_val > rad or max_val < -rad:
+    #     return False
+    fex, fey, fez = np.fabs(e1[:, 0]), np.fabs(e1[:, 1]), np.fabs(e1[:, 2])
     # e1[Z], e1[Y], fez, fey
-    p0 = e1[2] * v0[1] - e1[1] * v0[2]
-    p2 = e1[2] * v2[1] - e1[1] * v2[2]
-    min_val = min(p0, p2)
-    max_val = max(p0, p2)
+    p0 = e1[:, 2] * v0[:, 1] - e1[:, 1] * v0[:, 2]
+    p2 = e1[:, 2] * v2[:, 1] - e1[:, 1] * v2[:, 2]
+    min_val = np.minimum(p0, p2)
+    max_val = np.maximum(p0, p2)
     rad = fez * box_half_size[1] + fey * box_half_size[2]
-    if min_val > rad or max_val < -rad:
-        return False
+    flag_0 = min_val > rad
+    flag_1 = max_val < -rad
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(flag_2, check_flag)
+    # if min_val > rad or max_val < -rad:
+    #     return False
     # (e1[Z], e1[X], fez, fex)
-    p0 = -e1[2] * v0[0] + e1[0] * v0[2]
-    p2 = -e1[2] * v2[0] + e1[0] * v2[2]
-    min_val = min(p0, p2)
-    max_val = max(p0, p2)
+    p0 = -e1[:, 2] * v0[:, 0] + e1[:, 0] * v0[:, 2]
+    p2 = -e1[:, 2] * v2[:, 0] + e1[:, 0] * v2[:, 2]
+    min_val = np.minimum(p0, p2)
+    max_val = np.maximum(p0, p2)
     rad = fez * box_half_size[0] + fex * box_half_size[2]
-    if min_val > rad or max_val < -rad:
-        return False
+    flag_0 = min_val > rad
+    flag_1 = max_val < -rad
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(flag_2, check_flag)
+    # if min_val > rad or max_val < -rad:
+    #     return False
     # (e1[Y], e1[X], fey, fex)
-    p0 = e1[1] * v0[0] - e1[0] * v0[1]
-    p1 = e1[1] * v1[0] - e1[0] * v1[1]
-    min_val = min(p0, p1)
-    max_val = max(p0, p1)
+    p0 = e1[:, 1] * v0[:, 0] - e1[:, 0] * v0[:, 1]
+    p1 = e1[:, 1] * v1[:, 0] - e1[:, 0] * v1[:, 1]
+    min_val = np.minimum(p0, p1)
+    max_val = np.maximum(p0, p1)
     rad = fey * box_half_size[0] + fex * box_half_size[1]
-    if min_val > rad or max_val < -rad:
-        return False
+    flag_0 = min_val > rad
+    flag_1 = max_val < -rad
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(flag_2, check_flag)
+    # if min_val > rad or max_val < -rad:
+    #     return False
     # (e2[Z], e2[Y], fez, fey);
-    fex, fey, fez = np.fabs(e2[0]), np.fabs(e2[1]), np.fabs(e2[2])
-    p0 = e2[2] * v0[1] - e2[1] * v0[2]
-    p1 = e2[2] * v1[1] - e2[1] * v1[2]
-    min_val = min(p0, p1)
-    max_val = max(p0, p1)
+    fex, fey, fez = np.fabs(e2[:, 0]), np.fabs(e2[:, 1]), np.fabs(e2[:, 2])
+    p0 = e2[:, 2] * v0[:, 1] - e2[:, 1] * v0[:, 2]
+    p1 = e2[:, 2] * v1[:, 1] - e2[:, 1] * v1[:, 2]
+    min_val = np.minimum(p0, p1)
+    max_val = np.maximum(p0, p1)
     rad = fez * box_half_size[1] + fey * box_half_size[2]
-    if min_val > rad or max_val < -rad:
-        return False
+    flag_0 = min_val > rad
+    flag_1 = max_val < -rad
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(flag_2, check_flag)
+    # if min_val > rad or max_val < -rad:
+    #     return False
     # (e2[Z], e2[X], fez, fex)
-    p0 = -e2[2] * v0[0] + e2[0] * v0[2]
-    p1 = -e2[2] * v1[0] + e2[0] * v1[2]
-    min_val = min(p0, p1)
-    max_val = max(p0, p1)
+    p0 = -e2[:, 2] * v0[:, 0] + e2[:, 0] * v0[:, 2]
+    p1 = -e2[:, 2] * v1[:, 0] + e2[:, 0] * v1[:, 2]
+    min_val = np.minimum(p0, p1)
+    max_val = np.maximum(p0, p1)
     rad = fez * box_half_size[0] + fex * box_half_size[2]
-    if min_val > rad or max_val < -rad:
-        return False
+    flag_0 = min_val > rad
+    flag_1 = max_val < -rad
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(flag_2, check_flag)
+    # if min_val > rad or max_val < -rad:
+    #     return False
     # (e2[Y], e2[X], fey, fex)
-    p1 = e2[1] * v1[0] - e2[0] * v1[1]
-    p2 = e2[1] * v2[0] - e2[0] * v2[1]
-    min_val = min(p1, p2)
-    max_val = max(p1, p2)
+    p1 = e2[:, 1] * v1[:, 0] - e2[:, 0] * v1[:, 1]
+    p2 = e2[:, 1] * v2[:, 0] - e2[:, 0] * v2[:, 1]
+    min_val = np.minimum(p1, p2)
+    max_val = np.maximum(p1, p2)
     rad = fey * box_half_size[0] + fex * box_half_size[2]
-    if min_val > rad or max_val < -rad:
-        return False
-    return True
+    flag_0 = min_val > rad
+    flag_1 = max_val < -rad
+    flag_2 = np.logical_not(np.logical_or(flag_0, flag_1))
+    check_flag = np.logical_and(flag_2, check_flag)
+    # if min_val > rad or max_val < -rad:
+    #     return False
+    flag_result = np.any(check_flag)
+    return flag_result
 
 
 def check_plane_box_overlap(normal, d, maxbox):
-    v_min = [0, 0, 0]
-    v_max = [0, 0, 0]
-    for q in np.arange(3):
-        if normal[q] > 0.0:
-            v_min[q] = -maxbox[q]
-            v_max[q] = maxbox[q]
-        else:
-            v_min[q] = maxbox[q]
-            v_max[q] = -maxbox[q]
-    f1 = np.dot(normal, v_min)
-    if f1 + d > 0.0:
+    if normal.ndim == 1:
+        v_min = [0, 0, 0]
+        v_max = [0, 0, 0]
+        for q in np.arange(3):
+            if normal[q] > 0.0:
+                v_min[q] = -maxbox[q]
+                v_max[q] = maxbox[q]
+            else:
+                v_min[q] = maxbox[q]
+                v_max[q] = -maxbox[q]
+        f1 = np.dot(normal, v_min)
+        if f1 + d > 0.0:
+            return False
+        f2 = np.dot(normal, v_max)
+        if f2 + d > 0:
+            return True
         return False
-    f2 = np.dot(normal, v_max)
-    if f2 + d > 0:
-        return True
-    return False
+    elif normal.ndim == 2:
+        v_min = np.full(normal.shape, -1)
+        v_max = np.full(normal.shape, -1)
+        for q in np.arange(3):
+            q_i = np.where(normal[:, q] > 0.0)
+            q_j = np.where(normal[:, q] <= 0)
+            v_min[q_i, q] = -maxbox[q]
+            v_max[q_i, q] = maxbox[q]
+            v_min[q_j, q] = maxbox[q]
+            v_max[q_j, q] = -maxbox[q]
+        # f1 = np.dot(normal, v_min)
+        f1 = np.sum((normal * v_min), axis=1)
+        flag_0 = np.logical_not(f1 + d > 0.0)
+
+        # if f1 + d > 0.0:
+        #     return False
+        # f2 = np.dot(normal, v_max)
+        f2 = np.sum((normal * v_max), axis=1)
+        flag_1 = (f2 + d > 0.0)
+        # if f2 + d > 0:
+        #     return True
+        flag = np.logical_and(flag_0, flag_1)
+        return flag
+    else:
+        raise ValueError('Input Error.')
 
 
 # np.dot 向量点乘
