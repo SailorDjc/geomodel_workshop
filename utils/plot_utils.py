@@ -469,19 +469,26 @@ def visual_loss_picture(train_loss, test_loss, title=None, x_label='epoch', y_la
         plt.savefig(save_path)
 
 
-def visual_acc_picture(train_acc, test_acc, title=None, x_label='epoch', y_label='Acc', save_path=None, is_show=True):
+def visual_acc_picture(epochs, train_acc, valid_acc, title=None, x_label='epoch', y_label='Acc', save_path=None
+                       , x_ticks=100, y_ticks=None, is_show=True):
     plt.figure(figsize=[14, 5])
-    plt.plot(train_acc, "ro-", label="Train Acc")
-    plt.plot(test_acc, "bs-", label="Test Acc")
+    plt.plot(epochs, train_acc, "r", label="train accuracy")  # ro-
+    plt.plot(epochs, valid_acc, "b", label="validation accuracy")  # bs-
     plt.xlabel(x_label)
     plt.ylabel(y_label)
-    plt.legend()
+    plt.legend(loc='lower right')
     max_train_acc_value = max(train_acc)  # 求列表最大值
-    # max_train_acc_idx = train_acc.index(max_train_acc_value)  # 求最大值对应索引
-    max_test_acc_value = max(test_acc)
-    # max_test_acc_idx = test_acc.index(max_test_acc_value)
-    # print('The {}th epoch, train acc reached the highest value: {}.'.format(max_train_acc_idx, max_train_acc_value))
-    # print('The {}th epoch, test acc reached the highest value: {}.'.format(max_test_acc_idx, max_test_acc_value))
+    max_train_acc_idx = np.where(train_acc == max_train_acc_value)  # 求最大值对应索引
+    max_test_acc_value = max(valid_acc)
+    max_test_acc_idx = np.where(valid_acc == max_test_acc_value)
+    print('在第{}轮训练, 训练集准确率达到最大值: {}.'.format(max_train_acc_idx, max_train_acc_value))
+    print('在第{}轮训练, 验证集准确率达到最大值: {}.'.format(max_test_acc_idx, max_test_acc_value))
+    if x_ticks is not None:
+        x_ticks = np.arange(0, np.max(epochs), x_ticks)
+        plt.xticks(x_ticks)
+    if y_ticks is not None:
+        y_ticks = np.arange(0, 1, y_ticks)
+        plt.yticks(y_ticks)
     if title is not None:
         plt.title(title)
     if is_show:

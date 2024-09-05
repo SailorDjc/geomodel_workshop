@@ -261,7 +261,7 @@ class GmeTrainer:
                 #                        , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
                 test_loss, test_acc, test_rmse = self.test(data_idx=idx)
 
-                message = '==============Test Accuracy {:.4f} Loss {: .4f} Rmse {: .4f}=============' \
+                message = '# ==============Test Accuracy {:.4f} Loss {: .4f} Rmse {: .4f}=============' \
                     .format(test_acc, test_loss, test_rmse)
                 return message
             else:
@@ -297,6 +297,8 @@ class GmeTrainer:
                     y_hats.append(y_hat)
                 test_acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys), task='multiclass'
                                        , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
+                test_f1_score = MF.f1_score(torch.cat(y_hats), torch.cat(ys), task='multiclass'
+                                       , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
                 preds = torch.cat(y_hats).cpu().detach().numpy()
                 preds = np.argmax(preds, axis=1)
                 targets = torch.cat(ys).cpu().detach().numpy()
@@ -308,15 +310,15 @@ class GmeTrainer:
 
     def train(self, data_split_idx=0, has_test_label=False, early_stop_patience=10, only_inference=False):
         start_time = datetime.now()
-        # if not only_inference:
-        labels_count_map = self.labels_count_map
-        key_num = self.gme_dataset.num_classes['labels'][data_split_idx]
-        if self.gme_dataset.num_classes['labels'][data_split_idx] != key_num:
-            raise ValueError('Data type error.')
-        alpha_list = np.array([labels_count_map[a] for a in range(key_num)])
-        item_sum = np.sum(alpha_list)
-        alpha_list = alpha_list / item_sum
-        self.custom_loss = FocalLoss(classes_ratio=alpha_list, gamma=2, ignore_index=-1)
+        # 计算 Focal Loss 参数
+        # labels_count_map = self.labels_count_map
+        # key_num = self.gme_dataset.num_classes['labels'][data_split_idx]
+        # if self.gme_dataset.num_classes['labels'][data_split_idx] != key_num:
+        #     raise ValueError('Data type error.')
+        # alpha_list = np.array([labels_count_map[a] for a in range(key_num)])
+        # item_sum = np.sum(alpha_list)
+        # alpha_list = alpha_list / item_sum
+        # self.custom_loss = FocalLoss(gamma=2, ignore_index=-1)  # classes_ratio=alpha_list,
 
         model, config = self.model, self.config
         raw_model, optimizer = self.load_checkpoint()
@@ -342,8 +344,8 @@ class GmeTrainer:
                     y = blocks[-1].dstdata['label']
                     y_hat = model(blocks, x)
                     # ignore_index=-1, 计算跳过填充值-1
-                    # loss = F.cross_entropy(y_hat, y, ignore_index=-1)
-                    loss = self.custom_loss(y_hat, y)
+                    loss = F.cross_entropy(y_hat, y, ignore_index=-1)
+                    # loss = self.custom_loss(y_hat, y)
                     losses.append(loss.item())
                     # 计算epoch 的总体 accuracy
                     ys.append(y)
@@ -403,6 +405,8 @@ class GmeTrainer:
         var_acc_list = []
 
         #
+        if only_inference:
+            self.max_epochs = 0
         early_stopping = EarlyStopping(patience=early_stop_patience)
         for epoch in range(self.first_epoch - 1, self.max_epochs):
 

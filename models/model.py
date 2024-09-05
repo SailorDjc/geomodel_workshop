@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torchmetrics.functional as MF
 import dgl
 import dgl.nn as dglnn
-from models.layers import MultiHeadSpatialLayer, MultiHeadSageLayer, GraphTransformerLayer, MLPReadout
+from models.layers import MultiHeadSpatialLayer, MultiHeadSageLayer   # , GraphTransformerLayer, MLPReadout
 from dgl.dataloading import DataLoader, NeighborSampler, MultiLayerFullNeighborSampler
 from tqdm import tqdm
 
@@ -317,102 +317,3 @@ class SAGETransfomer(nn.Module):
         logits_result = self.p_layer(logits)
         return logits_result
 
-
-class GraphModel(nn.Module):
-
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.drop = nn.Dropout(config.embd_pdrop)
-        # coors, in_feats, out_feats, n_hidden, num_heads, n_layers
-        self.gnn = GNN(config.coors, config.in_size, config.n_embd, config.gnn_n_head, config.gnn_n_layer)
-        # self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
-        self.ln_f = nn.LayerNorm(config.n_embd)
-        self.head = nn.Linear(config.n_embd, config.vocab_size, bias=True)
-
-        self.p_layer = nn.Linear(config.vocab_size, config.out_size)
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=0.02)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-
-    def forward(self, blocks, x):
-        gh = self.gnn(blocks, x)  # [1024, 1024]
-        h = self.ln_f(gh)
-        logits = self.head(h)
-        logits_result = self.p_layer(logits)
-        return logits_result
-
-
-class SAGEModel(nn.Module):
-
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.drop = nn.Dropout(config.embd_pdrop)
-        # coors, in_feats, out_feats, n_hidden, num_heads, n_layers
-        self.gnn = SAGE(config.in_size, config.n_embd, config.gnn_n_layer)
-        # self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
-        self.ln_f = nn.LayerNorm(config.n_embd)
-        self.head = nn.Linear(config.n_embd, config.vocab_size, bias=True)
-
-        self.p_layer = nn.Linear(config.vocab_size, config.out_size)
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=0.02)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-
-    def forward(self, blocks, x):
-        gh = self.gnn(blocks, x)  # [1024, 1024]
-        h = self.ln_f(gh)
-        logits = self.head(h)
-        logits_result = self.p_layer(logits)
-        return logits_result
-
-
-class GraphTransfomerNet(nn.Module):
-
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.gnn_layers = nn.ModuleList()
-        self.gnn_layers.append(GraphTransformerLayer(config.coors, config.in_size, config.n_embd, config.gnn_n_head,
-                                                     dropout=0.5))
-        for l in range(1, config.gnn_n_layer):
-            self.gnn_layers.append(
-                GraphTransformerLayer(config.coors, config.n_embd, config.n_embd, config.gnn_n_head, dropout=0.5))
-        # mlp_layer
-        self.p_layer = MLPReadout(config.n_embd * config.gnn_n_layer, config.out_size)
-        # # self.concat_layer = nn.Linear(n_layers * out_feats, out_feats)
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=0.02)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-
-    def forward(self, blocks, x):
-        h = x
-        layer_outputs = []
-        for l, (layer, block) in enumerate(zip(self.gnn_layers, blocks)):
-            h = layer(block, h)
-            layer_outputs.append(h[:blocks[-1].number_of_dst_nodes()])
-        h = torch.cat(layer_outputs, dim=1)
-        h = self.p_layer(h)
-        return h

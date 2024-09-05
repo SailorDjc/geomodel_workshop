@@ -290,7 +290,16 @@ class ReadExportFile(object):
         val_loss = np.array(df_logs.loc[:, ['val_loss']])
         val_acc = np.array(df_logs.loc[:, ['val_acc']])
         val_rmse = np.array(df_logs.loc[:, ['val_rmse']])
-        return epoch, train_loss, train_acc, train_rmse, val_loss, val_acc, val_rmse
+        result_log = {
+            'epochs': epoch.flatten(),
+            'train_loss': train_loss.flatten(),
+            'train_accuracy': train_acc.flatten(),
+            'train_rmse': train_rmse.flatten(),
+            'valid_loss': val_loss.flatten(),
+            'valid_accuracy': val_acc.flatten(),
+            'valid_rmse': val_rmse.flatten(),
+        }
+        return result_log
 
     @staticmethod
     def read_array_from_txt(txt_file_path) -> torch.Tensor:

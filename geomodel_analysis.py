@@ -116,7 +116,7 @@ class GmeModelGraphList(object):
                  dir_path=None,
                  sample_operator=None, self_loop=False, add_inverse_edge=True,
                  dgl_graph_param=None, update_graph=False, grid_dims=None, terrain_data=None,
-                 grid_cell_density=None, model_depth=None, is_regular=True, **kwargs):
+                 grid_cell_density=None, model_depth=None, is_regular=True, processed_dir=None, **kwargs):
         # 因为内存受限，只能取一个graph数据，其余graph存成文件
         self.graph_id = graph_id
         # 注：.dat文件格式与Voxler软件一致
@@ -145,7 +145,8 @@ class GmeModelGraphList(object):
         self.grid_cell_density = grid_cell_density
         self.model_depth = model_depth
         # 文件存储路径，在processed文件夹下共存储3个数据文件，两个模型训练checkpoint存储文件
-        processed_dir = os.path.join(self.root, 'processed')  # 存储
+        if processed_dir is None:
+            processed_dir = os.path.join(self.root, 'processed')  # 存储
         # 默认存储数据缓存的路径
         self.processed_dir = processed_dir
         if not os.path.exists(self.processed_dir):

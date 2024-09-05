@@ -32,6 +32,12 @@ if __name__ == '__main__':
     grid_data = reader.read_geodata(file_path=grid_data_path)
     grid_data.points_transform(points_trans_scale, factor=[200, 200, 100])
     # grid_data.vtk_data.plot()
+    ##
+    # file_path = os.path.join(root_dir, 'data', 'error_surf.vtk')
+    # surf = reader.read_vtk_data(file_path=file_path)
+    # cell_ids = poly_surf_intersect_with_grid(poly_surf=surf, grid=grid_data.vtk_data,
+    #                                          check_level=0)
+    ##
     interface_file_list = os.listdir(interface_data_dir)  # 获取文件夹下所有文件
     interface_data_list = []
     # 获取所有面的文件路径
@@ -44,7 +50,17 @@ if __name__ == '__main__':
     # 为网格cell赋值，初始值为-1
     cells_series = np.full((len(grid_data.grid_points),), fill_value=-1)
     grid_data.vtk_data.cell_data['Scalar Field'] = cells_series
-
+    ##
+    surf = read_dxf_surface(geom_file_path=interface_data_list[1])
+    file_path = os.path.join(root_dir, 'data', 'surf_1.vtk')
+    surf.save(filename=file_path)
+    cell_ids = poly_surf_intersect_with_grid(poly_surf=surf, grid=grid_data.vtk_data,
+                                             check_level=0)
+    plotter = pv.Plotter()
+    plotter.add_mesh(surf)
+    cells_series[cell_ids] = 1
+    pp = grid_data.vtk_data.extract_cells(ind=cell_ids)
+    plotter.add_mesh(pp, opacity=0.5)
     print('正在读取.dxf层面数据')
     # ##
 
@@ -53,11 +69,11 @@ if __name__ == '__main__':
         surf = read_dxf_surface(geom_file_path=file_path)
         # plotter.add_mesh(surf)
         poly_surface_list.append(surf)
-    pbr = tqdm(enumerate(poly_surface_list), total=len(poly_surface_list))
+    pbr_1 = tqdm(enumerate(poly_surface_list), total=len(poly_surface_list))
     label_dict = {"1_Base_Tommy": 0, "2_Base_Isa": 1, "3_Base_Soldiers_Cap": 2, "4_Base_Calvert": 3,
                   "5_Base_Quilalar": 4, "7_Base_Bulonga": 5, "8_Base_Leichhardt": 6, "9_Base_L_Volcs": 7,
                   "Williams_Naraku_Granites": 8}
-    for it, poly_surf in pbr:
+    for it, poly_surf in pbr_1:
         # 筛选出与surf面相交的cell的id号
         cell_ids = poly_surf_intersect_with_grid(poly_surf=poly_surface_list[it], grid=grid_data.vtk_data,
                                                  check_level=0)

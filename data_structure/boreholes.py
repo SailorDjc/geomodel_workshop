@@ -99,16 +99,30 @@ class Borehole(object):
         if self.points is not None or self.series is not None:
             if self.points.shape[0] == self.series.shape[0] and self.points.ndim == 2:
                 points, series = self.remove_duplicates_series()
-                num = points.shape[0]
-                if num < 2:
+                pnt_num = points.shape[0]
+                if pnt_num < 2:
                     raise ValueError('Borehole data is invalid because of lack of points')
+                # 直孔的所有点的平面位置一致
                 self.top_pos = points[0]
-                self.bottom_pos = points[num - 1]
-                for i in range(num - 1):
+                x = np.unique(points[:, 0])
+                y = np.unique(points[:, 1])
+                if len(x) > 1 or len(y) > 1:
+                    points[:, 0] = self.top_pos[0]
+                    points[:, 1] = self.top_pos[1]
+                self.bottom_pos = points[pnt_num - 1]
+                layer_num = 0
+                for i in range(pnt_num - 1):
+                    if points[i][2] <= points[i + 1][2]:
+                        continue
                     one_holelayer = self.Holelayer(coord_top=points[i], coord_bottom=points[i + 1],
                                                    layer_label=series[i], borehole_id=self.borehole_id)
                     self.holelayer_list.append(one_holelayer)
-                self.holelayer_num = num - 1
+                    layer_num += 1
+                self.holelayer_num = layer_num
+
+    def rectify_holelayers(self):
+        self.update_borehole_data_by_holelayers()
+        self.update_holelayer_list()
 
     # 若钻孔只有分层，通过分层信息，更新
     def update_borehole_data_by_holelayers(self):
@@ -137,7 +151,7 @@ class Borehole(object):
 
     # 只保留层位点
     # 遍历钻孔地层序列点，获取界面点 is_delete=False, 中间点不删除，True则删除
-    def remove_duplicates_series(self, is_delete=False):
+    def remove_duplicates_series(self, is_delete=False, ):
         if self.series is None:
             raise ValueError('Series array can not be None')
         extract_labels = []
@@ -315,6 +329,10 @@ class BoreholeSet(object):
             # 对象拷贝
         self.dir_path = dir_path
 
+    def update_holelayers(self):
+        for hole_id in np.arange(len(self.boreholes_list)):
+            self.boreholes_list[hole_id].rectify_holelayers()
+
     def get_points_num(self):
         points_data_list = self.get_points_data()
         return len(points_data_list)
@@ -460,11 +478,11 @@ class BoreholeSet(object):
     def generate_vtk_data_as_tube(self, borehole_radius=1.0, is_tube=True):
         # 遍历钻孔
         borehole_list = pv.MultiBlock()  # 钻孔序列
-        for one_borehole in self.boreholes_list:
+        for borehole_id, one_borehole in enumerate(self.boreholes_list):
             layer_points = []
             layer_labels = []
             layer_lines = []
-            for one_layer in one_borehole.holelayer_list:
+            for layer_id, one_layer in enumerate(one_borehole.holelayer_list):
                 one_line = np.array([2, len(layer_points), len(layer_points) + 1], dtype=int)
                 layer_label = one_layer.layer_label
                 point_a = one_layer.top_pos
@@ -796,7 +814,10 @@ class BoreholeSet(object):
             if not os.path.exists(os.path.join(self.dir_path, out_name)):
                 file_name = out_name
             else:
-                file_name = out_name + '_' + self.tmp_dump_str
+                if replace:
+                    file_name = out_name
+                else:
+                    file_name = out_name + '_' + self.tmp_dump_str
         self.name = file_name
         save_dir = os.path.join(self.dir_path, file_name)
         if not os.path.exists(save_dir):

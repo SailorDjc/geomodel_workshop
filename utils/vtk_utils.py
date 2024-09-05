@@ -19,6 +19,8 @@ import geopandas as gpd
 import shapely as sy
 from utils.math_libs import remove_duplicate_points, add_point_to_point_set_if_no_duplicate, check_triangle_box_overlap
 from tqdm import tqdm
+import concurrent.futures
+import itertools
 
 obbtree = vtkOBBTree()
 obbtree.SetTolerance(1e-8)
@@ -29,6 +31,7 @@ obbtree.SetTolerance(1e-8)
 # check_level: 构建obbtree的级别，默认为0，构建最初级
 # grid: vtk网格
 def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid, check_level=0):
+
     vtk_obbtree_0 = vtkOBBTree()
     vtk_obbtree_0.SetDataSet(poly_surf)
     vtk_obbtree_0.BuildLocator()
@@ -41,6 +44,7 @@ def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid, check_level=0):
             check_level = 0
     vtk_obbtree_0.GenerateRepresentation(check_level, obb_poly)
     obb_poly = pv.wrap(obb_poly)
+    obb_poly.plot()
     select_cell_ids = []
     if isinstance(grid, (pv.RectilinearGrid, pv.UnstructuredGrid, pv.StructuredGrid)):
         gird_points_poly = pv.PolyData(grid.points)
@@ -50,10 +54,22 @@ def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid, check_level=0):
         select_points = grid.extract_points(ind=rect_point_ids)
         rect_point_ids = grid.find_containing_cell(select_points.cell_centers().points)
         print('Computing...')
+        face_points = np.array([poly_surf.get_cell(index=face_id).points for face_id in np.arange(poly_surf.n_cells)])
+
+        # def check_voxel_intersect(cell_id):
+        #     voxel_points = grid.extract_cells([cell_id]).points
+        #     check_intersect = check_triangle_box_overlap(tri_points=face_points, voxel_points=voxel_points)
+        #     if check_intersect:
+        #         return [cell_id]
+        #     else:
+        #         return []
+        result_ids = []
+        # with concurrent.futures.ProcessPoolExecutor() as executor:
+        #     cell_ids = executor.map(check_voxel_intersect, rect_point_ids)
+        #     result_ids = list(cell_ids)
         pbr = tqdm(enumerate(rect_point_ids), total=len(rect_point_ids), position=0, leave=True)
         for it, cell_id in pbr:
             cell = grid.extract_cells([cell_id])
-            face_points = np.array([poly_surf.get_cell(index=face_id).points for face_id in np.arange(poly_surf.n_cells)])
             check_intersect = check_triangle_box_overlap(tri_points=face_points, voxel_points=cell.points)
             if check_intersect:
                 select_cell_ids.append(cell_id)

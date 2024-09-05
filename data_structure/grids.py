@@ -499,7 +499,7 @@ class Grid(object):
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         tmp_vtk_data = None
-        if self.vtk_data is not None and isinstance(self.vtk_data, (pv.RectilinearGrid, pv.UnstructuredGrid)):
+        if self.vtk_data is not None and isinstance(self.vtk_data, (pv.RectilinearGrid, pv.UnstructuredGrid, pv.StructuredGrid)):
             save_path = os.path.join(save_dir, file_name + '.vtk')
             self.vtk_data.save(filename=save_path)
             tmp_vtk_data = self.vtk_data
