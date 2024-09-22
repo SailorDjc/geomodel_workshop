@@ -327,13 +327,14 @@ class Section(object):
             raise ValueError('Trajectory line input is not supported.')
 
     # 地质探针，待修改
-    def prob_volume(self, grid, surf: pv.PolyData):
+    def prob_volume(self, grid, surf: pv.PolyData, scalar_name='stratum'):
         probe_volume = vtkProbeFilter()
+        # grid.vtk_data.plot()
         probe_volume.SetSourceData(grid.vtk_data)
         probe_volume.SetInputData(surf)
         probe_volume.Update()
         out = probe_volume.GetOutput()
-        arr = out.GetPointData().GetArray("stratum")
+        arr = out.GetPointData().GetArray(scalar_name)
         out.GetPointData().SetScalars(arr)
         out = pv.wrap(out)
         self.vtk_data = out

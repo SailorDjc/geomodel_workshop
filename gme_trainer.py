@@ -90,12 +90,13 @@ class GmeTrainerConfig:
 
 # 早停
 class EarlyStopping:
-    def __init__(self, patience=25, delta=0):
+    def __init__(self, patience=25, delta=0, best_loss=float('inf')):
         self.patience = patience
         self.counter = 0
-        self.best_loss = float('inf')
+        self.best_loss = best_loss
         self.early_stop = False
         self.delta = delta
+        self.max_counter = 0
 
     def __call__(self, val_loss):
         if val_loss < self.best_loss - self.delta:
@@ -103,6 +104,8 @@ class EarlyStopping:
             self.counter = 0
         else:
             self.counter += 1
+            if self.max_counter < self.counter:
+                self.max_counter = self.counter
             if self.counter >= self.patience:
                 self.early_stop = True
                 print(f'EarlyStopping counter: {self.counter} out of {self.patience}.')
@@ -141,8 +144,9 @@ class GmeTrainer:
         self.iter_record_path = None
         # take over whatever gpus are on the system
         self.device = config.device
-        if 1 < config.gpu_num <= torch.cuda.current_device():
-            self.model = torch.nn.DataParallel(self.model, device_ids=self.device).cuda()
+        num_gpus = torch.cuda.device_count()
+        if 1 < config.gpu_num <= num_gpus:  # torch.cuda.current_device()
+            self.model = torch.nn.DataParallel(self.model, device_ids=list(np.arange(config.gpu_num))).cuda()
         else:
             self.model = self.model.to(self.device)
 
@@ -193,9 +197,11 @@ class GmeTrainer:
         train_dataloader = dgl.dataloading.DataLoader(g, train_idx, sampler, device=self.device,
                                                       batch_size=self.config.batch_size, shuffle=True,
                                                       drop_last=False)
-        valid_dataloader = dgl.dataloading.DataLoader(g, val_idx, sampler, device=self.device,
-                                                      batch_size=self.batch_size, shuffle=True,
-                                                      drop_last=False)  # num_workers=0, use_uva=False
+        valid_dataloader = None
+        if val_idx is not None and len(val_idx) > 0:
+            valid_dataloader = dgl.dataloading.DataLoader(g, val_idx, sampler, device=self.device,
+                                                          batch_size=self.batch_size, shuffle=True,
+                                                          drop_last=False)  # num_workers=0, use_uva=False
         test_dataloader = None
         if test_idx is not None and len(test_idx) > 0:
             test_dataloader = dgl.dataloading.DataLoader(g, test_idx, sampler, device=self.device,
@@ -259,10 +265,10 @@ class GmeTrainer:
                 # label_test = graph.ndata['label'][test_idx].to(pred_test.device)
                 # accuracy = MF.accuracy(pred_test, label_test, task='multiclass'
                 #                        , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
-                test_loss, test_acc, test_rmse = self.test(data_idx=idx)
+                test_loss, test_acc = self.test(data_idx=idx)
 
-                message = '# ==============Test Accuracy {:.4f} Loss {: .4f} Rmse {: .4f}=============' \
-                    .format(test_acc, test_loss, test_rmse)
+                message = '# ==============Test Accuracy {} Loss {}=============' \
+                    .format(test_acc, test_loss)
                 return message
             else:
                 # 用验证集精度替代
@@ -271,7 +277,7 @@ class GmeTrainer:
                 label_val = graph.ndata['label'][val_idx].to(pred_val.device)
                 accuracy = MF.accuracy(pred_val, label_val, task='multiclass'
                                        , num_classes=int(self.gme_dataset.num_classes['labels'][idx]))
-                message = '================Test Accuracy {:.4f}================' \
+                message = '================Test Accuracy {}================' \
                     .format(accuracy.item())
                 return message
 
@@ -297,28 +303,30 @@ class GmeTrainer:
                     y_hats.append(y_hat)
                 test_acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys), task='multiclass'
                                        , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
-                test_f1_score = MF.f1_score(torch.cat(y_hats), torch.cat(ys), task='multiclass'
-                                       , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
+                # test_f1_score = MF.f1_score(torch.cat(y_hats), torch.cat(ys), task='multiclass'
+                #                        , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
                 preds = torch.cat(y_hats).cpu().detach().numpy()
                 preds = np.argmax(preds, axis=1)
                 targets = torch.cat(ys).cpu().detach().numpy()
-                test_rms = mean_squared_error(targets, preds)
-                test_rms = math.sqrt(test_rms)
+                # test_rms = mean_squared_error(targets, preds)
+                # test_rms = math.sqrt(test_rms)
                 test_loss = float(np.mean(losses))
-                logger.info("test loss: ", test_loss)
-                return test_loss, test_acc.item(), test_rms
+                logger.info("test loss: ", test_loss)  # , test_rms
+                return test_loss, test_acc.item()
+        else:
+            return 'Null', 'Null'
 
     def train(self, data_split_idx=0, has_test_label=False, early_stop_patience=10, only_inference=False):
         start_time = datetime.now()
         # 计算 Focal Loss 参数
-        # labels_count_map = self.labels_count_map
-        # key_num = self.gme_dataset.num_classes['labels'][data_split_idx]
-        # if self.gme_dataset.num_classes['labels'][data_split_idx] != key_num:
-        #     raise ValueError('Data type error.')
-        # alpha_list = np.array([labels_count_map[a] for a in range(key_num)])
-        # item_sum = np.sum(alpha_list)
-        # alpha_list = alpha_list / item_sum
-        # self.custom_loss = FocalLoss(gamma=2, ignore_index=-1)  # classes_ratio=alpha_list,
+        labels_count_map = self.labels_count_map
+        key_num = self.gme_dataset.num_classes['labels'][data_split_idx]
+        if self.gme_dataset.num_classes['labels'][data_split_idx] != key_num:
+            raise ValueError('Data type error.')
+        alpha_list = np.array([labels_count_map[a] for a in range(key_num)])
+        item_sum = np.sum(alpha_list)
+        alpha_list = alpha_list / item_sum
+        self.custom_loss = FocalLoss(gamma=2, classes_ratio=alpha_list, ignore_index=-1)  # classes_ratio=alpha_list,
 
         model, config = self.model, self.config
         raw_model, optimizer = self.load_checkpoint()
@@ -334,52 +342,55 @@ class GmeTrainer:
             losses = []
             ys = []
             y_hats = []
-            pbar = tqdm(enumerate(loader), total=len(loader)) if is_train else enumerate(loader)
+            if loader is not None:
+                pbar = tqdm(enumerate(loader), total=len(loader)) if is_train else enumerate(loader)
 
-            for it, (input_nodes, output_nodes, blocks) in pbar:  # pbar:
-                torch.cuda.empty_cache()
-                # forward the model
-                with torch.set_grad_enabled(is_train):  # torch.set_grad_enabled(False)与torch.no_grad()等价
-                    x = blocks[0].srcdata['feat']
-                    y = blocks[-1].dstdata['label']
-                    y_hat = model(blocks, x)
-                    # ignore_index=-1, 计算跳过填充值-1
-                    loss = F.cross_entropy(y_hat, y, ignore_index=-1)
-                    # loss = self.custom_loss(y_hat, y)
-                    losses.append(loss.item())
-                    # 计算epoch 的总体 accuracy
-                    ys.append(y)
-                    y_hats.append(y_hat)
-                if is_train:
-                    # backprop and update the parameters
-                    model.zero_grad()
-                    loss.backward()
-                    # torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_norm_clip)
-                    optimizer.step()
-                    # lr = optimizer.state_dict()['param_groups'][0]['lr']  # 学习率
-                    lr = optimizer.param_groups[0]['lr']
-                    acc = MF.accuracy(preds=torch.cat(y_hats), target=torch.cat(ys), task='multiclass'
-                                      , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
-                    # .num_classes['labels'][model_idx]
-                    # report progress
-                    pbar.set_description(
-                        f"epoch {epoch + 1} iter {it}: train loss {loss.item():.5f}. "
-                        f"lr {lr:e}. acc {acc:.5f}")
+                for it, (input_nodes, output_nodes, blocks) in pbar:  # pbar:
+                    torch.cuda.empty_cache()
+                    # forward the model
+                    with torch.set_grad_enabled(is_train):  # torch.set_grad_enabled(False)与torch.no_grad()等价
+                        x = blocks[0].srcdata['feat']
+                        y = blocks[-1].dstdata['label']
+                        y_hat = model(blocks, x)
+                        # ignore_index=-1, 计算跳过填充值-1
+                        # loss = F.cross_entropy(y_hat, y, ignore_index=-1)
+                        loss = self.custom_loss(y_hat, y)
+                        losses.append(loss.item())
+                        # 计算epoch 的总体 accuracy
+                        ys.append(y)
+                        y_hats.append(y_hat)
+                    if is_train:
+                        # backprop and update the parameters
+                        model.zero_grad()
+                        loss.backward()
+                        # torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_norm_clip)
+                        optimizer.step()
+                        # lr = optimizer.state_dict()['param_groups'][0]['lr']  # 学习率
+                        lr = optimizer.param_groups[0]['lr']
+                        acc = MF.accuracy(preds=torch.cat(y_hats), target=torch.cat(ys), task='multiclass'
+                                          , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
+                        # .num_classes['labels'][model_idx]
+                        # report progress
+                        pbar.set_description(
+                            f"epoch {epoch + 1} iter {it}: train loss {loss.item():.5f}. "
+                            f"lr {lr:e}. acc {acc:.5f}")
 
-            train_acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys), task='multiclass'
-                                    , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
-            preds = torch.cat(y_hats).cpu().detach().numpy()
-            preds = np.argmax(preds, axis=1)
-            targets = torch.cat(ys).cpu().detach().numpy()
-            train_rms = mean_squared_error(targets, preds)
-            train_rms = math.sqrt(train_rms)
-            if not is_train:
-                val_loss = float(np.mean(losses))
-                logger.info("valid loss: ", val_loss)
-                return val_loss, train_acc.item(), train_rms
+                train_acc = MF.accuracy(torch.cat(y_hats), torch.cat(ys), task='multiclass'
+                                        , num_classes=int(self.gme_dataset.num_classes['labels'][data_idx]))
+                # preds = torch.cat(y_hats).cpu().detach().numpy()
+                # preds = np.argmax(preds, axis=1)
+                # targets = torch.cat(ys).cpu().detach().numpy()
+                # train_rms = mean_squared_error(targets, preds)
+                # train_rms = math.sqrt(train_rms)
+                if not is_train:
+                    val_loss = float(np.mean(losses))
+                    logger.info("valid loss: ", val_loss)  # , train_rms
+                    return val_loss, train_acc.item()
+                else:
+                    train_loss = float(np.mean(losses))  # , train_rms
+                    return train_loss, train_acc.item()
             else:
-                train_loss = float(np.mean(losses))
-                return train_loss, train_acc.item(), train_rms
+                return 'Null', 'Null'
 
         self.tokens = 0  # counter used for learning rate decay
         self.log_name = os.path.join(os.path.dirname(self.ckpt_path), 'train_loss_log.txt')
@@ -407,32 +418,32 @@ class GmeTrainer:
         #
         if only_inference:
             self.max_epochs = 0
-        early_stopping = EarlyStopping(patience=early_stop_patience)
+        early_stopping = EarlyStopping(patience=early_stop_patience, best_loss=self.best_loss)
         for epoch in range(self.first_epoch - 1, self.max_epochs):
 
-            train_loss, train_acc, train_rmse = run_epoch('train', data_split_idx)
+            train_loss, train_acc = run_epoch('train', data_split_idx)
             val_loss = 0
             val_acc = 0
-            val_rmse = 0
             if self.val_dataset is not None:
-                val_loss, val_acc, val_rmse = run_epoch('test', data_split_idx)
+                val_loss, val_acc = run_epoch('test', data_split_idx)
 
-            train_loss_list.append(train_loss)
-            train_acc_list.append(train_acc)
-            val_loss_list.append(val_loss)
-            var_acc_list.append(val_acc)
-            early_stopping(val_loss)
-            message = f"Epoch {epoch + 1}, Train loss: {train_loss}, Train acc: {train_acc}, Train rmse: {train_rmse}, Val loss: {val_loss}, Val acc: {val_acc}, Val rmse: {val_rmse}, Stop Count: {early_stopping.counter}"
+            # train_loss_list.append(train_loss)
+            # train_acc_list.append(train_acc)
+            # val_loss_list.append(val_loss)
+            # var_acc_list.append(val_acc)
+            early_stopping(train_loss)
+            message = f"Epoch {epoch + 1}, Train loss: {train_loss}, Train acc: {train_acc}, Val loss: {val_loss}, " \
+                      f"Val acc: {val_acc}, Stop Count: {early_stopping.counter} "
             print(message)
             with open(self.log_name, "a") as log_file:
-                message_write = f"{epoch + 1},{train_loss},{train_acc},{train_rmse},{val_loss},{val_acc},{val_rmse}"
+                message_write = f"{epoch + 1},{train_loss},{train_acc},{val_loss},{val_acc}"
                 log_file.write('%s\n' % message_write)
 
             np.savetxt(self.iter_record_path, (epoch + 1, self.tokens), delimiter=',', fmt='%d')
             # supports early stopping based on the test loss, or just save always if no test set is provided
             # good_model = self.val_dataset is None or val_loss < best_loss
-            good_model = self.train_dataset is None or val_loss < self.best_loss
-            if self.ckpt_path is not None and good_model:
+            # good_model = self.train_dataset is None or val_loss < self.best_loss
+            if self.ckpt_path is not None and early_stopping.counter == 0:  # good_model:
                 self.best_loss = val_loss
                 self.save_checkpoint(optimizer=optimizer)
             if early_stopping.early_stop:
@@ -451,3 +462,6 @@ class GmeTrainer:
         print('This round of training takes: {}s'.format(datetime.now() - start_time))
         with open(self.log_name, "a") as log_file:
             log_file.write('%s\n' % message)
+            now = time.strftime("%c")
+            log_file.write('# ================ Training End (%s) ================\n' % now)
+            log_file.write("# max early stop counter: {}".format(early_stopping.max_counter))

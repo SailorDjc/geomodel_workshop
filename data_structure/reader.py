@@ -277,7 +277,7 @@ class ReadExportFile(object):
             use_cols = kwargs['use_cols']
         df_logs = pd.read_table(txt_file_path, header=header, comment=comment, sep=sep, encoding=encoding)
         columns_num = df_logs.columns.size
-        names = ['epoch', 'train_loss', 'train_acc', 'train_rmse', 'val_loss', 'val_acc', 'val_rmse']
+        names = ['epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc']
         if columns_num == len(names):
             df_logs.columns = names
         else:
@@ -286,18 +286,14 @@ class ReadExportFile(object):
         epoch = np.array(df_logs.loc[:, ['epoch']])
         train_loss = np.array(df_logs.loc[:, ['train_loss']])
         train_acc = np.array(df_logs.loc[:, ['train_acc']])
-        train_rmse = np.array(df_logs.loc[:, ['train_rmse']])
         val_loss = np.array(df_logs.loc[:, ['val_loss']])
         val_acc = np.array(df_logs.loc[:, ['val_acc']])
-        val_rmse = np.array(df_logs.loc[:, ['val_rmse']])
         result_log = {
             'epochs': epoch.flatten(),
             'train_loss': train_loss.flatten(),
             'train_accuracy': train_acc.flatten(),
-            'train_rmse': train_rmse.flatten(),
             'valid_loss': val_loss.flatten(),
             'valid_accuracy': val_acc.flatten(),
-            'valid_rmse': val_rmse.flatten(),
         }
         return result_log
 

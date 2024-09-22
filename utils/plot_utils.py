@@ -182,6 +182,8 @@ def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
                     # 基底层
                     if base_layer is not None and label == base_layer:
                         color = 'grey'
+                    if vtk_data_dict[label].n_cells == 0:
+                        continue
                     actor = plotter.add_mesh(vtk_data_dict[label], color=color
                                              , show_edges=show_edge)
                     if grid_flag:
@@ -232,15 +234,15 @@ def control_visibility_with_layer_label(geo_object_list: list, lookup_table=None
         plotter.add_slider_widget(callbace_opacity, value=1, rng=(0, 1), title='Opacity Of Grid'
                                   , pointa=(0.8, 0.1), pointb=(0.95, 0.1))
     # 截屏按钮
-    callback = SaveGraphicCallBack(plotter=plotter)
-    w_size = plotter.window_size
-    b_x = w_size[0] * 0.9
-    b_y = w_size[1] * 0.9
-    plotter.add_checkbox_button_widget(callback, value=True, position=(b_x, b_y)
-                                       , size=50, border_size=1,
-                                       color_on='blue', color_off='blue', background_color='blue')
-    plotter.add_text(text='save picture'
-                     , position=(b_x - 50, b_y - 25), font_size=12)
+    # callback = SaveGraphicCallBack(plotter=plotter)
+    # w_size = plotter.window_size
+    # b_x = w_size[0] * 0.9
+    # b_y = w_size[1] * 0.9
+    # plotter.add_checkbox_button_widget(callback, value=True, position=(b_x, b_y)
+    #                                    , size=50, border_size=1,
+    #                                    color_on='blue', color_off='blue', background_color='blue')
+    # plotter.add_text(text='save picture'
+    #                  , position=(b_x - 50, b_y - 25), font_size=12)
     return plotter
 
 

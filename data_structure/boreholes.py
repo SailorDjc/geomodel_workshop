@@ -287,7 +287,7 @@ class Borehole(object):
 # 钻孔集
 class BoreholeSet(object):
     def __init__(self, points: np.ndarray = None, series: np.ndarray = None, borehole_idx: np.ndarray = None
-                 , radius: float = 10, name=None, dir_path=None):
+                 , radius: float = 5, name=None, dir_path=None):
         self.name = name
         self._points = points  #
         self.is_rtc = False

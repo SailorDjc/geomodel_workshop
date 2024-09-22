@@ -18,6 +18,7 @@ from sklearn.model_selection import GridSearchCV
 from xgboost import XGBClassifier
 from data_structure.geodata import Grid, Section, SectionSet, PointSet, Borehole, BoreholeSet
 from tqdm import tqdm
+from sklearn.preprocessing import StandardScaler
 
 
 # from data_structure.data_sampler import GeoGridDataSampler
@@ -443,6 +444,7 @@ class GeoDataMLClassifier(object):
         self.k_fold = 1
         # 参数网格搜索
         self.grid_search = is_grid_search
+        self.std_scaler = None
         self.method = method
         if self.method is not None:
             self.method = self.method.lower()
@@ -477,20 +479,25 @@ class GeoDataMLClassifier(object):
                     continue
             if isinstance(data, PointSet):
                 labels = data.get_labels()
-                if predict_label in labels:
+                if predict_label not in labels:
+                    known_points_data.append(data)
+                else:
                     train_idx = np.argwhere(labels != -1).flatten()
                     known_data = data.get_points_data_by_ids(ids=train_idx)
                     known_points_data.append(known_data)
                     pred_idx = np.argwhere(labels == -1).flatten()
-                    unknown_data = data.get_points_data_by_ids(ids=pred_idx)
-                    unknown_points_data.append(unknown_data)
+                    if len(pred_idx) > 0:
+                        print('label -1 exits in the input data...')
         self.known_data = known_points_data
-        return self.known_data, self.unknown_data
+        return self.known_data
 
-    def execute_train(self, index=None):
-        known_points_data, unknown_points_data = self.extract_known_data_from_data_list(index=index)
+    def execute_train(self, index=None, normalize=True):
+        known_points_data = self.extract_known_data_from_data_list(index=index)
         # 已知数据
         train_x = known_points_data.points
+        if normalize:
+            self.std_scaler = StandardScaler().fit(train_x)
+            train_x = self.std_scaler.transform(train_x)
         train_y = known_points_data.labels
         if self.method is not None and self.method in self.support_methods:
             method_to_index = {label: index for index, label in enumerate(self.support_methods)}
@@ -520,6 +527,8 @@ class GeoDataMLClassifier(object):
             new_grid = copy.deepcopy(grid)
             predict_points = new_grid.points
             if self.best_model is not None:
+                if self.std_scaler is not None:
+                    predict_points = self.std_scaler.transform(predict_points)
                 predict_test_y = self.best_model.predict(predict_points)
                 new_grid.labels = predict_test_y
                 if new_grid.vtk_data is not None:

@@ -131,6 +131,14 @@ class Grid(object):
         # 对象拷贝
         self.dir_path = dir_path
 
+    @property
+    def labels(self):
+        return self.grid_points_series
+
+    @labels.setter
+    def labels(self, value):
+        self.grid_points_series = value
+
     def uniform_labels(self, label_dict):
         repeated_keys = []
         unrepeated_keys = []

@@ -1,4 +1,7 @@
 import os.path
+
+import numpy as np
+from data_structure.reader import *
 from dgl_geodataset import DglGeoDataset
 from geomodel_analysis import *
 from gme_trainer import GmeTrainer, GmeTrainerConfig, GraphTransConfig
@@ -17,35 +20,45 @@ import random
 if __name__ == '__main__':
     # load and preprocess dataset
     print('Loading data')
-
     root_path = os.path.abspath('..')
-    xm_file_path = os.path.join(root_path, 'data', 'virtual_borehole_data.dat')
+    xm_file_path = os.path.join(root_path, 'data', 'borehole_hill.dat')
     # # # 从外部数据文本中加载钻孔数据
     reader = ReadExportFile()
     boreholes_data = reader.read_boreholes_data_from_text_file(dat_file_path=xm_file_path)
-    # boreholes_data.get_boreholes(idx=random.sample(list(np.arange(len(boreholes_data))), 95))
+    # select_ids = [bid for bid in list(np.arange(boreholes_data.borehole_num)) if bid not in delete_list]
+    # boreholes_data = boreholes_data.get_boreholes(idx=select_ids)
     # 延展钻孔最底层
-    boreholes_data.extend_base_layer(base_label=41)
-    # 添加基底层
-    boreholes_data.add_base_layer_for_each_borehole()
+    print('xl:', boreholes_data.bounds[1] - boreholes_data.bounds[0])
+    print('yl:', boreholes_data.bounds[3] - boreholes_data.bounds[2])
+    print('zl:', boreholes_data.bounds[5] - boreholes_data.bounds[4])
+    boreholes_data.extend_base_layer(base_label=36)
+    a = boreholes_data.get_minimum_layer_interval()
+    c = boreholes_data.get_thin_layers(threshold_dist=0.5)
+    plot = control_visibility_with_layer_label([boreholes_data])
+    plot.show()
+    # boreholes_data.get_boreholes(idx=rcandom.sample(list(np.arange(len(boreholes_data))), 95))
 
-    # boreholes_data.plot()
+    # 添加基底层
+    # boreholes_data.add_base_layer_for_each_borehole()
+
+    # boreholes_data.plot(borehole_radius=5)
     # boreholes_data_2 = reader.read_labels_map(
     #     map_file_path=os.path.join(root_path, 'data', 'sample_drills_0306.map'), encoding='ANSI')
-
+    boreholes_data.set_boreholes_control_buffer_dist_xy(radius=5)
     gd = GeodataSet()
     gd.append(boreholes_data)
+
     model_idx = 0
     gd.standardize_labels()
     # 将三维模型规则网格数据构建为图网格数据
     # 这里采用真实钻孔，不采用虚拟钻孔采样
     terrain_data = TerrainData()
     gme_models = GmeModelGraphList('gme_model', root=root_path,
-                                   split_ratio=DataSetSplit(0.4, test_ratio=0.4),
+                                   split_ratio=DataSetSplit(1),
                                    input_sample_data=gd,
                                    dir_path=os.path.join(root_path, 'processed'),
                                    add_inverse_edge=True,
-                                   grid_dims=[120, 120, 120],
+                                   grid_dims=[50, 50, 30],
                                    terrain_data=terrain_data)
     # gme_models.load_geograph(graph_id=model_idx, dir_path=os.path.join(root_path, 'processed'))
 
@@ -69,11 +82,11 @@ if __name__ == '__main__':
 
     # initialize a trainer instance and kick off training
     # 模型训练相关参数    初始训练参数的设置
-    trainer_config = GmeTrainerConfig(max_epochs=5, batch_size=512, num_workers=4, learning_rate=1e-4,
+    trainer_config = GmeTrainerConfig(max_epochs=1500, batch_size=512, num_workers=4, learning_rate=1e-5,
                                       ckpt_path=os.path.join(root_path, 'processed', 'latest_tran.pth'),
                                       output_dir=os.path.join(root_path, 'output'),
                                       out_put_grid_file_name=os.path.join(root_path, 'output', 'vtk_model'),
-                                      sample_neigh=[10, 10, 15, 15])
+                                      sample_neigh=[10, 10, 15, 15], gpu_num=1)
     # 从图数据集中取出一张图
     g = dataset[model_idx]
     # create GraphSAGE model

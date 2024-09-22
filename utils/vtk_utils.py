@@ -1,5 +1,6 @@
 import numpy as np
 import math
+from utils.math_libs import *
 from vtkmodules.all import vtkImageData, vtkStructuredGrid, vtkUnstructuredGrid, vtkPolyData, vtkTransform, \
     vtkTransformFilter, vtkBoundingBox, vtkDataSet, VTK_DOUBLE, VTK_INT, vtkLookupTable, vtkColorTransferFunction, \
     vtkImagePermute, vtkProbeFilter, vtkImageMapToColors, vtkPNGWriter, vtkCellArray, vtkPoints, vtkRectilinearGrid, \
@@ -20,18 +21,84 @@ import shapely as sy
 from utils.math_libs import remove_duplicate_points, add_point_to_point_set_if_no_duplicate, check_triangle_box_overlap
 from tqdm import tqdm
 import concurrent.futures
-import itertools
-
-obbtree = vtkOBBTree()
-obbtree.SetTolerance(1e-8)
 
 
-# 面数据与网格数据求交，将
+def create_box_poly_data_from_bounds(bounds):
+    min_x, max_x, min_y, max_y, min_z, max_z = bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]
+    point_array = [
+        [min_x, min_y, min_z], [max_x, min_y, min_z], [max_x, max_y, min_z], [min_x, max_y, min_z],
+        [min_x, min_y, max_z], [max_x, min_y, max_z], [max_x, max_y, max_z], [min_x, max_y, max_z]
+    ]
+    faces = [
+        [4, 0, 1, 2, 3], [4, 4, 5, 6, 7], [4, 0, 1, 5, 4], [4, 3, 2, 6, 7], [4, 0, 3, 7, 4], [4, 1, 2, 6, 5]
+    ]
+    faces = np.hstack(faces)
+    poly_box = pv.PolyData(point_array, faces)
+    return poly_box
+
+
+# 从上往下遍历
+def fill_cell_values_with_surface_grid(grid):
+    # 获取顶部剖面
+
+    out_grid = copy.deepcopy(grid)
+    horizon_slice = out_grid.vtk_data.slice(normal='z')
+    horizon_points = horizon_slice.cell_centers().points.tolist()
+    cells_series = np.full((len(out_grid.grid_points),), fill_value=-1)
+    grid_bounds = out_grid.bounds
+    z_max = grid_bounds[5]
+    z_min = grid_bounds[4]
+    pbr = tqdm(enumerate(horizon_points), total=len(horizon_points))
+    unfill_points = []
+    out_grid.vtk_data.plot()
+    for it, hp in pbr:
+        pos_a = copy.deepcopy(horizon_points[it])
+        pos_b = copy.deepcopy(horizon_points[it])
+        pos_a[2] = z_max
+        pos_b[2] = z_min
+        pid = out_grid.vtk_data.find_cells_along_line(pointa=pos_a, pointb=pos_b)
+        pid = np.array(pid, dtype=int)
+        line_points = out_grid.grid_points[pid]
+        line_series = out_grid.vtk_data.cell_data['Scalar Field'][pid]
+        line_points_sort_ind = np.argsort(line_points[:, 2])
+        line_points = line_points[line_points_sort_ind[::-1]]
+        line_series = line_series[line_points_sort_ind[::-1]]
+        pid = pid[line_points_sort_ind[::-1]]
+        new_line_series = copy.deepcopy(line_series)
+
+        if -1 in line_series and len(np.unique(line_series)) > 1:
+            series_list = []
+            for label_id, label in enumerate(line_series):
+                if label != -1:
+                    series_list.append((label_id, label))
+            for line_id, label in enumerate(line_series):
+                if label == -1:
+                    check_flag = False
+                    for label_record in series_list:
+                        if line_id < label_record[0]:
+                            new_line_series[line_id] = label_record[1]
+                            check_flag = True
+                            break
+        else:
+            unfill_points.append(it)
+        cells_series[pid] = new_line_series
+    unfill_cells_ids = np.argwhere(cells_series == -1).flatten()
+    # if len(unfill_cells_ids) > 0:
+    #     filled_cells_ids = np.array(list(set(np.arange(len(cells_series))) - set(unfill_cells_ids)))
+    #     ckt = spt.cKDTree(grid.grid_points[filled_cells_ids])
+    #     d, pid = ckt.query(grid.grid_points[unfill_cells_ids])
+    #     check_series = cells_series[filled_cells_ids]
+    #     unfill_series = check_series[pid]
+    #     cells_series[unfill_cells_ids] = unfill_series
+    out_grid.vtk_data.cell_data['Scalar Field'] = cells_series
+    return out_grid
+
+
+# 面数据与网格数据求交
 # poly_surf: PolyData面数据
 # check_level: 构建obbtree的级别，默认为0，构建最初级
 # grid: vtk网格
 def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid, check_level=0):
-
     vtk_obbtree_0 = vtkOBBTree()
     vtk_obbtree_0.SetDataSet(poly_surf)
     vtk_obbtree_0.BuildLocator()
@@ -44,29 +111,18 @@ def poly_surf_intersect_with_grid(poly_surf: pv.PolyData, grid, check_level=0):
             check_level = 0
     vtk_obbtree_0.GenerateRepresentation(check_level, obb_poly)
     obb_poly = pv.wrap(obb_poly)
-    obb_poly.plot()
     select_cell_ids = []
     if isinstance(grid, (pv.RectilinearGrid, pv.UnstructuredGrid, pv.StructuredGrid)):
         gird_points_poly = pv.PolyData(grid.points)
-        select_cells = gird_points_poly.select_enclosed_points(surface=obb_poly, check_surface=True, tolerance=0.000000001)
+        select_cells = gird_points_poly.select_enclosed_points(surface=obb_poly, check_surface=True,
+                                                               tolerance=0.000000001)
         rect_point_ids = select_cells.point_data['SelectedPoints']
         rect_point_ids = np.argwhere(rect_point_ids > 0).flatten()
         select_points = grid.extract_points(ind=rect_point_ids)
         rect_point_ids = grid.find_containing_cell(select_points.cell_centers().points)
         print('Computing...')
         face_points = np.array([poly_surf.get_cell(index=face_id).points for face_id in np.arange(poly_surf.n_cells)])
-
-        # def check_voxel_intersect(cell_id):
-        #     voxel_points = grid.extract_cells([cell_id]).points
-        #     check_intersect = check_triangle_box_overlap(tri_points=face_points, voxel_points=voxel_points)
-        #     if check_intersect:
-        #         return [cell_id]
-        #     else:
-        #         return []
-        result_ids = []
-        # with concurrent.futures.ProcessPoolExecutor() as executor:
-        #     cell_ids = executor.map(check_voxel_intersect, rect_point_ids)
-        #     result_ids = list(cell_ids)
+        # face_points = np.array(face_points, dtype=np.float32)
         pbr = tqdm(enumerate(rect_point_ids), total=len(rect_point_ids), position=0, leave=True)
         for it, cell_id in pbr:
             cell = grid.extract_cells([cell_id])
@@ -138,18 +194,22 @@ def read_dxf_surface(geom_file_path: str):
             points_3d, _ = remove_duplicate_points(points_3d=coords, is_remove=True)
             points_3d = [list(point) for point in points_3d]
             points_array2.append(points_3d)
+        else:
+            raise ValueError('Geom Type not support.')
     points_array2, points_ids_list = get_poly_points_topo(points_array2)
     faces = []
     for points_ids in points_ids_list:
-        faces.append(len(points_ids))
-        faces.extend(points_ids)
-    surface_polydata = pv.PolyData(points_array2, faces=faces)
-    surface_polydata.cell_data['layer'] = layer
+        face = [len(points_ids)]
+        face.extend(points_ids)
+        faces.append(face)
+    faces = np.hstack(faces)
+    surface_polydata = pv.PolyData(np.array(points_array2), faces)
+    # surface_polydata.cell_data['layer'] = layer  # 与更新后的cell数量不匹配
     return surface_polydata
 
 
 # points_array 二维点集数组，每一组点构成一个多边形
-def get_poly_points_topo(points_array2):
+def get_poly_points_topo(points_array2, check=3):
     from data_structure.points import PointSet
     points_set = PointSet()
     points_ids_list = []
@@ -158,6 +218,11 @@ def get_poly_points_topo(points_array2):
         for j, point in enumerate(points_list):
             _, p_id = points_set.append_search_point_without_labels(insert_point=point)
             points_ids.append(p_id)
+        if i == 0:
+            check = len(points_ids)
+        else:
+            if check != len(points_ids):
+                continue
         points_ids_list.append(points_ids)
     return points_set.points, points_ids_list
 
